@@ -1,0 +1,11 @@
+// transport 是本模块唯一依赖 async 运行时的包：
+// 配置合并、URL 拼接、头拍平等纯逻辑都留在其它包里，可以离线同步测试。
+// core/error 用于把底层错误渲染成可读消息，core/debug 用于 Debug 实现。
+import {
+  "moonbitlang/async",
+  "moonbitlang/async/http",
+  "moonbitlang/async/io",
+  "moonbitlang/core/debug",
+  "q2316368843/easy-http-client/config",
+  "q2316368843/easy-http-client/headers",
+}

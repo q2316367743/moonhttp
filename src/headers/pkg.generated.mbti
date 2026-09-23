@@ -1,0 +1,38 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316368843/easy-http-client/headers"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+pub struct Headers {
+  // private fields
+}
+pub fn Headers::entries(Self) -> Array[(String, String)]
+pub fn Headers::equal(Self, Self) -> Bool
+pub fn Headers::from_pairs(Array[(String, String)]) -> Self
+pub fn Headers::get(Self, StringView) -> String?
+pub fn Headers::has(Self, StringView) -> Bool
+pub fn Headers::is_empty(Self) -> Bool
+pub fn Headers::length(Self) -> Int
+pub fn Headers::merge(Self, Self) -> Self
+pub fn Headers::new() -> Self
+pub fn Headers::not_equal(Self, Self) -> Bool
+pub fn Headers::output(Self, &Logger) -> Unit
+pub fn Headers::remove(Self, StringView) -> Self
+pub fn Headers::set(Self, StringView, String) -> Self
+pub fn Headers::set_if_absent(Self, StringView, String) -> Self
+pub fn Headers::to_repr(Self) -> @debug.Repr
+pub fn Headers::to_string(Self) -> String
+pub impl Eq for Headers
+pub impl Show for Headers
+pub impl @debug.Debug for Headers
+
+// Type aliases
+
+// Traits

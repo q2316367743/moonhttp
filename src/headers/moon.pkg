@@ -1,0 +1,5 @@
+// headers 包只做字符串规范化与集合运算，不依赖 async 运行时，
+// 因此可以用普通同步测试覆盖。debug 依赖仅用于实现 Debug（测试断言需要）。
+import {
+  "moonbitlang/core/debug",
+}

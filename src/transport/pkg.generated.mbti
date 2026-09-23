@@ -1,0 +1,64 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316368843/easy-http-client/transport"
+
+import {
+  "moonbitlang/core/debug",
+  "q2316368843/easy-http-client/config",
+  "q2316368843/easy-http-client/headers",
+}
+
+// Values
+
+// Errors
+pub(all) suberror TransportError {
+  Timeout
+  Network(String)
+  Unsupported(String)
+}
+
+// Types and methods
+pub struct AsyncHttpTransport {
+}
+pub fn AsyncHttpTransport::new() -> Self
+pub async fn AsyncHttpTransport::send(Self, PreparedRequest) -> RawResponse raise TransportError
+pub impl Transport for AsyncHttpTransport
+
+pub struct MockTransport {
+  // private fields
+}
+pub fn MockTransport::failing(TransportError) -> Self
+pub fn MockTransport::from_responses(Array[RawResponse]) -> Self
+pub fn MockTransport::last_request(Self) -> PreparedRequest?
+pub fn MockTransport::new(RawResponse) -> Self
+pub fn MockTransport::received(Self) -> Array[PreparedRequest]
+pub fn MockTransport::request_count(Self) -> Int
+pub async fn MockTransport::send(Self, PreparedRequest) -> RawResponse raise TransportError
+pub fn MockTransport::with_failure(Self, TransportError) -> Self
+pub impl Transport for MockTransport
+
+pub(all) struct PreparedRequest {
+  http_method : @config.Method
+  url : String
+  headers : @headers.Headers
+  body : Bytes?
+  timeout : Int?
+} derive(@debug.Debug)
+pub fn PreparedRequest::to_repr(Self) -> @debug.Repr
+
+pub(all) struct RawResponse {
+  status : Int
+  status_text : String
+  headers : @headers.Headers
+  body : Bytes
+} derive(@debug.Debug)
+pub fn RawResponse::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+pub using @headers {type Headers}
+
+pub using @config {type Method}
+
+// Traits
+pub(open) trait Transport {
+  async fn send(Self, PreparedRequest) -> RawResponse raise TransportError
+}

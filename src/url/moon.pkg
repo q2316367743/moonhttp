@@ -1,0 +1,10 @@
+// url 包只做字符串层面的 URL 拼接与 query 序列化，不依赖 async 运行时，
+// 也不依赖 config，因此可以用普通同步测试覆盖。
+// encoding/utf8 用于把文本转成 UTF-8 字节后逐字节做百分号编码。
+import {
+  "moonbitlang/core/encoding/utf8",
+}
+
+import {
+  "moonbitlang/core/json",
+} for "test"

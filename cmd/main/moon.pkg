@@ -1,5 +1,0 @@
-// import {
-//   "username/easy-http-client" @lib,
-// }
-
-pkgtype(kind: "executable")

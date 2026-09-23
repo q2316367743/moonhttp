@@ -1,0 +1,94 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316368843/easy-http-client/config"
+
+import {
+  "moonbitlang/core/debug",
+  "q2316368843/easy-http-client/headers",
+}
+
+// Values
+pub fn defaults() -> Config
+
+// Errors
+
+// Types and methods
+pub(all) struct Auth {
+  username : String?
+  password : String?
+} derive(Default, Eq, @debug.Debug)
+pub fn Auth::default() -> Self
+pub fn Auth::equal(Self, Self) -> Bool
+pub fn Auth::not_equal(Self, Self) -> Bool
+pub fn Auth::to_repr(Self) -> @debug.Repr
+pub fn Auth::to_string(Self) -> String
+
+pub(all) struct Config {
+  url : String?
+  http_method : Method?
+  data : Json?
+  base_url : String?
+  timeout : Int?
+  response_type : ResponseType?
+  params : Json?
+  auth : Auth?
+  headers : @headers.Headers?
+  common_headers : @headers.Headers?
+  method_headers : Map[Method, @headers.Headers]?
+  validate_status : ((Int) -> Bool)?
+  allow_absolute_urls : Bool?
+} derive(Default)
+pub fn Config::default() -> Self
+pub fn Config::new(String) -> Self
+pub fn Config::output(Self, &Logger) -> Unit
+pub fn Config::to_repr(Self) -> @debug.Repr
+pub fn Config::to_string(Self) -> String
+pub fn Config::with_allow_absolute_urls(Self, Bool) -> Self
+pub fn Config::with_auth(Self, String, String) -> Self
+pub fn Config::with_base_url(Self, String) -> Self
+pub fn Config::with_common_header(Self, StringView, String) -> Self
+pub fn Config::with_data(Self, Json) -> Self
+pub fn Config::with_header(Self, StringView, String) -> Self
+pub fn Config::with_headers(Self, @headers.Headers) -> Self
+pub fn Config::with_method(Self, Method) -> Self
+pub fn Config::with_method_header(Self, Method, StringView, String) -> Self
+pub fn Config::with_params(Self, Json) -> Self
+pub fn Config::with_response_type(Self, ResponseType) -> Self
+pub fn Config::with_timeout(Self, Int) -> Self
+pub fn Config::with_url(Self, String) -> Self
+pub fn Config::with_validate_status(Self, (Int) -> Bool) -> Self
+pub impl Show for Config
+pub impl @debug.Debug for Config
+
+pub(all) enum Method {
+  Get
+  Head
+  Post
+  Put
+  Delete
+  Connect
+  Options
+  Trace
+  Patch
+} derive(Eq, Hash, @debug.Debug)
+pub fn Method::equal(Self, Self) -> Bool
+pub fn Method::hash(Self) -> Int
+pub fn Method::hash_combine(Self, Hasher) -> Unit
+pub fn Method::not_equal(Self, Self) -> Bool
+pub fn Method::parse(StringView) -> Self?
+pub fn Method::to_repr(Self) -> @debug.Repr
+pub fn Method::to_string(Self) -> String
+
+pub(all) enum ResponseType {
+  Auto
+  Json
+  Text
+} derive(Eq, @debug.Debug)
+pub fn ResponseType::equal(Self, Self) -> Bool
+pub fn ResponseType::not_equal(Self, Self) -> Bool
+pub fn ResponseType::to_repr(Self) -> @debug.Repr
+pub fn ResponseType::to_string(Self) -> String
+
+// Type aliases
+pub using @headers {type Headers}
+
+// Traits

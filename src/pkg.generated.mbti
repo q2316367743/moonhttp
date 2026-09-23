@@ -1,0 +1,86 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316368843/easy-http-client"
+
+import {
+  "moonbitlang/core/debug",
+  "q2316368843/easy-http-client/config",
+  "q2316368843/easy-http-client/headers",
+  "q2316368843/easy-http-client/transport",
+}
+
+// Values
+pub fn create(@config.Config) -> Client
+
+pub fn default_client() -> Client
+
+// Errors
+pub(all) suberror HttpError {
+  HttpError(ErrorInfo)
+}
+pub fn HttpError::code(Self) -> ErrorCode
+pub fn HttpError::config(Self) -> @config.Config
+pub fn HttpError::info(Self) -> ErrorInfo
+pub fn HttpError::message(Self) -> String
+pub fn HttpError::output(Self, &Logger) -> Unit
+pub fn HttpError::response(Self) -> Response?
+pub fn HttpError::to_string(Self) -> String
+pub impl Show for HttpError
+
+// Types and methods
+pub struct Client {
+  // private fields
+}
+pub fn Client::create(Self, @config.Config) -> Self
+pub fn Client::defaults(Self) -> @config.Config
+pub fn Client::new(config? : @config.Config, transport? : &@transport.Transport) -> Self
+pub async fn Client::request(Self, @config.Config) -> Response raise HttpError
+
+pub(all) enum ErrorCode {
+  BadRequest
+  BadResponse
+  Network
+  Timeout
+  InvalidUrl
+  NotSupported
+} derive(Eq, @debug.Debug)
+pub fn ErrorCode::equal(Self, Self) -> Bool
+pub fn ErrorCode::not_equal(Self, Self) -> Bool
+pub fn ErrorCode::output(Self, &Logger) -> Unit
+pub fn ErrorCode::to_repr(Self) -> @debug.Repr
+pub fn ErrorCode::to_string(Self) -> String
+pub impl Show for ErrorCode
+
+pub(all) struct ErrorInfo {
+  message : String
+  code : ErrorCode
+  config : @config.Config
+  response : Response?
+}
+
+pub(all) struct Response {
+  data : Json
+  status : Int
+  status_text : String
+  headers : @headers.Headers
+  config : @config.Config
+  raw : Bytes
+} derive(@debug.Debug)
+pub fn Response::content_length(Self) -> Int
+pub fn Response::is_success(Self) -> Bool
+pub fn Response::text(Self) -> String
+pub fn Response::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+pub using @config {type Auth}
+
+pub using @config {type Config}
+
+pub using @headers {type Headers}
+
+pub using @config {type Method}
+
+pub using @config {type ResponseType}
+
+pub using @transport {trait Transport}
+
+// Traits

@@ -1,0 +1,225 @@
+// Config 类型本身与它的链式构建器。
+// 渲染（to_string / Debug）在 render.mbt，小值类型（Auth / ResponseType）在 types.mbt。
+
+///|
+/// 把 headers 包的 `Headers` 引入本包作用域，同时作为 `config` 公开 API 的一部分
+/// 再导出——`Config` 的字段类型出现在签名里，使用者不该被迫再 import 一个包。
+pub using @headers {type Headers}
+
+///|
+/// 一次请求的完整配置。它同时充当 axios 里的实例 `defaults` 与请求级 `config`，
+/// 两者的区别只在合并时「谁覆盖谁」，形状完全一致。
+///
+/// 每个字段都是 `Option`，`None` 表示「这一项没有提供」。
+/// 用 `Option` 而不是给每项塞一个哨兵默认值，是为了让「未提供」与
+/// 「显式提供了一个恰好等于默认值的值」在合并时能被区分开——
+/// 这是复刻 axios `mergeConfig` 语义的前提（那里用 JS 的 `undefined` 表达同一件事）。
+///
+/// 字段按合并策略分组，与 `merge` 包里的实现一一对应：
+/// - 只取请求级（axios `valueFromConfig2`）：url / http_method / data
+/// - 请求级优先、否则回退默认（`defaultToConfig2`）：
+///   base_url / timeout / response_type
+/// - 深合并（`mergeDeepProperties`）：
+///   params / auth / headers / common_headers / method_headers / allow_absolute_urls
+/// - 请求级存在即生效（`mergeDirectKeys`）：validate_status
+///
+/// 字段名用 `http_method` 而不是 axios 的 `method`：`method` 在 MoonBit 里
+/// 是保留字，直接用作字段名会触发告警，也会让使用者写记录字面量时踩到。
+/// 构建器仍保留短名 `with_method`，因为参数类型 `Method` 已经说明了语境。
+///
+/// 因为 `validate_status` 是函数类型字段，本类型不能 `derive(Debug)` 也不能
+/// `derive(Eq)`，两者都是手写实现（Debug 把函数渲染成 `<fn>`，
+/// 需要比较配置时请逐字段比较）。
+pub(all) struct Config {
+  /// 请求地址；相对路径会和 `base_url` 拼接
+  url : String?
+  /// 请求方法，缺省为 `Method::Get`
+  http_method : Method?
+  /// 请求体；`Json::String` 原样发送，其它 Json 值序列化成 JSON 文本
+  data : Json?
+  /// 基础地址；`url` 是相对路径时会拼在它后面
+  base_url : String?
+  /// 超时毫秒数；`None` 或 `0` 表示不超时（与 axios 的 timeout 默认值 0 一致）
+  timeout : Int?
+  response_type : ResponseType?
+  /// 查询参数，序列化后追加到 URL（不覆盖 URL 里已有的 query）
+  params : Json?
+  auth : Auth?
+  /// 请求级平铺的头，优先级最高
+  headers : Headers?
+  /// 默认值的 common 层头，优先级最低
+  common_headers : Headers?
+  /// 默认值的按方法分层的头，例如只给 GET 加的公共头
+  method_headers : Map[Method, Headers]?
+  /// 判定响应状态码是否算成功；缺省等价于 `200 <= status < 300`
+  validate_status : ((Int) -> Bool)?
+  /// `url` 已经是绝对地址时是否仍然直接使用（关闭后强制拼 `base_url`）
+  allow_absolute_urls : Bool?
+} derive(Default)
+
+///|
+pub extend Config with Default::{default}
+
+///|
+/// 以目标地址为起点构造一份请求配置，等价于 `Config::default().with_url(url)`。
+///
+/// `url` 是每次请求都必须提供的字段，把它做成构造参数，最常见的调用就能从
+/// `Config::default().with_url("/users")` 缩短成 `Config::new("/users")`。
+///
+/// 之所以做成构造器而不是给 `Client::request` 加一个 `request(url, config?)`
+/// 重载：MoonBit 不允许同一类型上有同名方法（会报
+/// `The method request for type Client has been defined`），
+/// 所以缩短调用点只能在 `Config` 这一侧做。
+///
+/// 注意这里设置的是**本次请求的目标地址**（`Config.url`），不是实例的基础地址。
+/// 给实例设置基础地址请用 `Config::default().with_base_url(...)`：两者语义不同，
+/// `url` 在合并时走「只取请求级」策略，放在实例默认值里不会生效。
+pub fn Config::new(url : String) -> Config {
+  { ..Config::default(), url: Some(url), }
+}
+
+///|
+/// 链式构建器，例如：
+///
+/// ```moonbit nocheck
+/// let config = Config::default()
+///   .with_base_url("https://api.example.com")
+///   .with_timeout(5000)
+/// ```
+///
+/// 方法名统一加 `with_` 前缀，避免和同名字段访问冲突：
+/// `config.url` 读字段，`config.with_url(...)` 才是返回值的新配置。
+///
+/// 每个构建器都返回新实例（immutable 风格），所以可以安全地把一个
+/// 「模板配置」派生出多个变体，互不影响。
+pub fn Config::with_url(self : Config, url : String) -> Config {
+  { ..self, url: Some(url), }
+}
+
+///|
+/// 设置请求方法。字段名是 `http_method`，这里保留 axios 风格的短名。
+pub fn Config::with_method(self : Config, meth : Method) -> Config {
+  { ..self, http_method: Some(meth), }
+}
+
+///|
+/// 设置请求体。`Json::String` 会原样发送，其余 Json 值序列化为 JSON 文本。
+pub fn Config::with_data(self : Config, data : Json) -> Config {
+  { ..self, data: Some(data), }
+}
+
+///|
+/// 设置基础地址。
+pub fn Config::with_base_url(self : Config, base_url : String) -> Config {
+  { ..self, base_url: Some(base_url), }
+}
+
+///|
+/// 设置超时（毫秒）。传 `0` 表示不限时。
+pub fn Config::with_timeout(self : Config, timeout : Int) -> Config {
+  { ..self, timeout: Some(timeout), }
+}
+
+///|
+/// 设置响应体处理方式。
+pub fn Config::with_response_type(
+  self : Config,
+  response_type : ResponseType,
+) -> Config {
+  { ..self, response_type: Some(response_type), }
+}
+
+///|
+/// 设置查询参数，通常直接传一个字面量 JSON 对象：
+/// `with_params({ "page": 1, "tags": ["a", "b"] })`
+pub fn Config::with_params(self : Config, params : Json) -> Config {
+  { ..self, params: Some(params), }
+}
+
+///|
+/// 设置 Basic 认证凭据。
+pub fn Config::with_auth(
+  self : Config,
+  username : String,
+  password : String,
+) -> Config {
+  {
+    ..self,
+    auth: Some(Auth::{ username: Some(username), password: Some(password), }),
+  }
+}
+
+///|
+/// 追加一条请求级头（优先级最高的一层）。同名头会被覆盖。
+pub fn Config::with_header(
+  self : Config,
+  name : StringView,
+  value : String,
+) -> Config {
+  let headers = match self.headers {
+    Some(headers) => headers
+    None => Headers::new()
+  }
+  { ..self, headers: Some(headers.set(name, value)), }
+}
+
+///|
+/// 整体替换请求级头。需要一次设置多条时比连续调用 `with_header` 更清晰。
+pub fn Config::with_headers(self : Config, headers : Headers) -> Config {
+  { ..self, headers: Some(headers), }
+}
+
+///|
+/// 追加一条 common 层头（默认值里最低优先级的一层）。
+pub fn Config::with_common_header(
+  self : Config,
+  name : StringView,
+  value : String,
+) -> Config {
+  let headers = match self.common_headers {
+    Some(headers) => headers
+    None => Headers::new()
+  }
+  { ..self, common_headers: Some(headers.set(name, value)), }
+}
+
+///|
+/// 追加一条按方法分层的头，只在用该 `meth` 发请求时生效。
+pub fn Config::with_method_header(
+  self : Config,
+  meth : Method,
+  name : StringView,
+  value : String,
+) -> Config {
+  // copy() 后再改：method_headers 可能来自别的 Config，
+  // 直接改会让「模板配置」跟着变，破坏值语义。
+  let buckets = match self.method_headers {
+    Some(buckets) => buckets.copy()
+    None => Map([])
+  }
+  let bucket = match buckets.get(meth) {
+    Some(bucket) => bucket
+    None => Headers::new()
+  }
+  buckets[meth] = bucket.set(name, value)
+  { ..self, method_headers: Some(buckets), }
+}
+
+///|
+/// 自定义状态码校验规则。传一个恒为 `true` 的函数即可关闭校验。
+pub fn Config::with_validate_status(
+  self : Config,
+  validate_status : (Int) -> Bool,
+) -> Config {
+  { ..self, validate_status: Some(validate_status), }
+}
+
+///|
+/// 设置 `url` 为绝对地址时是否仍然直接使用。
+/// 设为 `false` 时，即使 `url` 是绝对地址也会被拼到 `base_url` 后面。
+pub fn Config::with_allow_absolute_urls(
+  self : Config,
+  allow_absolute_urls : Bool,
+) -> Config {
+  { ..self, allow_absolute_urls: Some(allow_absolute_urls), }
+}

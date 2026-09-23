@@ -19,8 +19,21 @@ repository = "https://github.com/q2316368843/easy-http-client"
 
 license = "Apache-2.0"
 
-keywords = []
+keywords = [ ]
 
-preferred_target = "wasm"
+// HTTP 请求最终要靠 moonbitlang/async 的异步运行时发出去。
+// 该包官方偏好 native 后端（wasm1 上的异步支持仍标注为实验性），
+// 所以本模块也以 native 为默认构建目标。
 
-description = ""
+preferred_target = "native"
+
+// 业务代码全部放在 src/ 下：模块根包即 src/ 本身，
+// 根目录只保留模块元数据与文档（见 AGENTS.md 的 RL-02）。
+
+source = "src"
+
+description = "axios 风格的 MoonBit HTTP 客户端：实例创建、request 请求与配置合并"
+
+import {
+  "moonbitlang/async@0.22.2",
+}

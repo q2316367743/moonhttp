@@ -1,0 +1,33 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316368843/easy-http-client/merge"
+
+import {
+  "q2316368843/easy-http-client/config",
+  "q2316368843/easy-http-client/headers",
+}
+
+// Values
+pub fn flatten_headers(@headers.Headers?, Map[@config.Method, @headers.Headers]?, @headers.Headers?, @config.Method) -> @headers.Headers
+
+pub fn merge_config(@config.Config, @config.Config) -> @config.Config
+
+pub fn merge_json(Json, Json) -> Json
+
+pub fn merge_json_option(Json?, Json?) -> Json?
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+pub using @config {type Auth}
+
+pub using @config {type Config}
+
+pub using @headers {type Headers}
+
+pub using @config {type Method}
+
+pub using @config {type ResponseType}
+
+// Traits

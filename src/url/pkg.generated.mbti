@@ -1,0 +1,23 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316368843/easy-http-client/url"
+
+// Values
+pub fn build_full_path(String?, String?, Bool?) -> String?
+
+pub fn build_url(String, Json?) -> String
+
+pub fn combine_urls(String, String) -> String
+
+pub fn encode_component(StringView) -> String
+
+pub fn is_absolute_url(StringView) -> Bool
+
+pub fn serialize_params(Json) -> String
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits
