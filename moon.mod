@@ -15,7 +15,7 @@ version = "0.1.0"
 
 readme = "README.mbt.md"
 
-repository = "https://github.com/q2316368843/moonhttp"
+repository = "https://github.com/q2316367743/moonhttp"
 
 license = "Apache-2.0"
 
