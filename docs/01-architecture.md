@@ -58,7 +58,7 @@ MoonBit 标准库没有任何网络能力，唯一的 HTTP 实现在 `moonbitlan
 因此把「真的把字节发出去」抽成 `Transport` trait，异步实现只存在于 `src/transport/` 这个包里（`async_http.mbt` 是真实传输，`stream.mbt` 是响应体流）。收益：
 
 - `config` / `headers` / `merge` / `url` 四个包可以用**普通同步测试**覆盖，跑得快、不依赖网络；
-- 根包的管线测试用 `MockTransport` 注入，能确定性复现 4xx/5xx、超时、解析失败等分支；
+- 根包的管线测试用 `MockTransport` 注入，能确定性复现 4xx/5xx、超时、读到一半失败等分支；
 - 响应体是流（`ResponseBody`），但它的读语义在内存体与真实连接上完全一致，Mock 因此能代表网络侧的流式行为；
 - 使用方也能替换传输层（自定义实现只需一个方法）。
 

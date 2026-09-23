@@ -7,6 +7,7 @@ test "default config has every field unset" {
   assert_eq(config.http_method, None)
   assert_eq(config.base_url, None)
   assert_eq(config.timeout, None)
+  assert_eq(config.response_encoding, None)
   assert_eq(config.params, None)
   assert_eq(config.data, None)
   assert_eq(config.headers, None)
@@ -24,14 +25,14 @@ test "builders set fields and chain" {
     .with_url("/users")
     .with_method(@config.Method::Post)
     .with_timeout(5000)
-    .with_response_type(@config.ResponseType::Text)
+    .with_response_encoding(@config.ResponseEncoding::Latin1)
     .with_params({ "page": 1 })
     .with_data({ "name": "moonbit" })
   assert_eq(config.base_url, Some("https://api.example.com"))
   assert_eq(config.url, Some("/users"))
   assert_eq(config.http_method, Some(@config.Method::Post))
   assert_eq(config.timeout, Some(5000))
-  assert_eq(config.response_type, Some(@config.ResponseType::Text))
+  assert_eq(config.response_encoding, Some(@config.ResponseEncoding::Latin1))
   assert_eq(config.params, Some({ "page": 1 }))
   assert_eq(config.data, Some({ "name": "moonbit" }))
 }
@@ -102,6 +103,8 @@ test "with_method_header keeps per-method buckets separate" {
 test "builtin defaults mirror axios" {
   let config = @config.defaults()
   assert_eq(config.timeout, Some(0))
+  // axios 的 responseEncoding 默认值是 'utf8'，这里显式落在默认值里
+  assert_eq(config.response_encoding, Some(@config.ResponseEncoding::Utf8))
   assert_eq(config.allow_absolute_urls, Some(true))
   assert_eq(
     config.common_headers.unwrap().get("Accept"),
@@ -162,11 +165,12 @@ test "auth rendering redacts password" {
 }
 
 ///|
-/// ResponseType 的渲染值对应 axios 里 responseType 的取值风格（小写）。
-test "response type renders lower case" {
-  assert_eq(@config.ResponseType::Auto.to_string(), "auto")
-  assert_eq(@config.ResponseType::Json.to_string(), "json")
-  assert_eq(@config.ResponseType::Text.to_string(), "text")
+/// ResponseEncoding 的渲染值对应 axios 里 responseEncoding 的取值风格。
+test "response encoding renders axios style values" {
+  assert_eq(@config.ResponseEncoding::Utf8.to_string(), "utf-8")
+  assert_eq(@config.ResponseEncoding::Latin1.to_string(), "latin1")
+  assert_eq(@config.ResponseEncoding::Ascii.to_string(), "ascii")
+  assert_eq(@config.ResponseEncoding::Utf16le.to_string(), "utf-16le")
 }
 
 ///|
@@ -200,7 +204,7 @@ test "config rendering covers every provided field" {
     .with_method(@config.Method::Post)
     .with_base_url("https://api.example.com")
     .with_timeout(1000)
-    .with_response_type(@config.ResponseType::Json)
+    .with_response_encoding(@config.ResponseEncoding::Utf16le)
     .with_params({ "page": 1 })
     .with_data({ "name": "moon" })
     .with_auth("alice", "secret")
@@ -213,7 +217,7 @@ test "config rendering covers every provided field" {
   for
     expected in [
       "url: /users", "method: POST", "base_url: https://api.example.com", "timeout: 1000",
-      "response_type: json", "params: ", "data: ", "auth: Auth { username: alice, password: <redacted> }",
+      "response_encoding: utf-16le", "params: ", "data: ", "auth: Auth { username: alice, password: <redacted> }",
       "headers: X-Trace: 1", "common_headers: Accept: application/json", "method_headers: GET -> X-Get: 1",
       "validate_status: <fn>", "allow_absolute_urls: true",
     ] {

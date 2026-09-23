@@ -84,6 +84,10 @@ async test "sse close releases the stream and is idempotent" {
 /// 这是「两个协议两个类型」的关键守卫：把 JSON 或二进制按事件读只会得到
 /// 一堆莫名其妙的东西，宁可响亮失败。用例顺便断言请求只发了一次、
 /// 且报错发生在读 body 之前——不会把响应体当事件流瞎解。
+///
+/// 错误里挂着已经收到的响应（状态行与响应头），所以调用方看得见「回来的
+/// 到底是什么」；body 不读（声明了别的类型就可能是任意大的二进制），
+/// 想看原文得改用 `Client::stream`。
 async test "sse refuses responses that are not event streams" {
   let (client, mock) = client_with(raw_response(200, "OK", "{\"a\": 1}"))
   let error = try {
@@ -92,7 +96,12 @@ async test "sse refuses responses that are not event streams" {
   } catch {
     error => Some(error)
   }
-  assert_eq(error.unwrap().code(), @moonhttp.ErrorCode::NotSupported)
+  let error = error.unwrap()
+  assert_eq(error.code(), @moonhttp.ErrorCode::NotSupported)
+  let received = error.response().unwrap()
+  assert_eq(received.status, 200)
+  assert_eq(received.headers.get("content-type"), Some("application/json"))
+  assert_eq(received.data, "")
   assert_eq(mock.request_count(), 1)
 }
 
@@ -125,7 +134,7 @@ async test "sse raises with the error body when status is rejected" {
   }
   let error = error.unwrap()
   assert_eq(error.code(), @moonhttp.ErrorCode::BadResponse)
-  assert_eq(error.response().unwrap().text(), "{\"msg\": \"boom\"}")
+  assert_eq(error.response().unwrap().data, "{\"msg\": \"boom\"}")
 }
 
 ///|

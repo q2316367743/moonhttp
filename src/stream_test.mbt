@@ -72,8 +72,8 @@ async test "stream raises with the error body when status is rejected" {
   assert_eq(error.code(), @moonhttp.ErrorCode::BadResponse)
   let failed = error.response().unwrap()
   assert_eq(failed.status, 500)
-  // 错误体不做 JSON 解析（格式不可预期），原文与原始字节都挂在响应上
-  assert_eq(failed.text(), "{\"msg\": \"boom\"}")
+  // 错误体不额外处理：按配置的编码解码成原文，与原始字节一起挂在响应上
+  assert_eq(failed.data, "{\"msg\": \"boom\"}")
 }
 
 ///|

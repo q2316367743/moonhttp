@@ -45,9 +45,9 @@ pub fn Config::to_string(self : Config) -> String {
       first = push_field(buf, first, "timeout", timeout.to_string())
     None => ()
   }
-  match self.response_type {
-    Some(response_type) =>
-      first = push_field(buf, first, "response_type", response_type.to_string())
+  match self.response_encoding {
+    Some(encoding) =>
+      first = push_field(buf, first, "response_encoding", encoding.to_string())
     None => ()
   }
   match self.params {

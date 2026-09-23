@@ -139,30 +139,71 @@ pub async fn ResponseBody::read_some(
 }
 
 ///|
-/// 读到 EOF，返回剩下的全部字节，并关闭流。
+/// 把连接上的剩余字节读进 `buffer`，直到 EOF。
 ///
-/// 这是「非流式」用法的入口：`Client::request` 就是先 `read_all()`
-/// 再走原有的 JSON 解析与状态码校验。
-pub async fn ResponseBody::read_all(
+/// 单独抽出来是为了让它作为**一个整体**交给 `read_or_fail`：读全量的超时
+/// 口径与逐次读取不同（整段读完受一次 `timeout` 约束，见 `read_all_partial`），
+/// 分成多次读取会把这个口径改掉。
+async fn drain_into(client : @http.Client, buffer : @buffer.Buffer) -> Unit {
+  while client.read_some() is Some(chunk) {
+    buffer.write_bytes(chunk)
+  }
+}
+
+///|
+/// 读到 EOF，返回剩下的全部字节；**失败时不抛错**，把已读到的部分与错误一起返回。
+///
+/// 为什么要它：网络在读到一半时断掉（超时、连接被重置）是常态，此时已经到手的
+/// 字节往往正是现场——服务端错误响应的正文、JSON 的开头、下载进度。上层要把它们
+/// 挂到错误上（`HttpError::response`），所以不能像 `read_all` 那样在中途失败时
+/// 把字节丢掉。
+///
+/// 返回 `(全部字节, None)` 表示正常读完，`(已读到的部分, Some(错误))` 表示中途失败。
+/// 两种情况流都已关闭，与 `read_all` 一致。超时口径也与 `read_all` 一致：
+/// 整段读取受一次 `timeout` 约束，而不是每次分块各算一次。
+pub async fn ResponseBody::read_all_partial(
   self : ResponseBody,
-) -> Bytes raise TransportError {
-  errdefer self.close()
+) -> (Bytes, TransportError?) noraise {
   match self.inner {
-    Closed => b""
+    Closed => (b"", None)
     Memory(memory) => {
       let tail = memory.data
         .exact_view(start=memory.offset, end=memory.data.length())
         .to_owned()
       memory.offset = memory.data.length()
       self.close()
-      tail
+      (tail, None)
     }
     Http(client) => {
-      let data = read_or_fail(self.timeout, () => client.read_all())
-      // 整条响应体已经读完，连接没有别的用处，直接释放。
+      let buffer = @buffer.Buffer::Buffer()
+      // 失败不当异常走，而是作为值返回：调用方要的是「已读到的字节 + 错误」。
+      let failure : TransportError? = try {
+        read_or_fail(self.timeout, () => drain_into(client, buffer))
+        None
+      } catch {
+        error => Some(error)
+      }
+      // 读完与失败都一样：这条连接没有别的用处，释放掉（`read_some` 的
+      // errdefer 已经关过一次，`close` 幂等）。
       self.close()
-      data.binary()
+      (buffer.to_bytes(), failure)
     }
+  }
+}
+
+///|
+/// 读到 EOF，返回剩下的全部字节，并关闭流。
+///
+/// 这是「非流式」用法的入口：`Client::request` 就是先读完再走原有的 JSON 解析
+/// 与状态码校验。中途失败时抛 `TransportError`——已经读到的部分在这一层丢掉，
+/// 需要它请用 `read_all_partial`（本函数就是它的「失败即抛」包装）。
+pub async fn ResponseBody::read_all(
+  self : ResponseBody,
+) -> Bytes raise TransportError {
+  let (bytes, failure) = self.read_all_partial()
+  match failure {
+    None => bytes
+    Some(error) => raise error
   }
 }
 

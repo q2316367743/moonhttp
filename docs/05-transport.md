@@ -29,7 +29,7 @@ pub(open) trait Transport {
 | `body` | 请求体字节；`None` 表示不带 body |
 | `timeout` | 超时毫秒数；`None` 或 `<= 0` 表示不限时 |
 
-`RawResponse` 是**纯传输结果**，刻意不叫 `Response`（上层的 `Response` 还要承担 JSON 解析与状态码校验）：
+`RawResponse` 是**纯传输结果**，刻意不叫 `Response`（上层的 `Response` 还要承担响应体解码与状态码校验）：
 
 | 字段 | 含义 |
 |---|---|
@@ -42,7 +42,7 @@ pub(open) trait Transport {
 
 ### 为什么 `body` 是流
 
-`send` 返回时只保证「状态行 + 响应头已经到手」，响应体按需读。底层原语只保留最弱的能力，一次性读全是**上层**的组合结果（`Client::request` 就是 `read_all()` 之后走原有解析）。这样 chunked / SSE 这类「边到边读」的协议才有落点——SSE 的全部要求就是「先看状态码与 `Content-Type`，再一段段取数据」。
+`send` 返回时只保证「状态行 + 响应头已经到手」，响应体按需读。底层原语只保留最弱的能力，一次性读全是**上层**的组合结果（`Client::request` 就是 `read_all()` 之后按 `response_encoding` 解码）。这样 chunked / SSE 这类「边到边读」的协议才有落点——SSE 的全部要求就是「先看状态码与 `Content-Type`，再一段段取数据」。
 
 ### `ResponseBody` 契约
 
@@ -51,6 +51,7 @@ pub fn ResponseBody::from_bytes(Bytes) -> ResponseBody   // 内存体：Mock 与
 pub async fn ResponseBody::read_some(Self, max_len? : Int) -> Bytes? raise TransportError
 pub async fn ResponseBody::read_until(Self, sep : String) -> String? raise TransportError
 pub async fn ResponseBody::read_all(Self) -> Bytes raise TransportError
+pub async fn ResponseBody::read_all_partial(Self) -> (Bytes, TransportError?) noraise
 pub fn ResponseBody::close(Self) -> Unit
 ```
 
@@ -59,9 +60,12 @@ pub fn ResponseBody::close(Self) -> Unit
 - `read_some` 到 EOF 返回 `None`；返回的块大小不保证（取决于对端一次发了多少）；
 - `read_until` 消费掉分隔符且不返回它；EOF 时把剩余内容当作最后一段返回，再读一次才是 `None`；
 - `read_all` 读完剩余内容，空体返回空字节串；
-- **读到 EOF 会自动关闭底层连接**——本项目不复用连接，早关没有代价；
+- **`read_all_partial` 与 `read_all` 读到的字节相同，区别只在失败时**：失败不当异常抛出，而是返回 `(已读到的部分, Some(错误))`——网络在读到一半断掉时，已经到手的字节往往正是现场（错误响应的正文、下载进度），上层要把它们挂到错误上（见 `04-errors.md`）。`read_all` 就是它的「失败即抛」包装；
+- **读到 EOF 会自动关闭底层连接**——本项目不复用连接，早关没有代价；`read_all_partial` 在失败时同样关闭（两种结局都关）；
 - `close()` 幂等。没有析构器，**拿到流后不读完也不 `close()` 会漏一条连接**；
 - 任何读取失败都会先关闭流再抛 `TransportError`：失败之后连接状态已不可信，调用方不该继续读。
+
+`read_all_partial` 的声明带 `noraise`：MoonBit 里 async 函数省略错误类型**不等于**不抛错（省略等于开放错误类型），要表达「不抛」必须显式写 `noraise`。
 
 **不要用 `read_until("\n\n")` 切 SSE 事件。** CRLF 流上事件边界的字节是 `0D 0A 0D 0A`，里面没有连续两个 `0A`，这个分隔符永远匹配不到：内存体上表现为「整段原样返回」，真实连接上更糟——EOF 不会来，于是会一直等到连接关闭（不限时的 SSE 配置下就是永远等下去）。事件切分要按规范认 CRLF / LF / CR 三种行尾，落在**根包**的 `SseParser` 里，不在传输层，见 `06-sse.md`；`src/transport/stream_test.mbt` 有一条用例专门钉住这个坑。
 
@@ -74,14 +78,21 @@ pub fn ResponseBody::close(Self) -> Unit
 | 阶段 | 受谁约束 |
 |---|---|
 | 建连 + 发请求头 + 写 body + 等响应头 | `@async.with_timeout` 整体包住 |
-| 响应体每一次读取 | `ResponseBody` 按 `timeout` 包住**单次**读取 |
+| 响应体读取 | `ResponseBody` 按 `timeout` 包住，口径随读法不同（见下表） |
 
-也就是说超时从「整条请求的总时限」细化成了「响应头阶段总时限 + 每次读取的等待上限」。这么切的原因：
+响应体读取的口径分两种，区别在「一次」指的是什么：
+
+| 读取方法 | 一次 = | 含义 |
+|---|---|---|
+| `read_some` / `read_until` | 一次调用 | 等一次数据算一次：数据一直在流动就不会超时，卡住不动的间隔超过 `timeout` 才失败（SSE 正是靠这个语义长连） |
+| `read_all` / `read_all_partial` | 整段读完 | 从开始读到 EOF 共用一个时限：大文件下载不会因为「一直在慢慢传」而无限期拖下去 |
+
+也就是说超时从「整条请求的总时限」细化成了「响应头阶段总时限 + 响应体读取的等待上限」。这么切的原因：
 
 - 非流式路径不能因为改成流式就丢掉「响应体下载慢也会超时」的原有行为；
 - SSE 这类长连「长时间没有数据是正常的」，必须完全不限时。内置默认值就是不限时（`defaults()` 给的是 `Some(0)`，`<= 0` 一律视为不限时），所以在默认实例上直接 `stream` 就能长连；显式设过 `timeout` 的实例要用 `with_timeout(0)` 关掉。
 
-读取阶段超时同样抛 `TransportError::Timeout`，上层映射成 `ErrorCode::Timeout`。
+读取阶段超时同样抛 `TransportError::Timeout`，上层映射成 `ErrorCode::Timeout`。中途超时前已经读到的字节不会丢：`read_all_partial` 把它们交出来，上层挂到错误上（见 `04-errors.md`）。
 
 ## 写一个自定义实现
 
@@ -159,5 +170,7 @@ println(sent.headers.to_string())
 队列空了之后复用最后一个响应，是为了让「同一个响应要被请求多次」的用例不必重复塞响应；完全没有配置响应时抛 `TransportError::Unsupported` 而不是返回空响应——静默的成功会让测试变得不可信。
 
 **响应体要用 `ResponseBody::from_bytes` 构造。** 响应体是流，Mock 每服务一次都会 `rewind()` 出一份「从头开始读」的副本：否则「复用最后一个响应」会让第二次请求读到空 body，用例会静默地变假。`rewind` 只对内存体成立，把真实连接上的响应体配给 Mock 会抛 `TransportError::Unsupported`。
+
+内存体**永远读得完**，所以「读到一半失败」（`read_all_partial` 返回半截字节那一半）用 Mock 造不出来：要本机 server 发一半再挂住才行，`src/error_test.mbt` 的三条超时用例就是这么做的。
 
 `MockTransport` 是公开 API（不只是测试内部工具），使用方可以用它给自己的代码写不联网的测试。

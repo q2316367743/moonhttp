@@ -1,4 +1,4 @@
-// 配置里的小值类型：认证凭据与响应体处理方式。它们与 Config 拆在不同文件，
+// 配置里的小值类型：认证凭据与响应体解码方式。它们与 Config 拆在不同文件，
 // 便于各自独立演进（也满足 AGENTS.md RL-04 的 300 行上限）。
 
 ///|
@@ -22,42 +22,45 @@ pub extend Auth with Default::{default}
 pub extend Auth with @debug.Debug::{to_repr}
 
 ///|
-/// 响应体的解码方式，对应 axios 的 `responseType` 加上 `forcedJSONParsing`。
+/// 响应体字节怎么解码成文本，对应 axios 的 `responseEncoding`（默认 `utf-8`）。
 ///
-/// axios 的默认值是 `undefined` + `forcedJSONParsing: true`，
-/// 也就是「不特别指定类型，但只要看起来像 JSON 就自动解析」，
-/// 本项目把它显式化为 `Auto`，并且把「看起来像 JSON」落到 `Content-Type` 上
-/// （判定规则见 `auto_parses_json`）。
+/// 它只描述「字节 → 文本」这一步：`Response::data` 就是按它解码出来的字符串。
+/// 本项目**不做 JSON 解析**（axios 的 `responseType` / `transformResponse`
+/// 没有对应物），要对象请自己对 `response.data` 调用 `@json.parse`。
 ///
-/// **这里只描述「读完的响应体怎么解码」，不描述读不读。**
-/// 「读完还是流」由入口决定：`Client::request` 读全、`Client::stream` 不读、
-/// `Client::sse` 按事件读。所以这里没有 `Stream` 这样的取值——
-/// 想让配置也表达「不要读全」，在静态类型下既没有落点，也会把
-/// 「解码方式」和「返回形态」两件事混在一起。
-pub(all) enum ResponseType {
-  /// 默认：`Content-Type` 是 JSON（或没声明）时尝试按 JSON 解析，
-  /// 失败就把原文当作字符串；声明为其它类型则完全不解析
-  Auto
-  /// 强制按 JSON 解析，忽略 `Content-Type`；
-  /// 解析失败会作为错误抛出（对应 axios 的 ERR_BAD_RESPONSE）
-  Json
-  /// 完全不解析，`Response::data` 就是 `Json::String(原文)`
-  Text
+/// **这里只描述怎么解码，不描述读不读。** 「读全量还是流」由入口决定：
+/// `Client::request` 读全并解码、`Client::stream` 交原始字节、
+/// `Client::sse` 按规范固定 UTF-8 解析事件。所以这个字段只在 `request`
+/// 路径上生效——流式入口连 `data` 都没有，解码不是它们的事。
+///
+/// 解码一律是 lossy 的：遇到该编码下非法的字节用替换字符 `U+FFFD`，
+/// 不抛错。响应正文由服务端说了算，为了几个坏字节把整个响应判成失败
+/// 得不偿失；要精确字节请读 `Response::raw`。
+pub(all) enum ResponseEncoding {
+  /// 默认：UTF-8
+  Utf8
+  /// ISO-8859-1：每个字节直接映射成 `U+00XX`，任何字节序列都能解出文本
+  Latin1
+  /// 只认 `0x00`–`0x7F`，更高的字节是替换字符
+  Ascii
+  /// UTF-16 小端（axios 里的 `utf16le` / `ucs2`）
+  Utf16le
 } derive(Eq, Debug)
 
 ///|
-pub extend ResponseType with Eq::{equal, not_equal}
+pub extend ResponseEncoding with Eq::{equal, not_equal}
 
 ///|
-pub extend ResponseType with @debug.Debug::{to_repr}
+pub extend ResponseEncoding with @debug.Debug::{to_repr}
 
 ///|
-/// 渲染成小写的配置值，用于 `Config::to_string` 与日志。
-pub fn ResponseType::to_string(self : ResponseType) -> String {
+/// 渲染成 axios `responseEncoding` 风格的取值，用于 `Config::to_string` 与日志。
+pub fn ResponseEncoding::to_string(self : ResponseEncoding) -> String {
   match self {
-    Auto => "auto"
-    Json => "json"
-    Text => "text"
+    Utf8 => "utf-8"
+    Latin1 => "latin1"
+    Ascii => "ascii"
+    Utf16le => "utf-16le"
   }
 }
 

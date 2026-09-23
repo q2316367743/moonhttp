@@ -1,5 +1,5 @@
 // Config 类型本身与它的链式构建器。
-// 渲染（to_string / Debug）在 render.mbt，小值类型（Auth / ResponseType）在 types.mbt。
+// 渲染（to_string / Debug）在 render.mbt，小值类型（Auth / ResponseEncoding）在 types.mbt。
 
 ///|
 /// 把 headers 包的 `Headers` 引入本包作用域，同时作为 `config` 公开 API 的一部分
@@ -18,7 +18,7 @@ pub using @headers {type Headers}
 /// 字段按合并策略分组，与 `merge` 包里的实现一一对应：
 /// - 只取请求级（axios `valueFromConfig2`）：url / http_method / data
 /// - 请求级优先、否则回退默认（`defaultToConfig2`）：
-///   base_url / timeout / response_type
+///   base_url / timeout / response_encoding
 /// - 深合并（`mergeDeepProperties`）：
 ///   params / auth / headers / common_headers / method_headers / allow_absolute_urls
 /// - 请求级存在即生效（`mergeDirectKeys`）：validate_status
@@ -44,7 +44,9 @@ pub(all) struct Config {
   /// `request` 下是这条请求的时限；`stream` 下是**每次读取**的等待上限，
   /// 所以 SSE 这类「长时间没有数据是正常的」长连应保持不超时。
   timeout : Int?
-  response_type : ResponseType?
+  /// 响应体字节怎么解码成 `Response::data`。缺省（或未设置时）按 UTF-8 解码，
+  /// 非法字节用替换字符；只在 `Client::request` 路径上生效。
+  response_encoding : ResponseEncoding?
   /// 查询参数，序列化后追加到 URL（不覆盖 URL 里已有的 query）
   params : Json?
   auth : Auth?
@@ -124,12 +126,15 @@ pub fn Config::with_timeout(self : Config, timeout : Int) -> Config {
 }
 
 ///|
-/// 设置响应体处理方式。
-pub fn Config::with_response_type(
+/// 设置响应体字节的解码方式（默认 `Utf8`）。
+///
+/// 只影响「读全量」的 `Client::request` 解出来的 `Response::data`：
+/// `stream` 交原始字节、`sse` 按规范固定 UTF-8，都不读这个字段。
+pub fn Config::with_response_encoding(
   self : Config,
-  response_type : ResponseType,
+  response_encoding : ResponseEncoding,
 ) -> Config {
-  { ..self, response_type: Some(response_type), }
+  { ..self, response_encoding: Some(response_encoding), }
 }
 
 ///|

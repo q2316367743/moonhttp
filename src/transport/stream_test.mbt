@@ -26,6 +26,24 @@ async test "response body reads all remaining bytes" {
 }
 
 ///|
+/// read_all_partial：正常读完时与 read_all 给出的字节一样，只是把「有没有失败」
+/// 也交出来（这里是 `None`）。
+///
+/// 失败那一半（半截字节 + 错误）需要真实连接才能造出来，见根包
+/// `error_test.mbt` 的两条超时用例；内存体上永远读得完，所以这里只钉住
+/// 「成功路径不能因为多了个返回值就变形」。
+async test "read_all_partial returns the bytes and no failure on the memory source" {
+  let body = @transport.ResponseBody::from_bytes(b"hello")
+  let (bytes, failure) = body.read_all_partial()
+  assert_eq(bytes, b"hello")
+  assert_true(failure is None)
+  // 已读完（流已关闭）之后再读：空字节，依然没有失败
+  let (again, failure) = body.read_all_partial()
+  assert_eq(again, b"")
+  assert_true(failure is None)
+}
+
+///|
 /// read_until：分隔符被消费掉但不返回；末段没有分隔符时按 EOF 语义整段返回。
 ///
 /// 用例里的中文是刻意选的：String 在 MoonBit 里是 UTF-16，按字节切只能得到

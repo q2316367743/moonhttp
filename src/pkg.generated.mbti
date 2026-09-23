@@ -61,7 +61,7 @@ pub(all) struct ErrorInfo {
 }
 
 pub(all) struct Response {
-  data : Json
+  data : String
   status : Int
   status_text : String
   headers : @headers.Headers
@@ -70,7 +70,6 @@ pub(all) struct Response {
 } derive(@debug.Debug)
 pub fn Response::content_length(Self) -> Int
 pub fn Response::is_success(Self) -> Bool
-pub fn Response::text(Self) -> String
 pub fn Response::to_repr(Self) -> @debug.Repr
 
 pub(all) struct SseStream {
@@ -109,7 +108,7 @@ pub using @headers {type Headers}
 
 pub using @config {type Method}
 
-pub using @config {type ResponseType}
+pub using @config {type ResponseEncoding}
 
 pub using @sse {type SseEvent}
 

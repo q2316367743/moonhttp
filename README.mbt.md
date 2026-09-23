@@ -23,8 +23,8 @@ async fn main {
 
   println(res.status) // 200
   println(res.headers.get("content-type")) // application/json; charset=utf-8
-  println(res.data.stringify()) // 解析好的 JSON 对象
-  println(res.text()) // 原始响应文本
+  println(res.data) // 响应体原文；默认按 UTF-8 解码，不做 JSON 解析
+  println((try! @json.parse(res.data)).stringify()) // 要 JSON 就自己解
 }
 ```
 
@@ -55,7 +55,7 @@ import {
 | 字段 | axios 策略 | 本项目行为 |
 |---|---|---|
 | `url` / `http_method` / `data` | `valueFromConfig2` | **只取请求级**。默认值里的同名字段被丢弃，即使请求没提供也不回退 |
-| `base_url` / `timeout` / `response_type` | `defaultToConfig2` | 请求级优先，缺省则回退默认值 |
+| `base_url` / `timeout` / `response_encoding` | `defaultToConfig2` | 请求级优先，缺省则回退默认值 |
 | `params` | `mergeDeepProperties` | 按 JSON 对象逐键递归合并；数组**整体替换而非拼接** |
 | `auth` | `mergeDeepProperties` | 逐字段合并：默认值给 `username`、请求给 `password`，两者都在 |
 | `headers` | caseless 深合并 | 头名大小写不敏感；请求级同名头覆盖默认值，默认值独有的头保留 |
@@ -80,21 +80,29 @@ import {
 4. 三层头拍平成一份（`common` < 按方法 < 请求级平铺）
 5. 序列化 body：`Json::String` 原样发送，其它 JSON 值序列化成 JSON 文本并补 `Content-Type`；有 `auth` 则补 `Authorization`
 6. 交给传输层发送（`timeout > 0` 时套超时），并把响应体读到 EOF
-7. 按 `response_type` 解析响应体
+7. 按 `response_encoding` 把响应体字节解码成 `data`（**不做 JSON 解析**）
 8. 用 `validate_status` 校验状态码，失败则抛 `HttpError`
 
 第 3～8 步的实现分别在 [`src/url/`](src/url/)、[`src/client.mbt`](src/client.mbt) 里，全部是纯函数，可以脱离网络单独测试。第 6 步里「读全量」是 `request` 的选择，不需要完整响应体时改用 [`Client::stream`](#流式响应与-sse) 或 [`Client::sse`](#流式响应与-sse)。
 
-### `response_type` 怎么决定 `data`
+失败时抛出的 `HttpError` 会带上**已经收到的响应**：响应头到手之后才可能开始读响应体，所以读取阶段的任何失败（超时、断连）都不等于「什么都没收到」——状态行、响应头与失败前读到的部分正文都会挂在错误上，见[错误处理](#错误处理)。
 
-| `response_type` | `Content-Type` | `data` |
-|---|---|---|
-| `Auto`（默认） | JSON（`application/json` / `application/*+json`）或缺失 | 解析成功是 JSON 值，失败是原文 |
-| `Auto` | 别的类型（`text/*` 等） | 原文（**不解析**） |
-| `Json` | 忽略 | 强制解析；失败抛 `HttpError` |
-| `Text` | 忽略 | 原文 |
+### `data` 是解码后的原文
 
-`Auto` 看 `Content-Type` 这一步是必要的：`123`、`true`、`"x"` 这些纯文本本身就是合法 JSON 文本，不看声明就解析会把 `text/plain` 的响应变成数字。这张表只在 `request` 上生效——流式入口没有 `data` 可解，所以不读 `response_type`。
+`request` 把响应体完整读出来，按 `response_encoding` 解码成 `Response::data`（`String`）：
+
+| `response_encoding` | 解码方式 |
+|---|---|
+| `Utf8`（默认） | UTF-8；非法字节 → 替换字符 `U+FFFD` |
+| `Latin1` | 字节值即码点（`0xE9` → `é`） |
+| `Ascii` | 只认 `0x00`–`0x7F`，更高的字节 → 替换字符 |
+| `Utf16le` | UTF-16 小端 |
+
+四种都是 lossy 的：该编码下非法的字节解成替换字符，**不抛错**。精确字节始终在 `Response::raw`（`content_length()` 也基于它），二进制内容或大文件请改用 `Client::stream`。
+
+**这里不做 JSON 解析**——这是与 axios 最重要的一处差异。axios 的 `res.data` 是 `any`，由 `transformResponse` + `forcedJSONParsing` 去猜内容类型；在静态类型下，那条路的终点只能是「让每个调用点自己 match 一个变体」，而猜错时（`text/plain` 的 `123` 被解成数字）还是静默的。所以 `data` 一律是字符串，**要对象请自己 `@json.parse(res.data)`**，解析失败也由你按自己的语境处理。
+
+这个字段只在 `request` 上生效：`stream` 交的是原始字节，`sse` 按规范固定 UTF-8 解析事件。
 
 三种读法各有入口，读法由**调哪个方法**决定：`request` 读全量返回 `Response`，`stream` 不读返回 `StreamResponse`，`sse` 按事件读返回 `SseStream`。调错是编译错误，不需要运行时守卫。
 
@@ -159,7 +167,8 @@ async fn watch_events(
 - 两个流式类型各自只有一种读法：`StreamResponse` 是 `read_some` / `read_until` / `read_all`，`SseStream` 是 `next_event`。它们都可能抛 `HttpError`；`StreamResponse::is_event_stream()` 可以自查对面是不是 SSE（想按事件读请改用 `Client::sse`）；
 - 读到 EOF 会自动关闭连接；**没读完就结束时必须调用 `close()`**——本项目没有连接复用也没有析构器，忘记关闭会漏一条连接。`close()` 是「到此为止」：之后 `read_some` / `next_event` 一律只返回 `None`，包括那一次读取里已经解析好、还排队等着的事件；
 - 状态码校验与 `request` 一致：非 2xx 会先把错误体读完，再抛带完整响应的 `HttpError`，长连场景下能立刻看到「为什么没连上」；
-- `timeout` 在流式路径下是**每次读取的等待上限**（不是整条请求的总时限），SSE 用默认的不限时即可；
+- 读取失败（超时、断连）时错误里带着**已经收到的响应**：`read_all` 中途失败会把已读到的字节一起交出来（下载断在半路时，那半截就是现场），`read_some` / `read_until` / `next_event` 失败时至少还有状态行与响应头；
+- `timeout` 在流式路径下，`read_some` / `read_until` 是**每次读取的等待上限**，`read_all` 是**整段读完的时限**（不是整条请求的总时限），SSE 用默认的不限时即可；
 - **不要用 `read_until("\n\n")` 切 SSE 事件**：SSE 允许 CRLF / LF / CR 三种行尾，而 CRLF 流上事件边界的字节 `0D 0A 0D 0A` 里没有连续两个 LF，这个分隔符永远匹配不到（内存体上表现为整段原样返回，真实连接上会一直等到连接关闭）。细节与全部解析规则见 [docs/06-sse.md](docs/06-sse.md)。
 
 ## 可替换的传输层
@@ -195,7 +204,7 @@ pub impl Transport for MyTransport with fn send(self, request) {
 
 ## 错误处理
 
-`request` 失败时抛出 `HttpError`，它携带分类、已合并的配置、以及（若服务端已响应）原始响应：
+`request` 失败时抛出 `HttpError`，它携带分类、已合并的配置、以及**已经收到的响应**（没有收到就是 `None`）：
 
 ```moonbit nocheck
 try {
@@ -210,14 +219,22 @@ try {
 }
 ```
 
+`response` 有三种取值，区别只在「响应收到多少」：
+
+- **完整响应**：状态码没通过 `validate_status` 时；
+- **已经收到的部分**：失败发生在响应头到手之后（读响应体时超时、断连）——状态行与响应头一定在，`raw` / `data` 是失败前读到的部分，可能只有半截。服务端的错误正文常常已经到了一部分，这半截正是排查时最想看的东西；
+- **`None`**：连响应头都没收到就失败了（连不上、DNS 失败、缺 `url`）。
+
+错误码只说「失败是什么」（超时 / 断连 / 状态码不合规），`response` 说「已经收到什么」，两件事不混在一起。
+
 | `ErrorCode` | axios 对应错误码 | 触发时机 |
 |---|---|---|
 | `BadRequest` | `ERR_BAD_REQUEST` | 状态码 4xx 且未通过校验 |
-| `BadResponse` | `ERR_BAD_RESPONSE` | 状态码 5xx（或其它非 2xx）；强制 JSON 解析失败 |
-| `Network` | `ERR_NETWORK` | 连接失败、DNS 解析失败、TLS 握手失败等 |
-| `Timeout` | `ECONNABORTED` | 超过 `timeout`（axios 默认也用 `ECONNABORTED`） |
+| `BadResponse` | `ERR_BAD_RESPONSE` | 状态码 5xx（或其它非 2xx） |
+| `Network` | `ERR_NETWORK` | 连接失败、DNS 解析失败、TLS 握手失败；读响应体中途连接被重置 |
+| `Timeout` | `ECONNABORTED` | 超过 `timeout`（axios 默认也用 `ECONNABORTED`），含读响应体中途的等待超时 |
 | `InvalidUrl` | `ERR_INVALID_URL` | 既没有 `url` 也没有可用的 `base_url` |
-| `NotSupported` | `ERR_NOT_SUPPORT` | 传输层无法完成该请求 |
+| `NotSupported` | `ERR_NOT_SUPPORT` | 传输层无法完成该请求；`sse` 拿到的响应不是事件流 |
 
 ## 包结构
 
@@ -265,7 +282,7 @@ moonhttp/
 
 - `Config` 的 `method` 字段在本项目里叫 `http_method`（保留字原因，见上文）。
 - `Headers` 内部以小写保存头名（写入时的原始拼写会被记住并用于输出），但不支持 axios 用 `false` 表示「禁止被同名默认值覆盖」的哨兵值。
-- `Response::data` 是 `Json`：解析失败时是 `Json::String(原文)`，等价于 axios 的 `forcedJSONParsing` 行为。但 `Auto` 会先看 `Content-Type`：声明成 `text/plain` 这类非 JSON 类型时**不解析**——`123` 本身就是合法 JSON 文本，无脑解析会把纯文本变成数字。二进制内容请读 `Response::raw`。
+- `Response::data` 是 `String`（响应体按 `response_encoding` 解码后的原文），不是 axios 的 `any`：本项目不做 `responseType` / `transformResponse` / `forcedJSONParsing` 那一套自动解析，要 JSON 请自己 `@json.parse(response.data)`。二进制内容读 `Response::raw`（或改走 `Client::stream`）。
 - 没有可变的全局默认值。axios 的全局 `axios.defaults` 在本项目里对应 `@config.defaults()`（固定的内置默认值）；要定制请用 `create(...)` 或 `client.create(...)` 派生。
 
 ### 后续扩展
@@ -299,6 +316,6 @@ moon info && moon fmt   # 更新 .mbti 接口文件并格式化
 moon coverage analyze   # 覆盖率
 ```
 
-测试分层：`config` / `headers` / `merge` / `url` / `sse` 五个包是纯逻辑，用同步测试逐条钉住合并语义与 SSE 解析规则；根包与 `transport` 用 `async test` 配合 `MockTransport` 跑完整管线。`src/sse_stream_test.mbt` 与 `transport/stream_test.mbt` 会各起一个本机 server（`127.0.0.1` 随机端口）——前者验证 CRLF 的 SSE 事件能在服务端停顿期间就到达，后者验证真实连接的流式读取与单次读取超时；同样不需要外网。只有 `src/cmd/main` 会访问真实网络。
+测试分层：`config` / `headers` / `merge` / `url` / `sse` 五个包是纯逻辑，用同步测试逐条钉住合并语义与 SSE 解析规则；根包与 `transport` 用 `async test` 配合 `MockTransport` 跑完整管线。`src/sse_stream_test.mbt`、`transport/stream_test.mbt` 与 `src/error_test.mbt` 会各起一个本机 server（`127.0.0.1` 随机端口）——分别验证 CRLF 的 SSE 事件能在服务端停顿期间就到达、真实连接的流式读取与单次读取超时、以及「读响应体中途失败时错误里带着已经收到的部分」（内存体读得完，只有真实连接能造出「读到一半」）。同样不需要外网，只有 `src/cmd/main` 会访问真实网络。
 
 维护者文档（实现思路、API 契约、改动清单、MoonBit 语言坑位）见 [`docs/`](docs/README.md)。

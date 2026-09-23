@@ -4,7 +4,8 @@
 /// 覆盖三件事：
 /// 1. 创建实例，并让实例携带 `base_url` 等默认配置；
 /// 2. 用 `request` 发请求，配置在「内置默认值 → 实例默认值 → 本次请求」之间合并；
-/// 3. 读取响应、以及状态码校验失败时的错误处理。
+/// 3. 读取响应（`data` 是解码后的原文，要 JSON 自己 `@json.parse`）、
+///    以及状态码校验失败时的错误处理。
 ///
 /// 用 `moon run src/cmd/main` 执行（需要联网）。
 async fn main {
@@ -18,23 +19,21 @@ async fn main {
   )
   println("实例的默认配置：\{api.defaults()}")
 
-  // 2) 纯文本响应：response_type 设为 Text 时不尝试 JSON 解析。
-  let zen = api.request(
-    @moonhttp.Config::new("/zen").with_response_type(
-      @moonhttp.ResponseType::Text,
-    ),
-  )
+  // 2) 纯文本响应：`data` 就是按 response_encoding（默认 utf-8）解码出的原文，
+  //    库不做任何 JSON 解析，所以文本可以原样打印。
+  let zen = api.request(@moonhttp.Config::new("/zen"))
   println("\n[GET /zen] 状态码 = \{zen.status} \{zen.status_text}")
-  println("响应体 = \"\{zen.text()}\"")
+  println("响应体 = \"\{zen.data}\"")
   println(
     "x-ratelimit-limit = \{zen.headers.get("x-ratelimit-limit").unwrap_or("<none>")}",
   )
 
-  // 3) JSON 响应：默认的 Auto 模式会自动解析成对象，
-  //    所以可以直接用 JSON 模式匹配把字段取出来。
+  // 3) JSON 响应：解析这一步由调用方决定——库不猜内容类型，
+  //    这样 `text/plain` 的 `123` 也不会被悄悄解成数字。
+  //    示例里假定服务端返回的一定是合法 JSON，用 try! 直接暴露解析错误。
   let repo = api.request(@moonhttp.Config::new("/repos/moonbitlang/core"))
   println("\n[GET /repos/moonbitlang/core] 状态码 = \{repo.status}")
-  match repo.data {
+  match (try! @json.parse(repo.data)) {
     {
       "full_name": String(name),
       "stargazers_count": Number(stars, ..),
@@ -42,7 +41,7 @@ async fn main {
       ..
     } =>
       println("解析结果 = \{name} / \{language} / \{stars.to_int()} stars")
-    _ => println("解析结果 = \{repo.data.stringify()}")
+    _ => println("解析结果 = \{repo.data}")
   }
 
   // 4) 查询参数与实例派生：create 派生出的实例继承父实例的 base_url，
@@ -56,7 +55,7 @@ async fn main {
     }),
   )
   println("\n[GET /search/repositories?q=moonbit&sort=stars&per_page=3]")
-  match found.data {
+  match (try! @json.parse(found.data)) {
     { "items": Array(items), .. } => {
       println("拿到 \{items.length()} 个仓库，前三个是：")
       for item in items {
@@ -66,7 +65,7 @@ async fn main {
         }
       }
     }
-    _ => println("响应不符合预期：\{found.data.stringify()}")
+    _ => println("响应不符合预期：\{found.data}")
   }
 
   // 5) 错误处理：默认只把 2xx 当作成功，404 会抛出 HttpError，
@@ -81,6 +80,7 @@ async fn main {
       println("  错误分类 = \{info.code}")
       println("  错误描述 = \{info.message}")
       println("  服务端状态码 = \{info.response.unwrap().status}")
+      println("  服务端的错误正文 = \{info.response.unwrap().data}")
     }
   }
 }

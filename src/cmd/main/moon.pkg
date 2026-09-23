@@ -2,6 +2,8 @@
 // 用 `moon run src/cmd/main` 执行（需要联网）。
 import {
   "moonbitlang/async",
+  // 响应体是原文（String），解析 JSON 是示例里调用方自己的事。
+  "moonbitlang/core/json",
   "q2316368843/moonhttp",
 }
 

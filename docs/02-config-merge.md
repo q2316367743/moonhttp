@@ -7,7 +7,7 @@
 | 文件 | 职责 |
 |---|---|
 | `src/config/config.mbt` | `Config` 的字段定义与 `with_*` 构建器 |
-| `src/config/types.mbt` | `Auth` / `ResponseType` 等小值类型 |
+| `src/config/types.mbt` | `Auth` / `ResponseEncoding` 等小值类型 |
 | `src/config/default.mbt` | 内置默认值 `defaults()`（对应 axios 的 `lib/defaults/index.js`） |
 | `src/merge/merge.mbt` | 四种合并策略、`merge_config`、`flatten_headers` |
 | `src/merge/json_merge.mbt` | `params` 用的 JSON 深合并 |
@@ -57,7 +57,7 @@ pub fn merge_config(base : Config, request : Config) -> Config {
 | `data` | 只取请求级 | 同上 |
 | `base_url` | 请求优先/否则默认 | |
 | `timeout` | 请求优先/否则默认 | |
-| `response_type` | 请求优先/否则默认 | |
+| `response_encoding` | 请求优先/否则默认 | 内置默认值是 `Utf8`（axios 的 `responseEncoding: 'utf8'`） |
 | `allow_absolute_urls` | 深合并（标量） | 等价于请求优先/否则默认 |
 | `params` | 深合并 | 逐键递归；数组**整体替换** |
 | `auth` | 深合并 | 逐字段 |

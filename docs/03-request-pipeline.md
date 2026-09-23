@@ -4,8 +4,8 @@
 
 | 文件 | 职责 |
 |---|---|
-| `src/client.mbt` | `Client::request` / `Client::stream` / `Client::sse` 的编排：合并 → 定方法 → 发送 →（读全量 / 交还流）→ 解析 → 校验 |
-| `src/client.mbt` | 入口之外的纯函数管线（与入口同文件）：`build_prepared_request` / `build_response` / `plain_response` / `validate_response` / `transport_error` / `media_type` |
+| `src/client.mbt` | `Client::request` / `Client::stream` / `Client::sse` 的编排：合并 → 定方法 → 发送 →（读全量 / 交还流）→ 解码 → 校验 |
+| `src/client.mbt` | 入口之外的纯函数管线（与入口同文件）：`build_prepared_request` / `build_response` / `decode_body` / `validate_response` / `transport_error` / `media_type` |
 | `src/url/combine.mbt` | 绝对地址判定、`combine_urls`、`build_full_path` |
 | `src/url/build_url.mbt` | `params` → query string |
 | `src/url/encode.mbt` | 单个 URL 组件的百分号编码 |
@@ -23,20 +23,22 @@
 4. **拍平头**：`flatten_headers(common_headers, method_headers, headers, method)`，优先级 `common` < 按方法 < 请求级平铺。
 5. **序列化 body**：`Json::String` 原样发送；其它 JSON 值 `stringify()` 并补 `Content-Type: application/json`；有 `auth` 则补 `Authorization`。补默认头一律用 `Headers::set_if_absent`，用户显式设置的同名头永远优先。
 6. **发送**：交给 `Transport::send`（契约见 `05-transport.md`）。失败映射见 `04-errors.md`。
-7. **解析响应体**：按 `response_type` 处理（见下）。
+7. **解码响应体**：按 `response_encoding` 把字节解成 `Response::data`（见下）。
 8. **校验状态码**：`validate_status` 不通过则抛 `HttpError`。
 
 第 1–5 步是「拼出一份能发出去的请求」，与读不读响应体无关。第 6 步起有三种**读法**，各有自己的入口与返回类型：
 
 | 入口 | 第 6 步之后 | 返回 | 适用 |
 |---|---|---|---|
-| `Client::request` | 先把响应体读到 EOF（`ResponseBody::read_all`），再解码 + 校验 | `Response` | 常规请求，需要完整 `data` |
+| `Client::request` | 先把响应体读到 EOF（`ResponseBody::read_all_partial`），再解码 + 校验 | `Response` | 常规请求，需要完整 `data` |
 | `Client::stream` | 直接把响应头与响应体流交出去 | `StreamResponse` | 大文件下载、自己按块处理 |
 | `Client::sse` | 交出去，但要求响应头声明了 `text/event-stream` | `SseStream` | 按事件读 SSE |
 
-**读法由入口决定，不由配置决定。** 所以 `response_type` 里没有 `Stream` 这类取值：它只描述「读完的响应体怎么解码」。语言层面也没法让一个方法的返回类型随运行时配置变化——真要那样只能返回一个变体包装，调用方每次都得 match，而常见场景（普通 JSON 请求）反而变麻烦。三种读法静态分开之后，「调错了」是编译错误，不需要运行时守卫。
+**读法由入口决定，不由配置决定。** `response_encoding` 只描述「字节怎么解成文本」，不描述读不读——「读完还是流」是调哪个方法决定的，配置字段里没法表达，也不该表达。语言层面同样没法让一个方法的返回类型随运行时配置变化：真要那样只能返回一个变体包装，调用方每次都得 match。三种读法静态分开之后，「调错了」是编译错误，不需要运行时守卫。
 
-三种入口的**前半段与状态码校验完全一致**（`stream` 与 `sse` 共用 `Client::open_stream`，规则见 `status_allowed` / `status_error_code`）。差别只在失败时拿什么：`request` 报错时带的是按 `response_type` 解码过的响应，两个流式入口报错前会把错误体读完，但**不做 JSON 解析**（错误体格式不可预期，强行解析会把「状态码失败」这个更准确的原因盖掉），原文放在 `HttpError::response()` 的 `data` / `raw` 上。流式路径的超时语义见 `05-transport.md`，SSE 另见 `06-sse.md`。
+三种入口的**前半段与状态码校验完全一致**（`stream` 与 `sse` 共用 `Client::open_stream`，规则见 `status_allowed` / `status_error_code`）。差别只在失败时拿什么：`request` 报错时带的是按 `response_encoding` 解码过的响应，两个流式入口报错前会把错误体读完（同样按这个编码解码，但不猜它是 JSON 还是别的什么格式——错误体格式不可预期，强行解释只会把「状态码失败」这个更准确的原因盖掉），原文放在 `HttpError::response()` 的 `data` / `raw` 上。流式路径的超时语义见 `05-transport.md`，SSE 另见 `06-sse.md`。
+
+**失败不等于什么都没收到**：响应头到手之后才可能开始读响应体，所以读取阶段的任何失败（单次读取超时、连接被重置）都已经晚于响应头——三个入口都会把**已经收到的响应**挂到错误上（状态行、响应头，以及失败前读到的部分正文，`Client::request` 与 `StreamResponse::read_all` 都用了 `read_all_partial` 保住那半截）。响应头到手之前就失败（连不上、DNS、缺 url）时错误里没有响应。判定与字段含义见 `04-errors.md`。
 
 ## URL 拼接规则
 
@@ -103,25 +105,22 @@ URL 里已有 `?` 时用 `&` 续接，否则用 `?`；`#fragment` 会被**丢弃
 
 **补头一律用 `set_if_absent`**：用户显式设置的同名头永远优先。这条由 `src/request_test.mbt` 的两个用例守着（"json body sets content type only when absent"、"auth produces basic authorization header" 的第二个断言）。
 
-## 响应体解析
+## 响应体解码
 
-`response_type` 决定怎么解码，其中 `Auto` 还要再看响应头里声明的 `Content-Type`：
+`response_encoding` 决定字节怎么解成 `Response::data`，**仅此而已**：这里不做 JSON 解析（axios 的 `responseType` / `transformResponse` 在本项目没有对应物）。
 
-| `response_type` | `Content-Type` | 行为 |
+| `response_encoding` | 解码方式 | 实现 |
 |---|---|---|
-| `Auto`（默认） | 是 JSON（`application/json` 或 `application/*+json`） | 尝试 `@json.parse`；**失败不报错**，把原文包成 `Json::String`（等价于 axios 的 `forcedJSONParsing`） |
-| `Auto` | 是别的类型（`text/*`、`application/xml`……） | **完全不解析**，`data` 就是原文 |
-| `Auto` | 缺失或为空 | 仍然尝试解析（很多服务端返回 JSON 却不带这个头） |
-| `Json` | 任意（忽略） | 强制解析；失败抛 `HttpError(BadResponse)`，并把「data 为原文」的响应挂在错误上 |
-| `Text` | 任意（忽略） | 完全不解析，`data` 就是 `Json::String(原文)` |
+| `Utf8`（默认，内置默认值显式设置） | UTF-8；非法字节 → `U+FFFD` | `@utf8.decode_lossy` |
+| `Latin1` | 字节值即码点（`0xE9` → `é`），任何字节序列都能解出文本 | `client.mbt` 里的 `decode_body`（core 没有，一个循环） |
+| `Ascii` | 只认 `0x00`–`0x7F`，更高的字节 → `U+FFFD` | `@ascii.decode_lossy` |
+| `Utf16le` | 两个字节一个码元，小端 | `@utf16.decode_lossy(endianness=Little)` |
 
-这张表只在 `Client::request` 上生效——`stream` / `sse` 都不读 `response_type`：它们连 `data` 都没有，解码不是它们的事。实例默认值里带着 `response_type` 时，这两个入口照样可用。
+四种都是 lossy 的：该编码下非法的字节解成替换字符，**不抛错**——响应正文由服务端说了算，为了几个坏字节把整个响应判成失败得不偿失。原始字节始终保留在 `Response::raw`（`content_length()` 也基于它），需要精确字节或二进制内容时读那里。
 
-**为什么 `Auto` 必须看 `Content-Type`**：`123`、`true`、`"x"` 这些**纯文本本身就是合法 JSON 文本**。无脑尝试解析会把 `text/plain` 的响应变成数字或布尔值——这是最典型的一类「服务端返回得没错、客户端解错了」。判定规则落在 `client.mbt` 的 `media_type` / `is_json_media_type` / `auto_parses_json` 三个纯函数里，`src/content_type_test.mbt` 逐条钉住。
+**为什么不自动解析 JSON**：`123`、`true`、`"x"` 这些**纯文本本身就是合法 JSON 文本**，靠 `Content-Type` 猜也不可靠（服务端经常不声明或声明错，axios 的 `Auto` 就是在这上面打补丁）。在 TS 里 `any` 把这件事掩盖了，在静态类型下只能把结果塞进变体里让每个调用点 match——要 JSON 的常见场景反而更麻烦，猜错时（文本被解成数字）仍是静默的。所以 `data` 一律是字符串，要对象请自己 `@json.parse(response.data)`，解析失败的语义由调用方按自己的语境处理。判断「这到底是不是 JSON」这件事，交给知道上下文的那一层。
 
-媒体类型的判定细节：`;` 之后的参数（`charset` 等）不参与判定，比较前统一小写；`application/problem+json`、`application/vnd.api+json` 这类结构化后缀算 JSON；`text/json` 这种非标准写法**不算**——它不是注册过的类型，宁可不解析也不猜。
-
-原始字节始终保留在 `Response::raw`，文本用 `Response::text()`（`decode_lossy`，非法 UTF-8 不抛错）。当前实现统一用 UTF-8 解码，不做 charset 探测。
+这张表只在 `Client::request` 上生效——`stream` 交的是原始字节（`read_all()` 返回 `Bytes`），`sse` 按规范固定 UTF-8 解析事件：流式入口连 `data` 都没有，解码不是它们的事。实例默认值里带着 `response_encoding` 时，这两个入口照样可用。
 
 ## 状态码校验
 

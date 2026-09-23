@@ -2,7 +2,7 @@
 // AGENTS.md RL-04 例外声明
 //
 // 本文件是根包的**门面层**：对外暴露的数据类型与再导出集中在这里。
-// 它超过 RL-04 的 300 行上限（452 行），按 RL-04 为「根包文件」开出的例外
+// 它超过 RL-04 的 300 行上限（532 行），按 RL-04 为「根包文件」开出的例外
 // 处理——上限 1000 行，并在此声明。
 //
 // 为什么这几个类型在同一个文件：它们互相引用——`HttpError` 要带 `Response`
@@ -30,7 +30,7 @@
 ///
 /// 约定：凡是出现在公开签名里的类型，都在定义它的包里再导出一次，
 /// 因此各层之间不会出现「要用这个 API 却不知道类型该从哪 import」的情况。
-pub using @config {type Config, type Method, type Auth, type ResponseType}
+pub using @config {type Config, type Method, type Auth, type ResponseEncoding}
 
 ///|
 pub using @headers {type Headers}
@@ -52,14 +52,15 @@ pub using @transport {trait Transport}
 ///|
 /// 对外的响应对象，对应 axios 的 `AxiosResponse`。
 pub(all) struct Response {
-  /// 按 `response_type` 处理过的响应体。
+  /// 响应体文本：原始字节按 `response_encoding` 解码后的**原文**。
   ///
-  /// - `Auto` / `Json`：JSON 解析成功的对象；
-  /// - `Auto` 下解析失败、或 `response_type` 为 `Text` 时：
-  ///   原始文本包成 `Json::String`（对应 axios 的 `forcedJSONParsing` 行为——
-  ///   解析失败不报错，把字符串原样交给调用方）；
-  /// - 需要二进制内容时读 `raw`。
-  data : Json
+  /// 这里**不做 JSON 解析**（这是与 axios 的一处刻意差异）：要对象请自己
+  /// `@json.parse(response.data)`，解析失败也由调用方按自己的语境处理。
+  /// 自动猜内容类型在静态类型下只会把错误推迟——`text/plain` 的 `123`
+  /// 被解成数字那类静默错误，比多写一行 `@json.parse` 贵得多。
+  ///
+  /// 该编码下非法的字节会解成替换字符 `U+FFFD`（lossy）；需要精确字节时读 `raw`。
+  data : String
   /// HTTP 状态码
   status : Int
   /// 状态码对应的原因短语，例如 `OK`
@@ -68,22 +69,12 @@ pub(all) struct Response {
   headers : Headers
   /// 触发这次响应的配置（**已完成合并**），与 axios 的 `response.config` 一致
   config : Config
-  /// 未经解析的原始响应体字节
+  /// 未经解码的原始响应体字节
   raw : Bytes
 } derive(Debug)
 
 ///|
 pub extend Response with @debug.Debug::{to_repr}
-
-///|
-/// 响应体的文本形式：直接对原始字节做 UTF-8 解码，不做 JSON 解析。
-///
-/// 用 `decode_lossy` 而不是 `decode`：响应体未必是合法 UTF-8
-/// （可能是二进制或其它编码），这里返回带替换字符的文本比直接抛错更有用；
-/// 需要精确字节时读 `raw`。
-pub fn Response::text(self : Response) -> String {
-  @utf8.decode_lossy(self.raw)
-}
 
 ///|
 /// 状态码是否落在 2xx。
@@ -113,9 +104,11 @@ pub fn Response::content_length(self : Response) -> Int {
 /// 把二进制数据解成一堆无意义的事件。
 ///
 /// 与 `Response` 的差别都由「响应体还没读」这一条派生出来：
-/// - 没有 `data`：响应体可能无限长，没法用 `Json` 表示；
+/// - 没有 `data`：响应体可能无限长，读全量不现实；
 /// - 没有 `raw`：字节还没读出来，需要时用 `read_all()` 取；
-/// - 读取随时可能失败：统一抛 `HttpError`，调用方不必认识传输层错误。
+/// - 读取随时可能失败：统一抛 `HttpError`，错误里带着**已经收到的响应**
+///   （状态行与响应头一定在；`read_all` 读到一半失败时还有已读到的字节），
+///   调用方不必认识传输层错误。
 ///
 /// 状态码与响应头这些「不读 body 就能拿到」的信息与 `Response` 保持一致，
 /// 所以拿到流之后可以先按状态码与 `Content-Type` 决定怎么读。
@@ -155,10 +148,41 @@ pub fn StreamResponse::is_event_stream(self : StreamResponse) -> Bool {
 }
 
 ///|
+/// 读失败时的统一出口：把传输层错误翻译成 `HttpError`，并把**已经收到的响应**
+/// （状态行、响应头，以及 `body` 传进来的字节）挂上去。
+///
+/// 为什么失败也要挂响应：响应头到手之后才可能开始读，所以失败时状态码与响应头
+/// 必然已经存在，它们是回答「是在什么响应上断的」的唯一线索。
+/// `body` 只有「读到一半失败、字节还没交出去」的场景（`read_all`）才有值；
+/// 按块读失败时数据已经交给调用方了，传 `b""`。
+fn StreamResponse::read_error(
+  self : StreamResponse,
+  error : @transport.TransportError,
+  body : Bytes,
+) -> HttpError {
+  transport_error(
+    error,
+    self.config,
+    Some(
+      build_response(
+        self.status,
+        self.status_text,
+        self.headers,
+        body,
+        self.config,
+      ),
+    ),
+  )
+}
+
+///|
 /// 读取一段响应体；到 EOF 返回 `None`，此时连接已经关闭。
 ///
 /// 返回的块大小不保证（取决于对端一次发了多少数据），需要按边界切分的
 /// 协议请用 `read_until`，不要自己假设一个块就是一条消息。
+///
+/// 读取失败（超时、断连）时抛 `HttpError`：错误码是传输层的分类，
+/// 状态码与响应头挂在 `HttpError::response()` 上。
 pub async fn StreamResponse::read_some(
   self : StreamResponse,
   max_len? : Int,
@@ -169,7 +193,8 @@ pub async fn StreamResponse::read_some(
       None => self.body.read_some()
     }
   } catch {
-    error => raise transport_error(error, self.config)
+    // 失败前读到的字节已经交给调用方了，错误里只挂状态行与响应头。
+    error => raise self.read_error(error, b"")
   }
 }
 
@@ -187,7 +212,7 @@ pub async fn StreamResponse::read_until(
   sep : String,
 ) -> String? raise HttpError {
   self.body.read_until(sep) catch {
-    error => raise transport_error(error, self.config)
+    error => raise self.read_error(error, b"")
   }
 }
 
@@ -195,11 +220,17 @@ pub async fn StreamResponse::read_until(
 /// 读到 EOF，返回剩下的全部字节，并关闭流。
 ///
 /// 用于「先拿流判断状态码、再一次性取内容」的场景（例如下载）。
+///
+/// 中途失败时抛 `HttpError`，并且**已经读到的字节不会丢**：它们与状态行、
+/// 响应头一起挂在错误的响应上（`HttpError::response()` 的 `raw` / `data`）
+/// ——下载断在 90% 时，这 90% 就是现场。
 pub async fn StreamResponse::read_all(
   self : StreamResponse,
 ) -> Bytes raise HttpError {
-  self.body.read_all() catch {
-    error => raise transport_error(error, self.config)
+  let (bytes, failure) = self.body.read_all_partial()
+  match failure {
+    Some(error) => raise self.read_error(error, bytes)
+    None => bytes
   }
 }
 
@@ -261,6 +292,32 @@ pub fn SseStream::is_success(self : SseStream) -> Bool {
 }
 
 ///|
+/// 读失败时的统一出口：与 `StreamResponse::read_error` 同理，把已经收到的响应
+/// （状态行 + 响应头）挂到错误上——长连断掉时，`status` 与响应头是唯一能说明
+/// 「对面是谁、连接建到了哪一步」的信息。
+///
+/// 这里没有字节可挂：读进来的字节属于解析器，要么已经变成事件，要么还在它的
+/// 缓冲里，都不该在错误里重复一遍。
+fn SseStream::read_error(
+  self : SseStream,
+  error : @transport.TransportError,
+) -> HttpError {
+  transport_error(
+    error,
+    self.config,
+    Some(
+      build_response(
+        self.status,
+        self.status_text,
+        self.headers,
+        b"",
+        self.config,
+      ),
+    ),
+  )
+}
+
+///|
 /// 读下一个事件；流结束返回 `None`。
 ///
 /// 事件边界、字段语义（`event:` / `data:` / `id:` / `retry:`）、注释行、
@@ -273,6 +330,9 @@ pub fn SseStream::is_success(self : SseStream) -> Bool {
 /// - `close()` 之后一律返回 `None`；
 /// - `SseEvent` 上的 `id` / `retry` 是解析器的持久状态快照，
 ///   断线重连要用它们（本项目不自动重连，重连逻辑写在上层）。
+///
+/// 读取失败（超时、断连）时抛 `HttpError`：错误码是传输层的分类，
+/// 状态码与响应头挂在 `HttpError::response()` 上。
 pub async fn SseStream::next_event(
   self : SseStream,
 ) -> @sse.SseEvent? raise HttpError {
@@ -285,7 +345,7 @@ pub async fn SseStream::next_event(
   let mut event = self.parser.next()
   while event is None {
     let chunk = self.body.read_some() catch {
-      error => raise transport_error(error, self.config)
+      error => raise self.read_error(error)
     }
     match chunk {
       None => {
@@ -377,7 +437,13 @@ pub(all) struct ErrorInfo {
   code : ErrorCode
   /// 触发这次错误的配置（**已完成合并**），便于定位到底是哪一项配置不对
   config : Config
-  /// 服务端已经返回、但没通过状态码校验时，原始响应挂在这里
+  /// 服务端已经返回的响应：
+  ///
+  /// - 状态码没通过校验时：完整响应（两个流式入口会把错误体读完再抛）；
+  /// - 传输层失败（超时、断连）发生在响应头到手之后时：失败前已经收到的部分
+  ///   ——状态行与响应头一定在，`raw` 可能只有半截（`read_all` 中途失败时
+  ///   就是已经读到的那部分）；
+  /// - 连响应头都没收到就失败（连不上、DNS 失败、请求没发出去）：`None`。
   response : Response?
 }
 
@@ -412,7 +478,12 @@ pub fn HttpError::message(self : HttpError) -> String {
 }
 
 ///|
-/// 没通过状态码校验时的原始响应；其它情况为 `None`。
+/// 错误里带的响应：
+///
+/// - 状态码没通过校验时是完整响应；
+/// - 传输层失败（超时、断连）发生在响应头到手之后时，是失败前已经收到的部分
+///   ——`raw` 可能只有半截；
+/// - 连响应头都没收到时为 `None`。
 pub fn HttpError::response(self : HttpError) -> Response? {
   self.info().response
 }

@@ -6,8 +6,9 @@
 |---|---|
 | `src/facade.mbt` | `ErrorCode` / `ErrorInfo` / `HttpError` 与访问器（根包门面层，与响应类型同一文件） |
 | `src/client.mbt` | `validate_response`（状态码校验）与 `try_parse_json`（强制 JSON 失败），与入口同文件 |
-| `src/client.mbt` | 把 `TransportError` 翻译成 `ErrorCode` |
-| `src/error_test.mbt` | 错误路径的端到端用例 |
+| `src/client.mbt` | 把 `TransportError` 翻译成 `ErrorCode`，并把**失败前已经收到的响应**挂到错误上 |
+| `src/transport/stream.mbt` | `ResponseBody::read_all_partial`：读到一半失败时交出已读到的字节 |
+| `src/error_test.mbt` | 错误路径的端到端用例（含本机 server 的「中途超时」用例） |
 
 ## 类型形状
 
@@ -16,7 +17,7 @@ pub(all) struct ErrorInfo {
   message : String        // 面向人的描述
   code : ErrorCode        // 分类
   config : Config         // 已合并的配置（排查用）
-  response : Response?    // 服务端已响应却没通过校验时的原始响应
+  response : Response?    // 已经收到的响应（见下）
 }
 
 pub(all) suberror HttpError {
@@ -36,22 +37,44 @@ pub(all) suberror HttpError {
 | 本项目 | axios 错误码字符串 | 触发点 |
 |---|---|---|
 | `BadRequest` | `ERR_BAD_REQUEST` | `validate_response`：状态码 4xx |
-| `BadResponse` | `ERR_BAD_RESPONSE` | `validate_response`：其它非 2xx（含 5xx、3xx）；`build_response`：`response_type = Json` 但解析失败 |
-| `Network` | `ERR_NETWORK` | `Client::request`：`TransportError::Network`（连接失败、DNS、TLS 等） |
-| `Timeout` | `ECONNABORTED` | `Client::request`：`TransportError::Timeout` |
+| `BadResponse` | `ERR_BAD_RESPONSE` | `validate_response`：其它非 2xx（含 5xx、3xx） |
+| `Network` | `ERR_NETWORK` | `TransportError::Network`（连接失败、DNS、TLS；**读响应体中途**连接被重置也算） |
+| `Timeout` | `ECONNABORTED` | `TransportError::Timeout`（含读响应体中途的单次读取超时） |
 | `InvalidUrl` | `ERR_INVALID_URL` | `build_prepared_request`：既没有 `url` 也没有可用的 `base_url` |
-| `NotSupported` | `ERR_NOT_SUPPORT` | `Client::request`：`TransportError::Unsupported`（传输层做不到，例如相对地址）；`Client::sse`：响应头没有声明 `text/event-stream`（拿到的不是 SSE 却要按事件读，见 `06-sse.md`）——报错前会先关掉连接 |
+| `NotSupported` | `ERR_NOT_SUPPORT` | `TransportError::Unsupported`（传输层做不到，例如相对地址）；`Client::sse`：响应头没有声明 `text/event-stream`（拿到的不是 SSE 却要按事件读，见 `06-sse.md`）——报错前会先关掉连接 |
 
 关于超时用的是 `ECONNABORTED` 而不是 `ETIMEDOUT`：axios 默认就是前者，只有打开 `transitional.clarifyTimeoutError` 时才换成后者。这里保持默认行为。
 
 状态码分档是复刻 axios 的 `[ERR_BAD_REQUEST, ERR_BAD_RESPONSE][floor(status / 100) - 4]`：按百位取档，4xx 一档、其它一档。写成显式判断是为了让源码可读。
 
+**错误码永远是「失败本身」的分类**：读响应体读到一半超时 → `Timeout`，中途断连 → `Network`，不会因为此时状态码是 500 就改报 `BadResponse`。状态码与响应头在 `response` 里看得到，两件事不混在一起。
+
 ## 错误里带什么
+
+**没有通过校验**和**失败在中途**是两件事，它们都可能带响应，区别只在响应完整不完整：
+
+| 场景 | `response` |
+|---|---|
+| 状态码没通过 `validate_status` | **完整响应**：三个入口都会先把错误体读完，再按 `response_encoding` 解码成 `data`（`raw` 是原始字节），错误体内容不额外解释 |
+| 传输层失败发生在**响应头到手之后**（读响应体时超时、断连） | 已经收到的部分：状态行与响应头一定在，`data` / `raw` 是**失败前读到的部分**（可能只有半截） |
+| 本地失败（缺 url、传输层不支持）与响应头到手之前的传输层失败（连不上、DNS 失败） | `None`——那时确实没有响应 |
 
 | 字段 | 什么时候有值 |
 |---|---|
 | `config` | 永远有（已合并的配置），可用于回答「到底是哪一层配置不对」 |
-| `response` | 状态码校验失败、以及强制 JSON 解析失败时；本地失败（如缺 url）与传输层失败时为 `None` |
+| `response` | 见上表 |
+
+### 为什么失败也要带响应
+
+传输层失败不等于「什么都没收到」。请求是分两段完成的——**响应头**到手之后才开始读**响应体**，第二段里的任何失败（单次读取超时、连接被重置）都已经晚于第一段：
+
+- 状态码、响应头早就在手里，丢掉它们等于让调用方在失败时看不到「服务器到底回了什么」；
+- 服务端的错误正文常常已经到了一部分（`{"error": "too many ...` 这种），那半截正是排查问题最直接的线索；
+- 所以 `ResponseBody::read_all_partial` 中途失败时**不丢掉已读到的字节**，上层把它们拼成一份响应挂到错误上（`raw` 与 `data` 都可能是半截的）。
+
+`Client::sse` 的准入检查是这条规则的一个例外：错误里挂着状态行与响应头，但**不读 body**——声明了别的类型就可能是任意大小的二进制，要看原文请改用 `Client::stream`（见 `06-sse.md`）。
+
+错误码不受影响：它仍然说「失败是什么」（`Timeout` / `Network`），`response` 说「已经收到什么」。这两条信息缺一不可，所以分开表达。
 
 ## 错误是怎样跨层传播的
 
@@ -59,16 +82,18 @@ pub(all) suberror HttpError {
 底层 HTTP 实现（moonbitlang/async）
         ↓ 任意错误
 TransportError { Timeout | Network(String) | Unsupported(String) }   ← src/transport/
-        ↓ Client::request 做一次映射
+        ↓ Client::request 做一次映射（顺带挂上已经收到的响应）
 ErrorCode { Timeout | Network | NotSupported | ... }                 ← src/
 ```
 
 中间加了一层 `TransportError` 的目的：让上层**不需要认识异步库的错误类型**。`Client::request` 只需要 `catch` 三个构造子；自定义传输实现也只需要把自己的错误归到这三类里，不必知道底层用的是哪套 HTTP 库。
 
+「已经收到的响应」跨的是另一层：传输层只管把字节交出来（`RawResponse` / `read_all_partial`），拼成对外的 `Response`、挂到错误上是根包的事——传输层不认识 `Response`。
+
 ## 新增一个错误分类的步骤
 
 1. `src/facade.mbt` 的 `ErrorCode` 加构造子（并补 `to_string` 映射与 axios 错误码字符串）；
-2. 在触发点调用 `make_error(message, code, config, response)` 后 `raise`；
+2. 在触发点调用 `make_error(message, code, config, response)` 后 `raise`——`response` 传**当时已经收到的响应**，没有就传 `None`；
 3. 若是传输层能提前识别的失败，考虑先在 `TransportError` 里加一类；
 4. `src/error_test.mbt` 补用例；
 5. 更新本文件与 `docs/README.md` 的索引说明（如果涉及读法变化）。

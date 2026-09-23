@@ -16,7 +16,7 @@ async test "status validation maps 4xx and 5xx to distinct codes" {
   }
   let error = error.unwrap()
   assert_eq(error.code(), @moonhttp.ErrorCode::BadRequest)
-  assert_eq(error.response().unwrap().data, { "error": "nope" })
+  assert_eq(error.response().unwrap().data, "{\"error\": \"nope\"}")
   // 5xx 归到另一档
   let (client, _) = client_with(
     raw_response(500, "Internal Server Error", "{}"),
@@ -85,7 +85,10 @@ async test "transport failures map to error codes" {
     } catch {
       error => Some(error)
     }
-    assert_eq(error.unwrap().code(), entry.1)
+    let error = error.unwrap()
+    assert_eq(error.code(), entry.1)
+    // 失败发生在收到响应头之前：确实没有响应可挂
+    assert_true(error.response() is None)
   }
 }
 
@@ -143,5 +146,129 @@ test "error code rendering covers every category" {
   for entry in cases {
     assert_eq(entry.0.to_string(), entry.1)
     assert_eq("\{entry.0}", entry.1)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 失败也带着东西：响应头到手之后才失败的请求，错误里挂着已经收到的响应
+// ---------------------------------------------------------------------------
+
+///|
+/// 起一个「发完响应头与半截正文就挂住」的本机 server，返回它的端口。
+///
+/// 挂住（既不发更多数据、也不结束响应）是为了把客户端钉在「读到一半」这个
+/// 状态上：配上短的 `timeout`，客户端读到那半截之后就等不到数据，按超时失败
+/// ——正好检验「失败时已经读到的东西有没有被丢掉」。
+///
+/// 错误类型是开放的（`raise` 不带类型）：`@socket.Addr::parse` 与
+/// `@http.Server` 的构造本身就是开放错误类型，测试用例里再收敛没有意义。
+async fn stalling_server(
+  group : @async.TaskGroup[Unit],
+  status : Int,
+  status_text : String,
+  partial : String,
+) -> Int {
+  let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
+  let port = server.addr.port()
+  group.spawn_bg(no_wait=true) <| () => {
+    server.run_forever() <| ((_request, _body, conn) => {
+      conn..send_response(status, status_text).flush()
+      conn..write_string(partial).flush()
+      @async.sleep(3000)
+      conn.end_response()
+    })
+  }
+  port
+}
+
+///|
+/// `request` 在读到一半失败时，错误里带着已经收到的响应：状态行、响应头，
+/// 以及**读到的部分正文**。
+///
+/// 这条钉住的是「传输层失败不等于什么都没收到」：服务端已经回了 500 与半截
+/// 错误正文，客户端读剩下的部分时超时——如果不把已读到的挂到错误上，
+/// 调用方拿到的就只有一个 `Timeout`，看不到服务端写下的原因。
+async test "request keeps the partial response when the body read fails" {
+  @async.with_task_group() <| group => {
+    let port = stalling_server(
+      group, 500, "Internal Server Error", "{\"error\": \"too ",
+    )
+    let transport : &@transport.Transport = @transport.AsyncHttpTransport::new()
+    let client = @moonhttp.Client::new(transport~)
+    let error = try {
+      ignore(
+        client.request(
+          @moonhttp.Config::new("http://127.0.0.1:\{port}/boom").with_timeout(
+            300,
+          ),
+        ),
+      )
+      None
+    } catch {
+      error => Some(error)
+    }
+    let error = error.unwrap()
+    // 错误码仍然是「失败本身」的分类，不因为挂上了响应就改用状态码分档
+    assert_eq(error.code(), @moonhttp.ErrorCode::Timeout)
+    let received = error.response().unwrap()
+    assert_eq(received.status, 500)
+    assert_eq(received.status_text, "Internal Server Error")
+    assert_eq(received.data, "{\"error\": \"too ")
+  }
+}
+
+///|
+/// 流式入口读错误体时同理：状态码不通过 → 读错误体 → 读到一半超时。
+/// 错误里既有状态码 500，也有已经读到的那半截错误正文。
+async test "stream keeps the partial error body when reading it fails" {
+  @async.with_task_group() <| group => {
+    let port = stalling_server(
+      group, 500, "Internal Server Error", "{\"error\": \"too ",
+    )
+    let transport : &@transport.Transport = @transport.AsyncHttpTransport::new()
+    let client = @moonhttp.Client::new(transport~)
+    let error = try {
+      ignore(
+        client.stream(
+          @moonhttp.Config::new("http://127.0.0.1:\{port}/boom").with_timeout(
+            300,
+          ),
+        ),
+      )
+      None
+    } catch {
+      error => Some(error)
+    }
+    let error = error.unwrap()
+    assert_eq(error.code(), @moonhttp.ErrorCode::Timeout)
+    let received = error.response().unwrap()
+    assert_eq(received.status, 500)
+    assert_eq(received.data, "{\"error\": \"too ")
+  }
+}
+
+///|
+/// 流式读取（`read_all`）在中途失败时，已经读到的字节也挂在错误上——
+/// 下载断在半路时，那半截就是现场。
+async test "stream read_all keeps the bytes received before the failure" {
+  @async.with_task_group() <| group => {
+    let port = stalling_server(group, 200, "OK", "0123456789")
+    let transport : &@transport.Transport = @transport.AsyncHttpTransport::new()
+    let client = @moonhttp.Client::new(transport~)
+    let download = client.stream(
+      @moonhttp.Config::new("http://127.0.0.1:\{port}/file").with_timeout(300),
+    )
+    let error = try {
+      ignore(download.read_all())
+      None
+    } catch {
+      error => Some(error)
+    }
+    let error = error.unwrap()
+    assert_eq(error.code(), @moonhttp.ErrorCode::Timeout)
+    // 状态码与已读到的字节都在错误里：不用再发一次请求就知道断在哪
+    let received = error.response().unwrap()
+    assert_eq(received.status, 200)
+    assert_eq(received.data, "0123456789")
   }
 }

@@ -2,7 +2,7 @@
 // AGENTS.md RL-04 例外声明
 //
 // 本文件是根包的**实现层**：`Client` 及其三个入口（`request` / `stream` /
-// `sse`），加上它们共用的纯函数管线。562 行，超过 RL-04 的 300 行上限，
+// `sse`），加上它们共用的纯函数管线。614 行，超过 RL-04 的 300 行上限，
 // 按 RL-04 为「根包文件」开出的例外处理——上限 1000 行。
 //
 // 为什么入口与管线在同一个文件：管线里每个函数都只被这几个入口调用
@@ -13,7 +13,7 @@
 // 文件内的分区（顺序无关，用区块注释标出）：
 //   1. Client 与它的入口   —— request / stream / sse
 //   2. 请求构造            —— 地址、头、body 的纯函数
-//   3. 响应解码            —— Content-Type 判定与 response_type 分支
+//   3. 响应构造            —— 按 response_encoding 解码响应体与 SSE 判定
 //   4. 状态码校验          —— validate_status 判定与错误分档
 // ============================================================================
 
@@ -83,11 +83,22 @@ pub fn Client::defaults(self : Client) -> Config {
 /// 1. 合并配置（实例默认值在下、本次请求配置在上）；
 /// 2. 确定请求方法；
 /// 3. 拼接完整地址并追加 query、拍平头、序列化 body；
-/// 4. 交给传输层发送，并把响应体读到 EOF（非流式路径要有完整内容才能解析）；
-/// 5. 解析响应体、校验状态码。
+/// 4. 交给传输层发送；
+/// 5. 把响应体读到 EOF（读全量才有完整的 `data`）；
+/// 6. 按 `response_encoding` 解码响应体、校验状态码。
+///
+/// 与 axios 的一处刻意差异：这里**不解析 JSON**。`Response::data` 是解码后的
+/// 原文，要对象请自己对它调用 `@json.parse`——「猜内容类型」在静态类型下
+/// 只会把错误推迟到调用方，而 `text/plain` 的 `123` 被解成数字那类静默错误
+/// 比多写一行 `@json.parse` 贵得多。
 ///
 /// 传输层的错误在这里被翻译成对外的 `ErrorCode`，
 /// 所以调用方不需要认识 `moonbitlang/async` 的错误类型。
+///
+/// 失败不等于「什么都没收到」：响应头到手之后才失败的请求（读响应体的中途
+/// 超时、连接被重置），错误里会带上**已经收到的响应**——状态行、响应头与
+/// 读到的部分正文，从 `HttpError::response()` 取。连响应头都没到手时，
+/// 错误里没有响应。
 ///
 /// 不想读全响应体时用另外两个入口：大文件下载用 `Client::stream`（原始字节流），
 /// SSE 用 `Client::sse`（事件流）。读不读、按什么单位读，由入口决定而不是配置。
@@ -106,17 +117,33 @@ pub async fn Client::request(
   }
   // 3. 地址、头、body
   let prepared = build_prepared_request(merged)
-  // 4. 发送并把响应体读到 EOF——非流式路径要拿完整响应体做解析。
-  //    读取也算在这一步：传输层交出来的是流，超时/断连可能发生在读取阶段。
-  //    传输层错误在这里收敛成对外的分类，调用方无需认识底层错误类型。
-  let (raw, body) = try {
-    let raw = self.transport.send(prepared)
-    (raw, raw.body.read_all())
-  } catch {
-    error => raise transport_error(error, merged)
+  // 4. 发送：这一步失败说明响应头还没到手，错误里没有响应可挂。
+  let raw = self.transport.send(prepared) catch {
+    error => raise transport_error(error, merged, None)
   }
-  // 5. 解析响应体，再校验状态码
-  let response = build_response(raw, body, merged)
+  // 5. 把响应体读到 EOF——读全量才能解出完整的 `data`。读取阶段失败
+  //    （超时、断连）时响应头早已到手，把状态行、响应头与**读到的部分**
+  //    一起挂到错误上，失败现场才不会只剩一个错误码。
+  let (body, failure) = raw.body.read_all_partial()
+  match failure {
+    Some(error) =>
+      raise transport_error(
+        error,
+        merged,
+        Some(
+          build_response(raw.status, raw.status_text, raw.headers, body, merged),
+        ),
+      )
+    None => ()
+  }
+  // 6. 按 response_encoding 解码响应体，再校验状态码
+  let response = build_response(
+    raw.status,
+    raw.status_text,
+    raw.headers,
+    body,
+    merged,
+  )
   validate_response(response)
   response
 }
@@ -128,7 +155,8 @@ pub async fn Client::request(
 /// 状态码校验规则与 `request` 完全一致（默认只放行 2xx）。校验不通过时
 /// 会把错误响应体读全（错误响应通常很短）再抛 `HttpError`——错误里仍然
 /// 带着响应，状态码、响应头与错误原文都看得到。长连场景下这是唯一能
-/// 立刻看到「为什么没连上」的地方，而不是一个裸状态码。
+/// 立刻看到「为什么没连上」的地方，而不是一个裸状态码；连读错误体都失败
+/// （超时、断连）时，错误里带着已经读到的部分，状态码与响应头照样在。
 ///
 /// 与 `request` 的最后一步不同：这里**不读响应体**，把「还开着的连接」
 /// 连同响应头一起返回，由调用方（两个流式入口）决定怎么读。
@@ -145,15 +173,26 @@ async fn Client::open_stream(
   }
   let prepared = build_prepared_request(merged)
   let raw = self.transport.send(prepared) catch {
-    error => raise transport_error(error, merged)
+    error => raise transport_error(error, merged, None)
   }
   if !status_allowed(raw.status, merged) {
-    let body = raw.body.read_all() catch {
-      error => raise transport_error(error, merged)
+    // 错误体也要读全；读到一半失败（超时、断连）时把已读到的部分挂到
+    // 错误上——那部分通常正是服务端写下的原因，比一个光秃秃的超时有用。
+    let (body, failure) = raw.body.read_all_partial()
+    let response = build_response(
+      raw.status,
+      raw.status_text,
+      raw.headers,
+      body,
+      merged,
+    )
+    match failure {
+      Some(error) => raise transport_error(error, merged, Some(response))
+      None => ()
     }
-    // 错误体不做 JSON 解析：格式不可预期，强行解析只会把状态码失败盖掉。
-    let response = plain_response(raw, body, merged)
-    raise status_error(response.status, merged, Some(response))
+    // 错误体不做额外处理：按配置的编码解码成原文就交出去，不猜它「应该是什么格式」
+    // ——错误体格式不可预期，强行解释只会把「状态码失败」这个更准确的原因盖掉。
+    raise status_error(response.status, merged, response)
   }
   (raw, merged)
 }
@@ -192,6 +231,10 @@ pub async fn Client::stream(
 /// 确实要接一个不声明类型的服务端，可以用 `Client::stream` + 公开的
 /// `@moonhttp.SseParser` 自己驱动（那正是解析器独立成包的好处）。
 ///
+/// 这道检查失败时错误里挂着**已经收到的响应**（状态行与响应头），
+/// 但不读响应体：声明了别的类型就可能是任意大小的二进制，要看原文请改走
+/// `Client::stream`。
+///
 /// 拿到 `SseStream` 之后要负责读到 EOF 或调用 `close()`，否则连接不会释放。
 pub async fn Client::sse(
   self : Client,
@@ -205,7 +248,9 @@ pub async fn Client::sse(
       "响应没有声明 text/event-stream，不能用 Client::sse 按事件读；需要原始字节流请用 Client::stream",
       ErrorCode::NotSupported,
       merged,
-      None,
+      Some(
+        build_response(raw.status, raw.status_text, raw.headers, b"", merged),
+      ),
     )
   }
   {
@@ -331,67 +376,73 @@ fn build_prepared_request(
 }
 
 ///|
-/// 不做 JSON 解析的响应对象：`data` 是原文、`raw` 是原始字节。
-///
-/// `Text` 模式、`Auto` 下的非 JSON 响应与解析失败都落在这里；
-/// 流式路径读错误体时也用它——错误体的格式不可预期，
-/// 强行解析只会把「状态码失败」这个更准确的原因盖掉。
-fn plain_response(
-  raw : @transport.RawResponse,
-  body : Bytes,
-  config : Config,
-) -> Response {
-  {
-    data: Json::string(@utf8.decode_lossy(body)),
-    status: raw.status,
-    status_text: raw.status_text,
-    headers: raw.headers,
-    config,
-    raw: body,
-  }
-}
-
-///|
 /// 把传输层错误翻译成对外的 `HttpError`。
 ///
 /// 这层翻译的意义是：调用方不需要认识 `moonbitlang/async` 的错误类型，
 /// 也不必知道底层用的是哪套 HTTP 实现。流式读取失败走的是同一条映射。
+///
+/// `response` 是**失败前已经收到的响应**：传输层失败不等于「什么都没收到」
+/// ——响应头到手之后才失败的请求，状态行、响应头与已经读到的字节都在手里
+/// （`raw` 可能是半截的），把它们挂到错误上，失败现场才不会只剩一个错误码。
+/// 失败发生在收到响应头之前（连不上、DNS 解析失败、请求还没发出去）时传
+/// `None`——那时确实没有响应。
+///
+/// 错误码仍然是「失败本身」的分类（超时归 `Timeout`、断连归 `Network`），
+/// 不会因为挂上了响应就改用状态码分档。
 fn transport_error(
   error : @transport.TransportError,
   config : Config,
+  response : Response?,
 ) -> HttpError {
   match error {
     @transport.TransportError::Timeout =>
-      make_error("请求超时", ErrorCode::Timeout, config, None)
+      make_error("请求超时", ErrorCode::Timeout, config, response)
     @transport.TransportError::Network(message) =>
       make_error(
         "网络请求失败：" + message,
         ErrorCode::Network,
         config,
-        None,
+        response,
       )
     @transport.TransportError::Unsupported(message) =>
       make_error(
         "传输层不支持该请求：" + message,
         ErrorCode::NotSupported,
         config,
-        None,
+        response,
       )
   }
 }
 
 // ---------------------------------------------------------------------------
-// 3. 响应解码 —— Content-Type 判定与 response_type 分支
+// 3. 响应构造 —— 按 response_encoding 解码响应体、拼成 Response
 // ---------------------------------------------------------------------------
 
 ///|
-/// 尝试把响应文本按 JSON 解析；不是合法 JSON 时返回 `None`。
+/// 按配置的编码把响应体字节解成文本。
 ///
-/// 「不是 JSON」在这里是一种正常结果而不是异常：默认的 `Auto` 模式
-/// 就是靠它来决定「解析成功用对象、失败留原文」。
-fn try_parse_json(text : String) -> Json? {
-  let parsed = @json.parse(text) catch { _ => return None }
-  Some(parsed)
+/// 解码一律是 lossy 的（core 的 `decode_lossy` 系列）：该编码下非法的字节
+/// 解成替换字符 `U+FFFD` 而不是抛错。响应正文由服务端说了算，为了几个坏字节
+/// 把整个响应判成失败得不偿失；要精确字节读 `Response::raw`。
+///
+/// 只有 `latin1` 是自己写的（core 没有）：ISO-8859-1 的码点就是字节值，
+/// 一个循环就够。其余三种都直接调 core。
+///
+/// `response_encoding` 为 `None`（手写的 `Config` 没过内置默认值）时按 UTF-8
+/// 处理，与 `defaults()` 里显式设的默认值一致。
+fn decode_body(body : Bytes, encoding : ResponseEncoding) -> String {
+  match encoding {
+    Utf8 => @utf8.decode_lossy(body)
+    Latin1 => {
+      let buf = StringBuilder()
+      for i in 0..<body.length() {
+        buf.write_char(body[i].to_char())
+      }
+      buf.to_string()
+    }
+    Ascii => @ascii.decode_lossy(body)
+    Utf16le => @utf16.decode_lossy(body, endianness=@utf16.Endian::Little)
+  }
 }
 
 ///|
@@ -419,32 +470,6 @@ fn media_type(headers : Headers) -> String? {
 }
 
 ///|
-/// 媒体类型是否表示 JSON：`application/json` 本体，或带结构化后缀的
-/// `application/*+json`（`application/problem+json`、`application/vnd.api+json`
-/// 这类）。
-///
-/// `text/json` 这种非标准写法不算：它不是注册过的类型，宁可不解析也不要猜。
-fn is_json_media_type(media : String) -> Bool {
-  media == "application/json" ||
-  (media.has_prefix("application/") && media.has_suffix("+json"))
-}
-
-///|
-/// `Auto` 模式下是否值得尝试 JSON 解析——由 `Content-Type` 决定。
-///
-/// 这道门槛是必需的：`123`、`true`、`"x"` 这些纯文本本身就是合法 JSON 文本，
-/// 无脑解析会把 `text/plain` 的响应变成数字或布尔值。
-///
-/// 没有声明 `Content-Type` 时仍然尝试解析，保留 axios 的 `forcedJSONParsing`
-/// 行为——很多服务端返回 JSON 却不带这个头，卡死它们得不偿失。
-fn auto_parses_json(headers : Headers) -> Bool {
-  match media_type(headers) {
-    None => true
-    Some(media) => is_json_media_type(media)
-  }
-}
-
-///|
 /// 响应头是否声明了 SSE（`text/event-stream`）。
 ///
 /// 判定只有这一处：`StreamResponse::is_event_stream`（给原始流的调用方自查）
@@ -457,52 +482,33 @@ fn declares_event_stream(headers : Headers) -> Bool {
 }
 
 ///|
-/// 把原始响应按 `response_type` 解读成对外的响应对象。
+/// 把响应拼成对外的 `Response`：`data` 是按 `response_encoding` 解码的原文、
+/// `raw` 是原始字节。
 ///
-/// 解析规则对齐 axios 的 `transformResponse`：
-/// - `Auto`（默认）：**先看 `Content-Type`**——声明是 JSON（或压根没声明）才尝试
-///   解析，解析失败把原文当字符串，**不报错**；声明是其它的（`text/*`、
-///   `application/xml` 等）直接不解析；
-/// - `Json`：忽略 `Content-Type` 强制解析，失败按 `ERR_BAD_RESPONSE` 报错；
-/// - `Text`：完全不解析。
+/// 三处共用它：
+/// - `Client::request` 读全量后的正常路径；
+/// - 流式路径读错误体（`open_stream` 状态码不通过时）；
+/// - **传输层失败**——失败可能发生在响应头到手之后（读响应体的中途），
+///   此时状态行、响应头与已读到的字节都在手里，拼成一份响应挂到错误上，
+///   调用方才看得到「服务器到底回了什么、走到哪一步断的」。
 ///
-/// `Auto` 里的 `Content-Type` 判定见 `auto_parses_json`：`123` 这类纯文本
-/// 本身是合法 JSON，不设这道门槛就会把 `text/plain` 的响应解成数字。
-///
-/// 强制 JSON 失败时，错误里会带上一个「data 为原文」的响应对象，
-/// 让调用方仍能看到状态码与响应头，对应 axios 把 `response` 挂在错误上的做法。
-/// `body` 由调用方读好传进来：传输层交出来的是响应体**流**，
-/// 读全量这一步是调用方的选择（`request` 读全量，`stream` 不读）。
+/// 之所以按「零件」而不是一整份 `RawResponse` 取参数：流式类型
+/// （`StreamResponse` / `SseStream`）读失败时手里只有状态行与响应头，
+/// 没有 `RawResponse`。
 fn build_response(
-  raw : @transport.RawResponse,
+  status : Int,
+  status_text : String,
+  headers : Headers,
   body : Bytes,
   config : Config,
-) -> Response raise HttpError {
-  let text = @utf8.decode_lossy(body)
-  let fallback = plain_response(raw, body, config)
-  match config.response_type.unwrap_or(ResponseType::Auto) {
-    Text => fallback
-    // 强制解析：Content-Type 拦不住这里，声明了 text/html 也照解。
-    Json =>
-      match try_parse_json(text) {
-        Some(data) => { ..fallback, data, }
-        None =>
-          raise make_error(
-            "响应体不是合法 JSON，但 response_type 要求按 JSON 解析",
-            ErrorCode::BadResponse,
-            config,
-            Some(fallback),
-          )
-      }
-    Auto =>
-      if auto_parses_json(raw.headers) {
-        match try_parse_json(text) {
-          Some(data) => { ..fallback, data, }
-          None => fallback
-        }
-      } else {
-        fallback
-      }
+) -> Response {
+  {
+    data: decode_body(body, config.response_encoding.unwrap_or(Utf8)),
+    status,
+    status_text,
+    headers,
+    config,
+    raw: body,
   }
 }
 
@@ -539,17 +545,20 @@ fn status_error_code(status : Int) -> ErrorCode {
 
 ///|
 /// 状态码不被放行时的统一错误。两条路径（读全量 / 流式）共用同一份文案与分档。
-/// `response` 在流式路径下可能还没解析出来，此时传 `None`。
+///
+/// 响应是必有的：读全量路径此时已经解析出响应，流式路径也把错误体读完了
+/// （哪怕只读到一部分，状态行与响应头一定在）。所以这里不收 `None`——
+/// 「状态码失败」和「错误里带响应」是同一件事。
 fn status_error(
   status : Int,
   config : Config,
-  response : Response?,
+  response : Response,
 ) -> HttpError {
   make_error(
     "请求失败，状态码 " + status.to_string(),
     status_error_code(status),
     config,
-    response,
+    Some(response),
   )
 }
 
@@ -557,6 +566,6 @@ fn status_error(
 /// 校验响应状态码；不通过就抛出带响应的错误。
 fn validate_response(response : Response) -> Unit raise HttpError {
   if !status_allowed(response.status, response.config) {
-    raise status_error(response.status, response.config, Some(response))
+    raise status_error(response.status, response.config, response)
   }
 }

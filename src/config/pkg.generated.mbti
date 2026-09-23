@@ -28,7 +28,7 @@ pub(all) struct Config {
   data : Json?
   base_url : String?
   timeout : Int?
-  response_type : ResponseType?
+  response_encoding : ResponseEncoding?
   params : Json?
   auth : Auth?
   headers : @headers.Headers?
@@ -52,7 +52,7 @@ pub fn Config::with_headers(Self, @headers.Headers) -> Self
 pub fn Config::with_method(Self, Method) -> Self
 pub fn Config::with_method_header(Self, Method, StringView, String) -> Self
 pub fn Config::with_params(Self, Json) -> Self
-pub fn Config::with_response_type(Self, ResponseType) -> Self
+pub fn Config::with_response_encoding(Self, ResponseEncoding) -> Self
 pub fn Config::with_timeout(Self, Int) -> Self
 pub fn Config::with_url(Self, String) -> Self
 pub fn Config::with_validate_status(Self, (Int) -> Bool) -> Self
@@ -78,15 +78,16 @@ pub fn Method::parse(StringView) -> Self?
 pub fn Method::to_repr(Self) -> @debug.Repr
 pub fn Method::to_string(Self) -> String
 
-pub(all) enum ResponseType {
-  Auto
-  Json
-  Text
+pub(all) enum ResponseEncoding {
+  Utf8
+  Latin1
+  Ascii
+  Utf16le
 } derive(Eq, @debug.Debug)
-pub fn ResponseType::equal(Self, Self) -> Bool
-pub fn ResponseType::not_equal(Self, Self) -> Bool
-pub fn ResponseType::to_repr(Self) -> @debug.Repr
-pub fn ResponseType::to_string(Self) -> String
+pub fn ResponseEncoding::equal(Self, Self) -> Bool
+pub fn ResponseEncoding::not_equal(Self, Self) -> Bool
+pub fn ResponseEncoding::to_repr(Self) -> @debug.Repr
+pub fn ResponseEncoding::to_string(Self) -> String
 
 // Type aliases
 pub using @headers {type Headers}

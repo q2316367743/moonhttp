@@ -1,12 +1,12 @@
 // 请求管线的用例：URL 拼接、query 序列化、三层头优先级、
-// body 序列化、认证头、响应体解析方式。
+// body 序列化、认证头、响应体读取。
 
 ///|
-/// 完整走一遍「实例默认配置 + 请求配置 → 合并 → 拼 URL → 拍平头 → 发送 → 解析」。
+/// 完整走一遍「实例默认配置 + 请求配置 → 合并 → 拼 URL → 拍平头 → 发送 → 解码」。
 ///
 /// 这个用例是整条管线的总检：默认值里的 base_url 与公共头、
 /// 请求里的相对路径与 query 参数，必须同时体现到最终发出的请求上。
-async test "request merges defaults builds url and parses json" {
+async test "request merges defaults builds url and reads body" {
   let (client, mock) = client_with(
     raw_response(200, "OK", "{\"id\": 1, \"name\": \"moon\"}"),
   )
@@ -22,10 +22,10 @@ async test "request merges defaults builds url and parses json" {
       "tags": ["a", "b"],
     }),
   )
-  // 响应体按 JSON 解析成对象
+  // 响应体是解码后的原文，不解析
   assert_eq(response.status, 200)
   assert_eq(response.status_text, "OK")
-  assert_eq(response.data, { "id": 1, "name": "moon" })
+  assert_eq(response.data, "{\"id\": 1, \"name\": \"moon\"}")
   assert_true(response.is_success())
   // 请求侧：base_url 拼接 + query 序列化（数组用编码后的 [] ）
   let sent = mock.last_request().unwrap()
@@ -141,47 +141,21 @@ async test "auth produces basic authorization header" {
 }
 
 ///|
-/// `response_type` 的三个取值：Auto 解析、Text 不解析、Json 强制解析。
-async test "response type controls body parsing" {
+/// `data` 是响应体原文：这一层**不做 JSON 解析**，要对象由调用方自己解。
+async test "response data is the raw text" {
   let (client, _) = client_with(raw_response(200, "OK", "{\"a\": 1}"))
-  let as_object = client.request(@moonhttp.Config::new("/x"))
-  assert_eq(as_object.data, { "a": 1 })
-  let as_text = client.request(
-    @moonhttp.Config::new("/x").with_response_type(@moonhttp.ResponseType::Text),
-  )
-  assert_eq(as_text.data, "{\"a\": 1}")
-  // 文本形式也能拿到原始字符串
-  assert_eq(as_text.text(), "{\"a\": 1}")
+  let response = client.request(@moonhttp.Config::new("/x"))
+  assert_eq(response.data, "{\"a\": 1}")
+  // 解析是调用方的事：库不猜内容类型，`text/plain` 的 `123` 也不会变成数字
+  assert_eq(@json.parse(response.data), { "a": 1 })
 }
 
 ///|
-/// Auto 模式下解析失败不报错，把原文交给调用方（对应 axios 的 forcedJSONParsing）。
-async test "auto response type falls back to raw text" {
+/// 不是合法 JSON 的正文照样原样交给调用方,既不解码也不报错。
+async test "a non json body is handed over as is" {
   let (client, _) = client_with(raw_response(200, "OK", "not json at all"))
   let response = client.request(@moonhttp.Config::new("/x"))
   assert_eq(response.data, "not json at all")
-  assert_eq(response.text(), "not json at all")
-}
-
-///|
-/// 强制 JSON 时解析失败要报错，并把响应挂上，调用方仍能看到状态码。
-async test "forced json response type reports parse failure" {
-  let (client, _) = client_with(raw_response(200, "OK", "<html>nope</html>"))
-  let error = try {
-    ignore(
-      client.request(
-        @moonhttp.Config::new("/x").with_response_type(
-          @moonhttp.ResponseType::Json,
-        ),
-      ),
-    )
-    None
-  } catch {
-    error => Some(error)
-  }
-  let error = error.unwrap()
-  assert_eq(error.code(), @moonhttp.ErrorCode::BadResponse)
-  assert_eq(error.response().unwrap().status, 200)
 }
 
 ///|
@@ -207,20 +181,10 @@ async test "allow absolute urls can be turned off" {
 }
 
 ///|
-/// `response_type = Json` 解析成功时，data 是解析后的对象（失败路径见 error_test）。
-async test "forced json response type parses on success" {
-  let (client, _) = client_with(raw_response(200, "OK", "{\"a\": 1}"))
-  let response = client.request(
-    @moonhttp.Config::new("/x").with_response_type(@moonhttp.ResponseType::Json),
-  )
-  assert_eq(response.data, { "a": 1 })
-}
-
-///|
 /// `content_length` 是原始字节数而不是字符数：中文在 UTF-8 下占 3 字节。
 async test "response content length counts bytes" {
   let (client, _) = client_with(raw_response(200, "OK", "中文"))
   let response = client.request(@moonhttp.Config::new("/x"))
   assert_eq(response.content_length(), 6)
-  assert_eq(response.text(), "中文")
+  assert_eq(response.data, "中文")
 }

@@ -59,6 +59,7 @@ pub struct ResponseBody {
 pub fn ResponseBody::close(Self) -> Unit
 pub fn ResponseBody::from_bytes(Bytes) -> Self
 pub async fn ResponseBody::read_all(Self) -> Bytes raise TransportError
+pub async fn ResponseBody::read_all_partial(Self) -> (Bytes, TransportError?) noraise
 pub async fn ResponseBody::read_some(Self, max_len? : Int) -> Bytes? raise TransportError
 pub async fn ResponseBody::read_until(Self, String) -> String? raise TransportError
 pub fn ResponseBody::to_repr(Self) -> @debug.Repr

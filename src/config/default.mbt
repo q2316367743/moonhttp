@@ -15,6 +15,9 @@ pub fn defaults() -> Config {
     ..Config::default(),
     // axios 的 timeout 默认值是 0，含义是「不超时」。
     timeout: Some(0),
+    // axios 的 responseEncoding 默认值是 'utf8'，这里显式放进默认值，
+    // 让 client.defaults() 里看得见「响应体按什么解码」。
+    response_encoding: Some(ResponseEncoding::Utf8),
     // axios 的 validateStatus 默认实现：只有 2xx 算成功。
     validate_status: Some(fn(status) { status >= 200 && status < 300 }),
     common_headers: Some(

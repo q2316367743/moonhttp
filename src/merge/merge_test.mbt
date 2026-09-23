@@ -28,27 +28,30 @@ test "url method and data come only from the request" {
 
 ///|
 /// 策略 2 的三个字段：请求级优先，缺省则回退默认值。
-test "base url timeout and response type fall back to defaults" {
+test "base url timeout and response encoding fall back to defaults" {
   let base = @merge.Config::default()
     .with_base_url("https://api.example.com")
     .with_timeout(1000)
-    .with_response_type(@merge.ResponseType::Text)
+    .with_response_encoding(@merge.ResponseEncoding::Latin1)
   // 请求级什么都设：全部回退
   let inherited = @merge.merge_config(base, @merge.Config::default())
   assert_eq(inherited.base_url, Some("https://api.example.com"))
   assert_eq(inherited.timeout, Some(1000))
-  assert_eq(inherited.response_type, Some(@merge.ResponseType::Text))
+  assert_eq(inherited.response_encoding, Some(@merge.ResponseEncoding::Latin1))
   // 请求级覆盖：以请求级为准
   let overridden = @merge.merge_config(
     base,
     @merge.Config::default()
     .with_base_url("https://other.example.com")
     .with_timeout(2000)
-    .with_response_type(@merge.ResponseType::Json),
+    .with_response_encoding(@merge.ResponseEncoding::Utf16le),
   )
   assert_eq(overridden.base_url, Some("https://other.example.com"))
   assert_eq(overridden.timeout, Some(2000))
-  assert_eq(overridden.response_type, Some(@merge.ResponseType::Json))
+  assert_eq(
+    overridden.response_encoding,
+    Some(@merge.ResponseEncoding::Utf16le),
+  )
 }
 
 ///|

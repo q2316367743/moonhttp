@@ -1,7 +1,7 @@
 ///|
 /// 引入配置相关类型，让本包的签名可以直接写短名；
 /// 这些类型也随本包一起再导出，使用者不必层层 import。
-pub using @config {type Config, type Method, type Auth, type ResponseType}
+pub using @config {type Config, type Method, type Auth, type ResponseEncoding}
 
 ///|
 /// 同上，`Headers` 出现在 `flatten_headers` 的签名里。
@@ -119,7 +119,7 @@ fn merge_method_headers(
 ///
 /// 策略分配与 axios 保持一致：
 /// - 只取请求级：url / http_method / data
-/// - 请求级优先、否则默认：base_url / timeout / response_type / allow_absolute_urls
+/// - 请求级优先、否则默认：base_url / timeout / response_encoding / allow_absolute_urls
 /// - 深合并：params / auth / headers / common_headers / method_headers
 /// - 存在即生效：validate_status
 ///
@@ -139,7 +139,10 @@ pub fn merge_config(base : Config, request : Config) -> Config {
     // 策略 2：请求级优先，否则回退默认值
     base_url: prefer_request(base.base_url, request.base_url),
     timeout: prefer_request(base.timeout, request.timeout),
-    response_type: prefer_request(base.response_type, request.response_type),
+    response_encoding: prefer_request(
+      base.response_encoding,
+      request.response_encoding,
+    ),
     allow_absolute_urls: prefer_request(
       base.allow_absolute_urls,
       request.allow_absolute_urls,

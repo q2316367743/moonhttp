@@ -114,7 +114,9 @@ while events.next_event() is Some(event) {
 
 `Client::sse` 拿到响应头后立刻检查 `Content-Type` 是否声明了 `text/event-stream`（判定与 `StreamResponse::is_event_stream` 共用 `declares_event_stream`）。不是就关掉连接并抛 `ErrorCode::NotSupported`。
 
-这与 `Auto` 解码那条「按 Content-Type 决定解不解码」是同一个思路：**该不该用这种读法，由声明的类型决定**。把 JSON 或二进制按事件读只会得到一堆莫名其妙的东西，宁可响亮失败。
+错误里挂着**已经收到的响应**（状态行与响应头），所以调用方看得见「回来的到底是什么」；**body 不读**——声明了别的类型就可能是任意大小的二进制，要看原文得改用 `Client::stream`。这条与其它路径「失败也带响应」的规则一致，见 `04-errors.md`。
+
+这与 `Client::sse` 之外那些「按声明决定怎么处理」的规则同源：**该不该用这种读法，由声明的类型决定**。把 JSON 或二进制按事件读只会得到一堆莫名其妙的东西，宁可响亮失败。
 
 确实要接一个不声明类型的服务端时，逃生口是公开的：用 `Client::stream` 拿原始字节流，再把 `read_some` 的字节喂给 `SseParser`。这种情况下由调用方自己的决定负责，库不猜。
 

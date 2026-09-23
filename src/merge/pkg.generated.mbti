@@ -28,6 +28,6 @@ pub using @headers {type Headers}
 
 pub using @config {type Method}
 
-pub using @config {type ResponseType}
+pub using @config {type ResponseEncoding}
 
 // Traits
