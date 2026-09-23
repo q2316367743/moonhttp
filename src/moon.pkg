@@ -1,5 +1,6 @@
 // 根包是门面与编排层：
-// - 对外公开 Client / Response / HttpError，并用 pub using 再导出子包的类型；
+// - 对外公开 Client / Response / StreamResponse / SseStream / HttpError，
+//   并用 pub using 再导出子包的类型；
 // - 编排「合并配置 → 拼 URL → 拍平头 → 传输 → 解析 → 校验」这条管线。
 // 这里不直接依赖 async 传输实现，只通过 transport 包的 trait 交互，
 // 因此管线本身可以用 Mock 传输层做同步/异步测试。
@@ -11,14 +12,22 @@ import {
   "q2316368843/moonhttp/config",
   "q2316368843/moonhttp/headers",
   "q2316368843/moonhttp/merge",
+  "q2316368843/moonhttp/sse",
   "q2316368843/moonhttp/transport",
   "q2316368843/moonhttp/url",
 }
 
 // 黑盒测试要 import 本模块的子包（Mock 传输层等），
 // async 用于运行 async test。
+//
+// `async/http` 与 `async/socket` 只给测试用：SSE 的验收用例要起一个本机
+// server，用真实连接证明「事件能在服务端停顿期间就到达」。**生产代码不碰
+// 这两个包**——对底层库的依赖仍然只出现在 src/transport/ 里，
+// 这正是 docs/README.md 那条分层约束要的效果。
 import {
   "moonbitlang/async",
+  "moonbitlang/async/http",
+  "moonbitlang/async/socket",
   "moonbitlang/core/encoding/utf8",
   "q2316368843/moonhttp/transport",
 } for "test"

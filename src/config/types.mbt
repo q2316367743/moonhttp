@@ -22,15 +22,24 @@ pub extend Auth with Default::{default}
 pub extend Auth with @debug.Debug::{to_repr}
 
 ///|
-/// 响应体的处理方式，对应 axios 的 `responseType` 加上 `forcedJSONParsing`。
+/// 响应体的解码方式，对应 axios 的 `responseType` 加上 `forcedJSONParsing`。
 ///
 /// axios 的默认值是 `undefined` + `forcedJSONParsing: true`，
 /// 也就是「不特别指定类型，但只要看起来像 JSON 就自动解析」，
-/// 本项目把它显式化为 `Auto`。
+/// 本项目把它显式化为 `Auto`，并且把「看起来像 JSON」落到 `Content-Type` 上
+/// （判定规则见 `auto_parses_json`）。
+///
+/// **这里只描述「读完的响应体怎么解码」，不描述读不读。**
+/// 「读完还是流」由入口决定：`Client::request` 读全、`Client::stream` 不读、
+/// `Client::sse` 按事件读。所以这里没有 `Stream` 这样的取值——
+/// 想让配置也表达「不要读全」，在静态类型下既没有落点，也会把
+/// 「解码方式」和「返回形态」两件事混在一起。
 pub(all) enum ResponseType {
-  /// 默认：先尝试按 JSON 解析，失败就把原文当作字符串
+  /// 默认：`Content-Type` 是 JSON（或没声明）时尝试按 JSON 解析，
+  /// 失败就把原文当作字符串；声明为其它类型则完全不解析
   Auto
-  /// 强制按 JSON 解析；解析失败会作为错误抛出（对应 axios 的 ERR_BAD_RESPONSE）
+  /// 强制按 JSON 解析，忽略 `Content-Type`；
+  /// 解析失败会作为错误抛出（对应 axios 的 ERR_BAD_RESPONSE）
   Json
   /// 完全不解析，`Response::data` 就是 `Json::String(原文)`
   Text

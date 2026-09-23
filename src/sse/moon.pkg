@@ -1,0 +1,16 @@
+// sse 是**纯逻辑**包：只吃字节、吐事件，不碰网络、不碰 async，
+// 因此可以用同步测试把 WHATWG EventSource 规范逐条钉死。
+//
+// 它独立于根包的原因与 config / headers / merge / url 相同：协议解析
+// 不需要编排能力，独立成包后（1）能用同步测试覆盖，（2）换任何字节来源
+// （HTTP 响应体、文件、WebSocket）都能复用同一个解析器。
+// 依赖方向：sse → core，不依赖本模块的其它包。
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/encoding/utf8",
+}
+
+// 黑盒测试要自己 import 用到的包：它不继承本包上面的 import。
+import {
+  "moonbitlang/core/encoding/utf8",
+} for "test"

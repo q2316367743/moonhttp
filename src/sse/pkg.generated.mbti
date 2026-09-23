@@ -1,0 +1,35 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316368843/moonhttp/sse"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+pub(all) struct SseEvent {
+  event : String
+  data : String
+  id : String?
+  retry : Int?
+} derive(Eq, @debug.Debug)
+pub fn SseEvent::equal(Self, Self) -> Bool
+pub fn SseEvent::not_equal(Self, Self) -> Bool
+pub fn SseEvent::to_repr(Self) -> @debug.Repr
+
+pub struct SseParser {
+  // private fields
+}
+pub fn SseParser::finish(Self) -> Unit
+pub fn SseParser::new() -> Self
+pub fn SseParser::next(Self) -> SseEvent?
+pub fn SseParser::push(Self, Bytes) -> Unit
+pub fn SseParser::to_repr(Self) -> @debug.Repr
+pub impl @debug.Debug for SseParser
+
+// Type aliases
+
+// Traits

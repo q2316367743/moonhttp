@@ -1,6 +1,6 @@
 # moonhttp
 
-axios 风格的 MoonBit HTTP 客户端。当前实现聚焦三件事：**创建实例**、**通用 `request`**、**配置合并**；并在此基础上提供**流式响应**（`Client::stream`，用于 SSE 与大文件下载）。
+axios 风格的 MoonBit HTTP 客户端。当前实现聚焦三件事：**创建实例**、**通用 `request`**、**配置合并**；并在此基础上提供**流式响应与 SSE**（`Client::stream` 交原始字节流，`Client::sse` 交解析好的事件流）。
 
 设计上刻意留出扩展点（可替换的传输层、`instance.create` 派生），但暂不实现拦截器、取消、重定向等 axios 高级特性——详见文末「暂不支持」。
 
@@ -83,7 +83,20 @@ import {
 7. 按 `response_type` 解析响应体
 8. 用 `validate_status` 校验状态码，失败则抛 `HttpError`
 
-第 3～8 步的实现分别在 [`src/url/`](src/url/)、[`src/pipeline.mbt`](src/pipeline.mbt) 里，全部是纯函数，可以脱离网络单独测试。第 6 步里「读全量」是 `request` 的选择，不需要完整响应体时改用 [`Client::stream`](#流式响应sse--大文件下载)。
+第 3～8 步的实现分别在 [`src/url/`](src/url/)、[`src/client.mbt`](src/client.mbt) 里，全部是纯函数，可以脱离网络单独测试。第 6 步里「读全量」是 `request` 的选择，不需要完整响应体时改用 [`Client::stream`](#流式响应与-sse) 或 [`Client::sse`](#流式响应与-sse)。
+
+### `response_type` 怎么决定 `data`
+
+| `response_type` | `Content-Type` | `data` |
+|---|---|---|
+| `Auto`（默认） | JSON（`application/json` / `application/*+json`）或缺失 | 解析成功是 JSON 值，失败是原文 |
+| `Auto` | 别的类型（`text/*` 等） | 原文（**不解析**） |
+| `Json` | 忽略 | 强制解析；失败抛 `HttpError` |
+| `Text` | 忽略 | 原文 |
+
+`Auto` 看 `Content-Type` 这一步是必要的：`123`、`true`、`"x"` 这些纯文本本身就是合法 JSON 文本，不看声明就解析会把 `text/plain` 的响应变成数字。这张表只在 `request` 上生效——流式入口没有 `data` 可解，所以不读 `response_type`。
+
+三种读法各有入口，读法由**调哪个方法**决定：`request` 读全量返回 `Response`，`stream` 不读返回 `StreamResponse`，`sse` 按事件读返回 `SseStream`。调错是编译错误，不需要运行时守卫。
 
 ### URL 与 query 的边界行为
 
@@ -97,36 +110,57 @@ import {
   - URL 里已有 `?` 时用 `&` 续接；`#fragment` 会被丢弃（axios 也是先截断再拼 query）
 - 数字参数优先使用 `Json::Number` 里保存的原始字面量（`repr`）：`@json.parse` 对超出 `Double` 精度的大整数会填上它，从而避免 `123456789012345678901234567890` 被写成 `1.2345678901234568e+29`；没有 `repr` 时退回 `Double` 的最短表示（`1.0` 写成 `1`）。
 
-## 流式响应（SSE / 大文件下载）
+## 流式响应与 SSE
 
-`request` 会把响应体读全再解析，SSE 这类一直不结束的响应永远等不到头。需要边到边读时用 `Client::stream`：配置合并与状态码校验和 `request` 完全一样，区别是拿到响应头就把控制权交给调用方。
+`request` 会把响应体读全再解码，SSE 这类一直不结束的响应永远等不到头。两种「不读全」的读法各有一个入口，配置合并与状态码校验都和 `request` 完全一样，区别是拿到响应头就把控制权交给调用方。
+
+**下载 / 自己按块处理**用 `Client::stream`，拿到的是原始字节流：
+
+```moonbit nocheck
+///|
+async fn download(
+  api : @moonhttp.Client,
+) -> Unit raise @moonhttp.HttpError {
+  let res = api.stream(@moonhttp.Config::new("/big-file"))
+  println(res.status)                       // 响应头已到手，body 还没读
+  println(res.headers.get("content-type"))
+  // 边到边读，每块自己处理（下载进度就是在这上面按块大小累加）
+  while res.read_some() is Some(chunk) {
+    println(chunk.length())
+  }
+}
+```
+
+**SSE** 用 `Client::sse`，拿到的是解析好的事件流，不需要自己切事件：
 
 ```moonbit nocheck
 ///|
 async fn watch_events(
   api : @moonhttp.Client,
 ) -> Unit raise @moonhttp.HttpError {
-  let res = api.stream(
+  let events = api.sse(
     @moonhttp.Config::new("/events").with_common_header(
       "Accept", "text/event-stream",
     ),
   )
-  println(res.status)                       // 响应头已到手，body 还没读
-  println(res.headers.get("content-type"))  // text/event-stream
-  // read_until 按空行切分，一次正好是一个 SSE 事件；读到 EOF 返回 None
-  while res.read_until("\n\n") is Some(event) {
-    println(event) // data: {...}
+  println(events.status)                    // 响应头已到手，body 还没读
+  while events.next_event() is Some(event) {
+    println(event.event + ": " + event.data) // message: {...}
   }
 }
 ```
 
+`SseEvent` 有四个字段：`event`（缺省 `"message"`）、`data`（同一事件的多条 `data:` 行用 `\n` 连接）、`id` 与 `retry`（解析器的**持久状态快照**——一旦流里出现过就跟着后面每个事件出来，断线重连要用它们；本项目不自动重连，重连逻辑写在上层）。
+
+`Client::sse` 会检查响应头是否声明了 `text/event-stream`，不是就报 `NotSupported`——把 JSON 或二进制按事件读只会得到一堆莫名其妙的东西，宁可响亮失败。服务端不声明类型却确实是 SSE 时，用 `Client::stream` 拿原始流 + 公开的 `SseParser` 自己驱动。
+
 要点：
 
-- 响应体是流：`read_some` / `read_until` / `read_all`，三者都可能在读取阶段抛 `HttpError`；
-- 读到 EOF 会自动关闭连接；**没读完就结束时必须调用 `close()`**——本项目没有连接复用也没有析构器，忘记关闭会漏一条连接；
+- 两个流式类型各自只有一种读法：`StreamResponse` 是 `read_some` / `read_until` / `read_all`，`SseStream` 是 `next_event`。它们都可能抛 `HttpError`；`StreamResponse::is_event_stream()` 可以自查对面是不是 SSE（想按事件读请改用 `Client::sse`）；
+- 读到 EOF 会自动关闭连接；**没读完就结束时必须调用 `close()`**——本项目没有连接复用也没有析构器，忘记关闭会漏一条连接。`close()` 是「到此为止」：之后 `read_some` / `next_event` 一律只返回 `None`，包括那一次读取里已经解析好、还排队等着的事件；
 - 状态码校验与 `request` 一致：非 2xx 会先把错误体读完，再抛带完整响应的 `HttpError`，长连场景下能立刻看到「为什么没连上」；
-- `timeout` 在流式路径下是**每次读取的等待上限**（不是整条请求的总时限），SSE 保持默认的不限时即可；
-- `event:` / `data:` / `id:` / `retry:` 这些事件字段的语义不在本模块范围内：用 `read_until("\n\n")` 拿到事件文本后自行解析。
+- `timeout` 在流式路径下是**每次读取的等待上限**（不是整条请求的总时限），SSE 用默认的不限时即可；
+- **不要用 `read_until("\n\n")` 切 SSE 事件**：SSE 允许 CRLF / LF / CR 三种行尾，而 CRLF 流上事件边界的字节 `0D 0A 0D 0A` 里没有连续两个 LF，这个分隔符永远匹配不到（内存体上表现为整段原样返回，真实连接上会一直等到连接关闭）。细节与全部解析规则见 [docs/06-sse.md](docs/06-sse.md)。
 
 ## 可替换的传输层
 
@@ -187,21 +221,29 @@ try {
 
 ## 包结构
 
-六个包构成无环依赖，每个包只依赖它真正需要的下层：
+七个包构成无环依赖，每个包只依赖它真正需要的下层：
 
 ```
 moonhttp/
 └── src/                     业务代码全部在 src/ 下（根目录只放模块元数据与文档）
-    ├── (根包)               门面 + 请求管线：Client / create / request / stream / Response / StreamResponse / HttpError
+    ├── (根包)               门面 + 请求管线：Client / create / request / stream / sse
+    │                        / Response / StreamResponse / SseStream / HttpError
     ├── config/              配置形状、Method、内置默认值、with_* 构建器
     ├── headers/             大小写不敏感的 Headers
     ├── merge/               配置合并（四种策略）与头拍平
+    ├── sse/                 SSE 事件解析（纯逻辑：吃字节、吐事件）
     ├── url/                 绝对地址判定、拼接、params 序列化
     ├── transport/           Transport trait + AsyncHttpTransport + MockTransport
     └── cmd/main/            可运行示例
 ```
 
 约定：凡是出现在公开签名里的类型，都在定义它的包里**再导出一次**（`pub using`），根包也再导出一份。所以日常使用只需要 `@moonhttp` 一个 import。
+
+拆包的依据是「能不能不依赖门面类型」：`config` / `headers` / `merge` / `url` / `sse` 都是纯逻辑，可以同步测试、谁也不依赖；`Response` / `StreamResponse` / `SseStream` / `HttpError` 互相引用（`HttpError` 要带 `Response`，流式类型要抛 `HttpError`），拆开就会形成循环依赖，所以它们同属根包这个门面层。
+
+**根包因此只有两个源文件**：`client.mbt`（`Client` + 三个入口 + 共用的纯函数管线）与 `facade.mbt`（对外类型与再导出）。AGENTS.md 的 RL-04 为根包文件放宽到 1000 行，超限的文件在文件头声明例外；子包仍守 300 行。
+
+测试文件不能挪到 `tests/` 之类的子目录：MoonBit 按「文件所在目录的包」归属测试，挪出去就变成了别的包的测试（白盒测试还得编进包里才能看见 `priv`，物理上不可能在别处）。
 
 ## 暂不支持
 
@@ -212,7 +254,7 @@ moonhttp/
 - 自动跟随重定向（`maxRedirects`）、代理（`proxy`）
 - 上传进度（`onUploadProgress`）：请求体是一次性字节，不支持流式上传
 - 下载进度回调（`onDownloadProgress`）：没有回调字段，但流式路径下按 `read_some` 每块大小累加即可自己统计
-- SSE 事件解析：能流式读响应体（`Client::stream`），但 `event:` / `data:` 字段的语义要自己解析
+- SSE 自动重连：事件里带了 `id` / `retry`（重连所需的全部状态），但没有按 `retry` 间隔自动重订阅、也不自动带 `Last-Event-ID`——重连策略交给上层
 - 请求/响应转换器（`transformRequest` / `transformResponse`）——目前 body 序列化与响应解析固定为内置行为
 - `withCredentials` / `xsrfCookieName` / `xsrfHeaderName`（本项目不管理 cookie）
 - 响应 cookie：底层的响应 cookie 单独存放，没有并入 `headers`，所以读不到 `Set-Cookie`
@@ -223,7 +265,7 @@ moonhttp/
 
 - `Config` 的 `method` 字段在本项目里叫 `http_method`（保留字原因，见上文）。
 - `Headers` 内部以小写保存头名（写入时的原始拼写会被记住并用于输出），但不支持 axios 用 `false` 表示「禁止被同名默认值覆盖」的哨兵值。
-- `Response::data` 是 `Json`：解析失败时是 `Json::String(原文)`，等价于 axios 的 `forcedJSONParsing` 行为；二进制内容请读 `Response::raw`。
+- `Response::data` 是 `Json`：解析失败时是 `Json::String(原文)`，等价于 axios 的 `forcedJSONParsing` 行为。但 `Auto` 会先看 `Content-Type`：声明成 `text/plain` 这类非 JSON 类型时**不解析**——`123` 本身就是合法 JSON 文本，无脑解析会把纯文本变成数字。二进制内容请读 `Response::raw`。
 - 没有可变的全局默认值。axios 的全局 `axios.defaults` 在本项目里对应 `@config.defaults()`（固定的内置默认值）；要定制请用 `create(...)` 或 `client.create(...)` 派生。
 
 ### 后续扩展
@@ -257,6 +299,6 @@ moon info && moon fmt   # 更新 .mbti 接口文件并格式化
 moon coverage analyze   # 覆盖率
 ```
 
-测试分层：`config` / `headers` / `merge` / `url` 四个包是纯逻辑，用同步测试逐条钉住合并语义；根包与 `transport` 用 `async test` 配合 `MockTransport` 跑完整管线。`transport/stream_test.mbt` 还会在本机起一个 server（`127.0.0.1` 随机端口）验证真实连接的流式读取——同样不需要外网；只有 `src/cmd/main` 会访问真实网络。
+测试分层：`config` / `headers` / `merge` / `url` / `sse` 五个包是纯逻辑，用同步测试逐条钉住合并语义与 SSE 解析规则；根包与 `transport` 用 `async test` 配合 `MockTransport` 跑完整管线。`src/sse_stream_test.mbt` 与 `transport/stream_test.mbt` 会各起一个本机 server（`127.0.0.1` 随机端口）——前者验证 CRLF 的 SSE 事件能在服务端停顿期间就到达，后者验证真实连接的流式读取与单次读取超时；同样不需要外网。只有 `src/cmd/main` 会访问真实网络。
 
 维护者文档（实现思路、API 契约、改动清单、MoonBit 语言坑位）见 [`docs/`](docs/README.md)。

@@ -9,20 +9,26 @@ moonhttp/
 ├── docs/                        本目录：维护者文档
 └── src/
     ├── moon.pkg                 根包：门面 + 请求管线
-    ├── client.mbt               Client / create / create() 派生 / request / stream
-    ├── pipeline.mbt             纯函数管线：拼请求、解析响应、校验状态码
-    ├── response.mbt             Response 与它的便捷方法
-    ├── stream_response.mbt      StreamResponse：不读 body 的流式响应
-    ├── error.mbt                HttpError / ErrorCode / ErrorInfo
-    ├── facade.mbt               pub using 再导出
+    ├── client.mbt               Client 与三个入口 + 它们共用的纯函数管线
+    │                            （request / stream / sse、拼请求、解码、校验）
+    ├── facade.mbt               门面层：Response / StreamResponse / SseStream /
+    │                            HttpError 等对外类型 + pub using 再导出
     ├── *_test.mbt               根包黑盒测试（用 MockTransport 跑整条管线）
+    ├── *_wbtest.mbt             根包白盒测试（覆盖只能从包内部触达的分支）
     ├── config/                  配置的形状、默认值与构建器
     ├── headers/                 大小写不敏感的 Headers
     ├── merge/                   配置合并（四种策略）与头拍平
+    ├── sse/                     SSE 事件解析（纯逻辑：吃字节、吐事件）
     ├── url/                     绝对地址判定、拼接、params 序列化
     ├── transport/               传输层：trait + 真实实现 + Mock + 响应体流
     └── cmd/main/                可运行示例（真实网络）
 ```
+
+**为什么根目录的文件多，而测试文件不能挪到 `tests/` 之类的子目录**：MoonBit 的约定是「一个目录 = 一个包」，测试文件按**所在目录的包**归属——`src/foo_test.mbt` 是 `src` 这个包的黑盒测试，`src/foo_wbtest.mbt` 是它的白盒测试（白盒测试会被编进包里才能看见 `priv`，物理上不可能在别处）。把它们移进子目录，它们就变成了「一个新包的测试」，与被测的包再无关系。
+
+根包的源码也不能随手拆包：`HttpError` 要带 `Response`（失败时把响应挂在错误上），两个流式类型要抛 `HttpError`，拆成不同包会立刻形成循环依赖，而 MoonBit 不允许包间循环依赖。它们同属「对外的门面类型」，本来就该在同一个包里。能干净独立出去的是**不依赖门面类型**的纯逻辑，所以 `sse/` 出去了（`config` / `headers` / `merge` / `url` 同理）。
+
+**根包只有两个源文件**：`client.mbt`（实现：`Client` + 三个入口 + 共用的纯函数管线）与 `facade.mbt`（对外类型与再导出）。它们都用上了 RL-04 为根包文件开出的例外（≤ 1000 行，需在文件头声明），原本按「一个类型一个文件」「入口与管线分开」拆出来的六个文件因此合一——拆开只是多几次跳转，耦合一点没少。**例外只给根包**：子包仍守 300 行（`config` / `sse` / `transport` 里的文件超了就必须拆）。
 
 ## 依赖方向（无环）
 
@@ -31,13 +37,15 @@ MoonBit 的包之间不能循环依赖，所以分层是按「数据从谁流向
 ```
 config ──┐
 headers ─┼─→ merge ──┐
-url ─────┘           ├─→ （根包：门面 + 管线） ──→ Client / request
-transport ───────────┘
+url ─────┘           ├─→ （根包：门面 + 管线） ──→ Client / request / stream / sse
+transport ───────────┤
+sse ─────────────────┘
 ```
 
 - `config` 依赖 `headers`（配置里有头字段）；
 - `merge` 依赖 `config` 与 `headers`（要合并配置、拍平头）；
 - `url` 不依赖任何本项目的包（只吃字符串和 `Json`）；
+- `sse` 也不依赖本项目的包（只吃字节），所以它是这层里唯一能被任意字节来源复用的包；
 - `transport` 依赖 `config` 与 `headers`（`PreparedRequest` 的字段类型），**并且是唯一依赖 `moonbitlang/async` 的包**；
 - 根包依赖以上全部，负责编排与对外 API。
 
@@ -53,6 +61,8 @@ MoonBit 标准库没有任何网络能力，唯一的 HTTP 实现在 `moonbitlan
 - 根包的管线测试用 `MockTransport` 注入，能确定性复现 4xx/5xx、超时、解析失败等分支；
 - 响应体是流（`ResponseBody`），但它的读语义在内存体与真实连接上完全一致，Mock 因此能代表网络侧的流式行为；
 - 使用方也能替换传输层（自定义实现只需一个方法）。
+
+同一把尺子也决定了 SSE 解析的位置：它只吃字节、不碰 async，所以独立成 `sse` 包，用同步测试覆盖规范逐条（`src/sse/sse_test.mbt`）。传输层只负责把字节交出来，「字节怎么解」是上层的事；而「怎么把字节喂给解析器」是根包里 `SseStream` 的事（`sse_stream.mbt`）。
 
 ### 2. 配置是值语义 + `Option` 字段
 
@@ -76,7 +86,7 @@ MoonBit 的 import 是包级的：`Config` 的字段类型 `Headers` 定义在�
 2. `src/config/config.mbt` 加 `with_*` 构建器（若使用者需要设置它）；
 3. `src/config/render.mbt` 的 `Config::to_string` 里加一行渲染（可选，但有助于排查）；
 4. `src/merge/merge.mbt` 的 `merge_config` 里**显式**选择一档策略调用，并在注释里说明为什么是这一档；
-5. 若它参与请求构造，接到 `src/pipeline.mbt` 的 `build_prepared_request` / `build_response`；
+5. 若它参与请求构造，接到 `src/client.mbt` 的 `build_prepared_request` / `build_response`；
 6. 补测试：`src/merge/merge_test.mbt` 测合并语义，`src/*_test.mbt` 测端到端效果；
 7. 更新 `docs/02-config-merge.md` 的字段归属表。
 
@@ -104,7 +114,13 @@ pub async fn Client::get(
 ```moonbit
 pub impl Transport for MyTransport with fn send(self, request) {
   // request : PreparedRequest；返回 RawResponse
-  { status: 200, status_text: "OK", headers: Headers::new(), body: b"{}" }
+  // 响应体是流：手里已经有完整字节时用 from_bytes 包一层
+  {
+    status: 200,
+    status_text: "OK",
+    headers: Headers::new(),
+    body: ResponseBody::from_bytes(b"{}"),
+  }
 }
 ```
 
@@ -131,3 +147,4 @@ pub impl Transport for MyTransport with fn send(self, request) {
 | 顶层 `enum` / `struct` 不加 `priv` 会出现在 `.mbti` 里 | 纯内部类型（`BodyInner`、`MemoryBody`）必须标 `priv`，否则会污染公开接口——`moon info` 后能从 `.mbti` 的 diff 里看出来 |
 | `pub(all) struct` 里允许个别字段标 `priv` | `StreamResponse` 就靠这条：状态行与响应头公开，响应体流私有，读取必须走本类型的方法，错误才能统一成 `HttpError` |
 | `errdefer` 在 async 函数里同样有效，适合「失败就关连接」这类清理 | 传输层用它保证建连之后的任何失败都关闭连接；比 `try ... catch { cleanup; raise }` 更短，也不会触发 `fragile_catch_all` 告警 |
+| 含 `mut` 字段的结构体，其内部变异**能穿过值类型字段可见**——把这种类型放进另一个结构体当普通字段（不标 `mut`）也照样生效 | `StreamResponse` 里的 `priv parser : SseParser` 就没标 `mut`：`next_event` 反复调 `parser.push` 能累积状态（`facade.mbt` 里的 `StreamResponse`）。给字段标 `mut` 反而会收到 `unused_mut` 告警——编译器认定这个 `mut` 没被用到，因为根本没有对该字段的整体赋值 |

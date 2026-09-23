@@ -5,6 +5,7 @@ import {
   "moonbitlang/core/debug",
   "q2316368843/moonhttp/config",
   "q2316368843/moonhttp/headers",
+  "q2316368843/moonhttp/sse",
   "q2316368843/moonhttp/transport",
 }
 
@@ -34,6 +35,7 @@ pub fn Client::create(Self, @config.Config) -> Self
 pub fn Client::defaults(Self) -> @config.Config
 pub fn Client::new(config? : @config.Config, transport? : &@transport.Transport) -> Self
 pub async fn Client::request(Self, @config.Config) -> Response raise HttpError
+pub async fn Client::sse(Self, @config.Config) -> SseStream raise HttpError
 pub async fn Client::stream(Self, @config.Config) -> StreamResponse raise HttpError
 
 pub(all) enum ErrorCode {
@@ -71,18 +73,32 @@ pub fn Response::is_success(Self) -> Bool
 pub fn Response::text(Self) -> String
 pub fn Response::to_repr(Self) -> @debug.Repr
 
+pub(all) struct SseStream {
+  status : Int
+  status_text : String
+  headers : @headers.Headers
+  config : @config.Config
+  // private fields
+} derive(@debug.Debug)
+pub fn SseStream::close(Self) -> Unit
+pub fn SseStream::is_success(Self) -> Bool
+pub async fn SseStream::next_event(Self) -> @sse.SseEvent? raise HttpError
+pub fn SseStream::to_repr(Self) -> @debug.Repr
+
 pub(all) struct StreamResponse {
   status : Int
   status_text : String
   headers : @headers.Headers
   config : @config.Config
   // private fields
-}
+} derive(@debug.Debug)
 pub fn StreamResponse::close(Self) -> Unit
+pub fn StreamResponse::is_event_stream(Self) -> Bool
 pub fn StreamResponse::is_success(Self) -> Bool
 pub async fn StreamResponse::read_all(Self) -> Bytes raise HttpError
 pub async fn StreamResponse::read_some(Self, max_len? : Int) -> Bytes? raise HttpError
 pub async fn StreamResponse::read_until(Self, String) -> String? raise HttpError
+pub fn StreamResponse::to_repr(Self) -> @debug.Repr
 
 // Type aliases
 pub using @config {type Auth}
@@ -94,6 +110,10 @@ pub using @headers {type Headers}
 pub using @config {type Method}
 
 pub using @config {type ResponseType}
+
+pub using @sse {type SseEvent}
+
+pub using @sse {type SseParser}
 
 pub using @transport {trait Transport}
 

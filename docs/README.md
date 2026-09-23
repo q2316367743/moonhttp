@@ -6,11 +6,12 @@
 
 | 编号 | 文档 | 内容 | 什么时候读 |
 |---|---|---|---|
-| 01 | [架构与分层](01-architecture.md) | 目录结构、六个包的职责与依赖方向、为什么把 async 关在一层、如何新增一个配置字段或一个新包 | 要动手改代码之前 |
+| 01 | [架构与分层](01-architecture.md) | 目录结构、七个包的职责与依赖方向、为什么把 async 关在一层、为什么测试文件不能挪出包目录、如何新增一个配置字段或一个新包 | 要动手改代码之前 |
 | 02 | [配置合并契约](02-config-merge.md) | axios `mergeConfig` 四种策略在本项目的落法、字段归属表、`Option` 与 `undefined` 的对应、数组替换语义 | 要改合并行为、或要新增配置字段时 |
-| 03 | [请求管线](03-request-pipeline.md) | `request` 的八个步骤、URL 拼接与 query 序列化规则、body 序列化与自动补头、状态码校验 | 要改请求行为（URL、头的优先级、body 处理）时 |
+| 03 | [请求管线](03-request-pipeline.md) | 三种读法（`request` / `stream` / `sse`）的分工、八个步骤、URL 拼接与 query 序列化规则、body 序列化与自动补头、`response_type` 与 `Content-Type` 如何共同决定解码、状态码校验 | 要改请求行为（URL、头的优先级、body 处理、响应解码）时 |
 | 04 | [错误契约](04-errors.md) | `HttpError` / `ErrorCode` 形状、与 axios 错误码的对应、各类错误的触发点、错误里带什么上下文 | 要新增错误分类或调整错误信息时 |
 | 05 | [传输层契约](05-transport.md) | `Transport` trait 与 `PreparedRequest` / `RawResponse` 字段含义、`ResponseBody` 响应体流的读语义与超时语义、`AsyncHttpTransport` 的实现注意事项、如何写自定义传输 | 要换 HTTP 实现、加连接池 / 代理 / 上传进度，或要动流式读取时 |
+| 06 | [SSE 事件解析](06-sse.md) | 为什么 `read_until("\n\n")` 切不了 SSE、为什么解析器独立成包、为什么按事件读是独立类型、`SseEvent` / `SseParser` 的公开 API、EventSource 规范逐条落点、`id` / `retry` 的持久状态、跨块安全与 `finish()`、不自动重连的边界 | 要改 SSE 行为、接新的 SSE 服务端，或要加自动重连时 |
 
 ## 改动时的同步清单
 
@@ -20,5 +21,8 @@
 2. **新增包**：确认依赖方向仍是 DAG（见 `01-architecture.md`）→ 新包若暴露新类型，用 `pub using` 再导出 → 根包 `moon.pkg` 加 import → 更新 README 与 `01-architecture.md` 的目录树。
 3. **改公开 API**：跑 `moon info` 后检查 `pkg.generated.mbti` 的 diff，确认只包含预期的变化。
 4. **对接底层库（`moonbitlang/async`）的改动**：只允许出现在 `src/transport/` 这个包里（`async_http.mbt` 是主要落点，`stream.mbt` 负责响应体流的读写封装）；如果发现必须让上层认识底层类型，说明抽象漏了，应当先补 `Transport` / `ResponseBody` 契约。
-5. **改 `RawResponse` 或 `ResponseBody` 的结构 / 语义**：它们出现在公开签名里，要同步 `05-transport.md`、`03-request-pipeline.md`，并检查根包两条入口（`Client::request` 读全量、`Client::stream` 不读）是否都还成立；`MockTransport` 的响应体必须仍能用 `ResponseBody::from_bytes` 造出来。
-6. **改超时相关的行为**：超时在两处生效（响应头阶段整体、响应体每次读取），见 `05-transport.md` 的「超时语义」，改任何一处都要同时看另一处与非流式路径的既有行为。
+5. **改 `RawResponse` 或 `ResponseBody` 的结构 / 语义**：它们出现在公开签名里，要同步 `05-transport.md`、`03-request-pipeline.md`，并检查根包三个入口（`request` 读全量、`stream` 不读、`sse` 按事件读）是否都还成立；`MockTransport` 的响应体必须仍能用 `ResponseBody::from_bytes` 造出来。
+6. **改超时相关的行为**：超时在两处生效（响应头阶段整体、响应体每次读取），见 `05-transport.md` 的「超时语义」，改任何一处都要同时看另一处与非流式路径的既有行为。SSE 依赖「不限时」这个前提，见 `06-sse.md`。
+7. **改响应解码（`response_type` / `Content-Type` 判定）**：判定规则是 `client.mbt` 的三个纯函数（`media_type` / `is_json_media_type` / `auto_parses_json`），用例在 `src/content_type_test.mbt`。`Auto` 的取舍直接影响「纯文本被解成数字」这类静默错误，改动要同步 `03-request-pipeline.md` 的表格与 `README.mbt.md`。
+8. **改 SSE 解析**：解析规则在 `src/sse/`（独立包，同步测试在 `src/sse/sse_test.mbt`），接到 HTTP 上的部分在 `src/facade.mbt`（`SseStream`）/ `src/client.mbt`（`Client::sse`）。先补用例再改代码；CRLF 家族（裸 CR 收尾、CR 跨块）最容易改坏。同步 `06-sse.md`。
+9. **想给 `StreamResponse` 加「按事件读」的方法**：不要这样做。它是下载用的原始字节流，把二进制喂给事件解析器只会解出无意义的东西；SSE 有独立的 `SseStream` 与 `Client::sse`，理由见 `06-sse.md`。

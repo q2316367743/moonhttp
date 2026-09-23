@@ -18,6 +18,20 @@ fn raw_response(
 }
 
 ///|
+/// 造一份串口是 SSE 的原始响应（`Content-Type: text/event-stream`）。
+///
+/// 两个测试文件都用它：`stream_test.mbt` 拿它当「有 body 的响应」用，
+/// `sse_stream_test.mbt` 拿它当真正的 SSE 响应用。
+fn sse_response(body : String) -> @transport.RawResponse {
+  {
+    status: 200,
+    status_text: "OK",
+    headers: @transport.Headers::new().set("Content-Type", "text/event-stream"),
+    body: @transport.ResponseBody::from_bytes(@utf8.encode(body)),
+  }
+}
+
+///|
 /// 造一个「始终返回该响应」的实例，并把 Mock 传输层一起返回，便于断言收到的请求。
 fn client_with(
   response : @transport.RawResponse,

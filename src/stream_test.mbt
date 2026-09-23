@@ -2,17 +2,6 @@
 // 由调用方决定怎么读。全部用 Mock 传输层，不联网。
 
 ///|
-/// 造一份 SSE 风格的原始响应：事件之间用空行分隔。
-fn sse_response(body : String) -> @transport.RawResponse {
-  {
-    status: 200,
-    status_text: "OK",
-    headers: @transport.Headers::new().set("Content-Type", "text/event-stream"),
-    body: @transport.ResponseBody::from_bytes(@utf8.encode(body)),
-  }
-}
-
-///|
 /// 拿到流式响应时状态码与响应头已经可用——SSE 靠的就是这一步：
 /// 先看状态码与 `Content-Type`，再决定怎么读。
 async test "stream exposes status and headers before reading the body" {
@@ -100,4 +89,37 @@ async test "stream honors custom validate_status" {
   assert_eq(response.status, 404)
   assert_true(!response.is_success())
   assert_eq(response.read_all(), b"nope")
+}
+
+///|
+/// 传输层失败在流式路径上同样映射成 `HttpError`，调用方不必认识底层错误类型。
+async test "stream maps transport failures to HttpError" {
+  let mock = @transport.MockTransport::failing(
+    @transport.TransportError::Timeout,
+  )
+  let transport : &@transport.Transport = mock
+  let client = @moonhttp.Client::new(transport~)
+  let error = try {
+    ignore(client.stream(@moonhttp.Config::new("https://example.com/events")))
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(error.unwrap().code(), @moonhttp.ErrorCode::Timeout)
+}
+
+///|
+/// 没有 `Content-Type` 时 `is_event_stream` 为假——它只做查询，
+/// 是给「已经拿到原始流、想知道对面是不是 SSE」的调用方自查用的。
+async test "is_event_stream is false without a content type" {
+  let (client, _) = client_with(@transport.RawResponse::{
+    status: 200,
+    status_text: "OK",
+    headers: @transport.Headers::new(),
+    body: @transport.ResponseBody::from_bytes(@utf8.encode("plain")),
+  })
+  let response = client.stream(@moonhttp.Config::new("https://example.com/raw"))
+  assert_true(!response.is_event_stream())
+  // 类型不同：原始流只能按字节读，按事件读要走 Client::sse
+  assert_eq(response.read_all(), b"plain")
 }

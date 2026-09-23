@@ -40,6 +40,21 @@ async test "response body reads until separator" {
 }
 
 ///|
+/// 为什么 SSE 不能用 `read_until("\n\n")` 切事件——这里把那个坑本身钉住。
+///
+/// CRLF 流上事件边界的字节是 `0D 0A 0D 0A`，里面**没有**连续两个 `0A`，
+/// 所以按 `"\n\n"` 找分隔符是找不到的：内存体上表现为「没有分隔符 → 整段返回」，
+/// 拿到的东西连边界都没切掉；在真实连接上更糟——EOF 不会来，
+/// 于是会一直等到连接关闭（`timeout` 为不限时的 SSE 配置下就是永远等下去）。
+///
+/// 事件切分因此必须按三种行尾自己扫，见根包的 `SseParser`。
+async test "read_until with two lf cannot cut crlf events" {
+  let body = @transport.ResponseBody::from_bytes(b"data: x\r\n\r\n")
+  // 一个分隔符都没找到，于是一整段（连边界都没切）原样返回
+  assert_eq(body.read_until("\n\n"), Some("data: x\r\n\r\n"))
+}
+
+///|
 /// 真实连接的流式读取：本机 server 先发响应头与第一段数据，停一下再发第二段。
 ///
 /// 那条 `assert_true(!sent_tail[0])` 是这条用例的重点：第一段必须在这段停顿

@@ -57,11 +57,13 @@ pub fn ResponseBody::close(Self) -> Unit
 两种来源（真实连接、内存字节）的语义**完全一致**，对齐 `@io.Reader`，Mock 才能真实代表网络侧：
 
 - `read_some` 到 EOF 返回 `None`；返回的块大小不保证（取决于对端一次发了多少）；
-- `read_until` 消费掉分隔符且不返回它；EOF 时把剩余内容当作最后一段返回，再读一次才是 `None`（`read_until("\n\n")` 正好是 SSE 取一个事件的写法）；
+- `read_until` 消费掉分隔符且不返回它；EOF 时把剩余内容当作最后一段返回，再读一次才是 `None`；
 - `read_all` 读完剩余内容，空体返回空字节串；
 - **读到 EOF 会自动关闭底层连接**——本项目不复用连接，早关没有代价；
 - `close()` 幂等。没有析构器，**拿到流后不读完也不 `close()` 会漏一条连接**；
 - 任何读取失败都会先关闭流再抛 `TransportError`：失败之后连接状态已不可信，调用方不该继续读。
+
+**不要用 `read_until("\n\n")` 切 SSE 事件。** CRLF 流上事件边界的字节是 `0D 0A 0D 0A`，里面没有连续两个 `0A`，这个分隔符永远匹配不到：内存体上表现为「整段原样返回」，真实连接上更糟——EOF 不会来，于是会一直等到连接关闭（不限时的 SSE 配置下就是永远等下去）。事件切分要按规范认 CRLF / LF / CR 三种行尾，落在**根包**的 `SseParser` 里，不在传输层，见 `06-sse.md`；`src/transport/stream_test.mbt` 有一条用例专门钉住这个坑。
 
 `ResponseBody` 刻意**不**实现 `@io.Reader`：那要实现 `_get_internal_buffer` / `_direct_read` 这两个标注「仅内部实现」的方法。只暴露上面四个方法，底层库换 Reader 实现也不会波及本模块。
 
@@ -77,7 +79,7 @@ pub fn ResponseBody::close(Self) -> Unit
 也就是说超时从「整条请求的总时限」细化成了「响应头阶段总时限 + 每次读取的等待上限」。这么切的原因：
 
 - 非流式路径不能因为改成流式就丢掉「响应体下载慢也会超时」的原有行为；
-- SSE 这类长连「长时间没有数据是正常的」，把 `timeout` 设为 `None`（或 `<= 0`）就完全不限时——`Config` 的默认值正是 `None`。
+- SSE 这类长连「长时间没有数据是正常的」，必须完全不限时。内置默认值就是不限时（`defaults()` 给的是 `Some(0)`，`<= 0` 一律视为不限时），所以在默认实例上直接 `stream` 就能长连；显式设过 `timeout` 的实例要用 `with_timeout(0)` 关掉。
 
 读取阶段超时同样抛 `TransportError::Timeout`，上层映射成 `ErrorCode::Timeout`。
 
@@ -136,7 +138,7 @@ pub impl Transport for MyTransport with fn send(self, request) {
 | 代理 | 不支持 | `Client::Client(uri, proxy~)` 与 `@http.request(proxy~)` 都有这个参数，需要在 `Config` 里加 `proxy` 字段并传进来 |
 | TLS 校验开关 | 固定为默认（校验） | `Client::Client(trust~ / verify~)` |
 | 响应 cookie | 读不到 `Set-Cookie` | 底层把响应 cookie 单独放在 `Response::cookies` 里，没有并进 headers。要暴露需要先决定多值头的表示（本项目的 `Headers` 一个名字只能有一个值） |
-| SSE 事件解析 | 不支持（也不在本模块范围内） | 用 `StreamResponse::read_until("\n\n")` 自己切事件、再按 `event:` / `data:` 字段解析；事件语义是上层协议的事，不值得塞进传输层 |
+| SSE 事件解析 | 已实现，但**不在本模块** | 传输层只交出字节流；事件边界与 `event:` / `data:` 字段语义在 `sse` 包（`SseParser`），接到 HTTP 上的入口是根包的 `Client::sse` / `SseStream`，见 `06-sse.md`。分层的意义是「字节怎么来」与「字节怎么解」各自独立演进：换成别的字节来源（WebSocket、文件）也能复用同一个解析器 |
 
 改动这些能力时请只动 `src/transport/`——它是本模块唯一对接 `moonbitlang/async` 的包（`src/transport/*.mbt` 都可以改，不限于 `async_http.mbt`）。`PreparedRequest` 的字段语义不要动；`RawResponse` 的结构变化（例如本次 `body` 由字节改成流）必须同步本节与 `03-request-pipeline.md`，因为它出现在公开签名里。
 

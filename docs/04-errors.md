@@ -4,8 +4,8 @@
 
 | 文件 | 职责 |
 |---|---|
-| `src/error.mbt` | `ErrorCode` / `ErrorInfo` / `HttpError` 与访问器 |
-| `src/pipeline.mbt` | `validate_response`（状态码校验）与 `try_parse_json`（强制 JSON 失败） |
+| `src/facade.mbt` | `ErrorCode` / `ErrorInfo` / `HttpError` 与访问器（根包门面层，与响应类型同一文件） |
+| `src/client.mbt` | `validate_response`（状态码校验）与 `try_parse_json`（强制 JSON 失败），与入口同文件 |
 | `src/client.mbt` | 把 `TransportError` 翻译成 `ErrorCode` |
 | `src/error_test.mbt` | 错误路径的端到端用例 |
 
@@ -40,7 +40,7 @@ pub(all) suberror HttpError {
 | `Network` | `ERR_NETWORK` | `Client::request`：`TransportError::Network`（连接失败、DNS、TLS 等） |
 | `Timeout` | `ECONNABORTED` | `Client::request`：`TransportError::Timeout` |
 | `InvalidUrl` | `ERR_INVALID_URL` | `build_prepared_request`：既没有 `url` 也没有可用的 `base_url` |
-| `NotSupported` | `ERR_NOT_SUPPORT` | `Client::request`：`TransportError::Unsupported` |
+| `NotSupported` | `ERR_NOT_SUPPORT` | `Client::request`：`TransportError::Unsupported`（传输层做不到，例如相对地址）；`Client::sse`：响应头没有声明 `text/event-stream`（拿到的不是 SSE 却要按事件读，见 `06-sse.md`）——报错前会先关掉连接 |
 
 关于超时用的是 `ECONNABORTED` 而不是 `ETIMEDOUT`：axios 默认就是前者，只有打开 `transitional.clarifyTimeoutError` 时才换成后者。这里保持默认行为。
 
@@ -67,7 +67,7 @@ ErrorCode { Timeout | Network | NotSupported | ... }                 ← src/
 
 ## 新增一个错误分类的步骤
 
-1. `src/error.mbt` 的 `ErrorCode` 加构造子（并补 `to_string` 映射与 axios 错误码字符串）；
+1. `src/facade.mbt` 的 `ErrorCode` 加构造子（并补 `to_string` 映射与 axios 错误码字符串）；
 2. 在触发点调用 `make_error(message, code, config, response)` 后 `raise`；
 3. 若是传输层能提前识别的失败，考虑先在 `TransportError` 里加一类；
 4. `src/error_test.mbt` 补用例；
