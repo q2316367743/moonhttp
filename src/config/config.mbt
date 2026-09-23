@@ -39,7 +39,10 @@ pub(all) struct Config {
   data : Json?
   /// 基础地址；`url` 是相对路径时会拼在它后面
   base_url : String?
-  /// 超时毫秒数；`None` 或 `0` 表示不超时（与 axios 的 timeout 默认值 0 一致）
+  /// 超时毫秒数；`None` 或 `0` 表示不超时（与 axios 的 timeout 默认值 0 一致）。
+  ///
+  /// `request` 下是这条请求的时限；`stream` 下是**每次读取**的等待上限，
+  /// 所以 SSE 这类「长时间没有数据是正常的」长连应保持不超时。
   timeout : Int?
   response_type : ResponseType?
   /// 查询参数，序列化后追加到 URL（不覆盖 URL 里已有的 query）

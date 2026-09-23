@@ -1,10 +1,10 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "q2316368843/easy-http-client/transport"
+package "q2316368843/moonhttp/transport"
 
 import {
   "moonbitlang/core/debug",
-  "q2316368843/easy-http-client/config",
-  "q2316368843/easy-http-client/headers",
+  "q2316368843/moonhttp/config",
+  "q2316368843/moonhttp/headers",
 }
 
 // Values
@@ -49,9 +49,20 @@ pub(all) struct RawResponse {
   status : Int
   status_text : String
   headers : @headers.Headers
-  body : Bytes
+  body : ResponseBody
 } derive(@debug.Debug)
 pub fn RawResponse::to_repr(Self) -> @debug.Repr
+
+pub struct ResponseBody {
+  // private fields
+}
+pub fn ResponseBody::close(Self) -> Unit
+pub fn ResponseBody::from_bytes(Bytes) -> Self
+pub async fn ResponseBody::read_all(Self) -> Bytes raise TransportError
+pub async fn ResponseBody::read_some(Self, max_len? : Int) -> Bytes? raise TransportError
+pub async fn ResponseBody::read_until(Self, String) -> String? raise TransportError
+pub fn ResponseBody::to_repr(Self) -> @debug.Repr
+pub impl @debug.Debug for ResponseBody
 
 // Type aliases
 pub using @headers {type Headers}

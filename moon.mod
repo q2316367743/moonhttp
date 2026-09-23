@@ -9,13 +9,13 @@
 //   "moonbitlang/x@0.4.6",
 // }
 
-name = "q2316368843/easy-http-client"
+name = "q2316368843/moonhttp"
 
 version = "0.1.0"
 
 readme = "README.mbt.md"
 
-repository = "https://github.com/q2316368843/easy-http-client"
+repository = "https://github.com/q2316368843/moonhttp"
 
 license = "Apache-2.0"
 

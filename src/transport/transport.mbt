@@ -22,7 +22,10 @@ pub(all) struct PreparedRequest {
   headers : @headers.Headers
   /// 请求体字节；`None` 表示不带 body
   body : Bytes?
-  /// 超时毫秒数；`None` 或 `<= 0` 表示不限时
+  /// 超时毫秒数；`None` 或 `<= 0` 表示不限时。
+  ///
+  /// 分两段生效：建连到拿到响应头这一段整体受它约束，响应体每次读取也受
+  /// 它约束（见 `ResponseBody`）。所以长连的 SSE 请求应当传 `None`。
   timeout : Int?
 } derive(Debug)
 
@@ -34,11 +37,16 @@ pub extend PreparedRequest with @debug.Debug::{to_repr}
 ///
 /// 刻意不叫 `Response`：上层对外的 `Response` 还要承担 JSON 解析、
 /// 状态码校验等语义，那些不属于传输层的职责。
+///
+/// `body` 是**流**而不是字节：`send` 返回时只保证状态行与响应头已到手，
+/// 响应体按需读取（`ResponseBody`）。底层原语只保留最弱的能力，
+/// 一次性读全是上层的组合结果——这样 chunked / SSE 这类「边到边读」
+/// 的协议才能表达出来。
 pub(all) struct RawResponse {
   status : Int
   status_text : String
   headers : @headers.Headers
-  body : Bytes
+  body : ResponseBody
 } derive(Debug)
 
 ///|

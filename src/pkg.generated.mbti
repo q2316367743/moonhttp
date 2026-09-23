@@ -1,11 +1,11 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "q2316368843/easy-http-client"
+package "q2316368843/moonhttp"
 
 import {
   "moonbitlang/core/debug",
-  "q2316368843/easy-http-client/config",
-  "q2316368843/easy-http-client/headers",
-  "q2316368843/easy-http-client/transport",
+  "q2316368843/moonhttp/config",
+  "q2316368843/moonhttp/headers",
+  "q2316368843/moonhttp/transport",
 }
 
 // Values
@@ -34,6 +34,7 @@ pub fn Client::create(Self, @config.Config) -> Self
 pub fn Client::defaults(Self) -> @config.Config
 pub fn Client::new(config? : @config.Config, transport? : &@transport.Transport) -> Self
 pub async fn Client::request(Self, @config.Config) -> Response raise HttpError
+pub async fn Client::stream(Self, @config.Config) -> StreamResponse raise HttpError
 
 pub(all) enum ErrorCode {
   BadRequest
@@ -69,6 +70,19 @@ pub fn Response::content_length(Self) -> Int
 pub fn Response::is_success(Self) -> Bool
 pub fn Response::text(Self) -> String
 pub fn Response::to_repr(Self) -> @debug.Repr
+
+pub(all) struct StreamResponse {
+  status : Int
+  status_text : String
+  headers : @headers.Headers
+  config : @config.Config
+  // private fields
+}
+pub fn StreamResponse::close(Self) -> Unit
+pub fn StreamResponse::is_success(Self) -> Bool
+pub async fn StreamResponse::read_all(Self) -> Bytes raise HttpError
+pub async fn StreamResponse::read_some(Self, max_len? : Int) -> Bytes? raise HttpError
+pub async fn StreamResponse::read_until(Self, String) -> String? raise HttpError
 
 // Type aliases
 pub using @config {type Auth}

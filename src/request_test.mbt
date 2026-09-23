@@ -11,13 +11,13 @@ async test "request merges defaults builds url and parses json" {
     raw_response(200, "OK", "{\"id\": 1, \"name\": \"moon\"}"),
   )
   let api = client.create(
-    @easy-http-client.Config::default()
+    @moonhttp.Config::default()
     .with_base_url("https://api.example.com")
     .with_common_header("Accept", "application/vnd.api+json")
-    .with_method_header(@easy-http-client.Method::Get, "X-Get-Only", "1"),
+    .with_method_header(@moonhttp.Method::Get, "X-Get-Only", "1"),
   )
   let response = api.request(
-    @easy-http-client.Config::new("/users").with_params({
+    @moonhttp.Config::new("/users").with_params({
       "page": 1,
       "tags": ["a", "b"],
     }),
@@ -34,7 +34,7 @@ async test "request merges defaults builds url and parses json" {
     "https://api.example.com/users?page=1&tags%5B%5D=a&tags%5B%5D=b",
   )
   // 请求侧：方法缺省为 GET；三层头都到位
-  assert_eq(sent.http_method, @easy-http-client.Method::Get)
+  assert_eq(sent.http_method, @moonhttp.Method::Get)
   assert_eq(sent.headers.get("Accept"), Some("application/vnd.api+json"))
   assert_eq(sent.headers.get("X-Get-Only"), Some("1"))
   // 没有 data 时不带 body
@@ -46,15 +46,15 @@ async test "request merges defaults builds url and parses json" {
 async test "request headers win over layered defaults" {
   let (client, mock) = client_with(raw_response(200, "OK", "{}"))
   let api = client.create(
-    @easy-http-client.Config::default()
+    @moonhttp.Config::default()
     .with_common_header("X-Layer", "common")
-    .with_method_header(@easy-http-client.Method::Post, "X-Layer", "method"),
+    .with_method_header(@moonhttp.Method::Post, "X-Layer", "method"),
   )
   // POST：按方法层盖掉 common 层，请求级再盖掉按方法层
   ignore(
     api.request(
-      @easy-http-client.Config::new("https://api.example.com/x")
-      .with_method(@easy-http-client.Method::Post)
+      @moonhttp.Config::new("https://api.example.com/x")
+      .with_method(@moonhttp.Method::Post)
       .with_header("X-Layer", "request"),
     ),
   )
@@ -63,9 +63,7 @@ async test "request headers win over layered defaults" {
     Some("request"),
   )
   // 同一个实例换成 GET：按方法层不匹配，落到 common 层
-  ignore(
-    api.request(@easy-http-client.Config::new("https://api.example.com/x")),
-  )
+  ignore(api.request(@moonhttp.Config::new("https://api.example.com/x")))
   assert_eq(mock.last_request().unwrap().headers.get("X-Layer"), Some("common"))
 }
 
@@ -76,8 +74,8 @@ async test "json body sets content type only when absent" {
   let (client, mock) = client_with(raw_response(200, "OK", "{}"))
   ignore(
     client.request(
-      @easy-http-client.Config::new("/users")
-      .with_method(@easy-http-client.Method::Post)
+      @moonhttp.Config::new("/users")
+      .with_method(@moonhttp.Method::Post)
       .with_data({ "name": "moon" }),
     ),
   )
@@ -87,8 +85,8 @@ async test "json body sets content type only when absent" {
   // 用户显式指定 Content-Type 时保持原样
   ignore(
     client.request(
-      @easy-http-client.Config::new("/users")
-      .with_method(@easy-http-client.Method::Post)
+      @moonhttp.Config::new("/users")
+      .with_method(@moonhttp.Method::Post)
       .with_data({ "name": "moon" })
       .with_header("Content-Type", "application/vnd.custom+json"),
     ),
@@ -105,8 +103,8 @@ async test "string body is sent verbatim without content type" {
   let (client, mock) = client_with(raw_response(200, "OK", "{}"))
   ignore(
     client.request(
-      @easy-http-client.Config::new("/text")
-      .with_method(@easy-http-client.Method::Post)
+      @moonhttp.Config::new("/text")
+      .with_method(@moonhttp.Method::Post)
       .with_data("raw text body"),
     ),
   )
@@ -121,7 +119,7 @@ async test "auth produces basic authorization header" {
   let (client, mock) = client_with(raw_response(200, "OK", "{}"))
   ignore(
     client.request(
-      @easy-http-client.Config::new("/private").with_auth("alice", "s3cret"),
+      @moonhttp.Config::new("/private").with_auth("alice", "s3cret"),
     ),
   )
   // base64("alice:s3cret")
@@ -131,7 +129,7 @@ async test "auth produces basic authorization header" {
   )
   ignore(
     client.request(
-      @easy-http-client.Config::new("/private")
+      @moonhttp.Config::new("/private")
       .with_auth("alice", "s3cret")
       .with_header("Authorization", "Bearer token"),
     ),
@@ -146,12 +144,10 @@ async test "auth produces basic authorization header" {
 /// `response_type` 的三个取值：Auto 解析、Text 不解析、Json 强制解析。
 async test "response type controls body parsing" {
   let (client, _) = client_with(raw_response(200, "OK", "{\"a\": 1}"))
-  let as_object = client.request(@easy-http-client.Config::new("/x"))
+  let as_object = client.request(@moonhttp.Config::new("/x"))
   assert_eq(as_object.data, { "a": 1 })
   let as_text = client.request(
-    @easy-http-client.Config::new("/x").with_response_type(
-      @easy-http-client.ResponseType::Text,
-    ),
+    @moonhttp.Config::new("/x").with_response_type(@moonhttp.ResponseType::Text),
   )
   assert_eq(as_text.data, "{\"a\": 1}")
   // 文本形式也能拿到原始字符串
@@ -162,7 +158,7 @@ async test "response type controls body parsing" {
 /// Auto 模式下解析失败不报错，把原文交给调用方（对应 axios 的 forcedJSONParsing）。
 async test "auto response type falls back to raw text" {
   let (client, _) = client_with(raw_response(200, "OK", "not json at all"))
-  let response = client.request(@easy-http-client.Config::new("/x"))
+  let response = client.request(@moonhttp.Config::new("/x"))
   assert_eq(response.data, "not json at all")
   assert_eq(response.text(), "not json at all")
 }
@@ -174,8 +170,8 @@ async test "forced json response type reports parse failure" {
   let error = try {
     ignore(
       client.request(
-        @easy-http-client.Config::new("/x").with_response_type(
-          @easy-http-client.ResponseType::Json,
+        @moonhttp.Config::new("/x").with_response_type(
+          @moonhttp.ResponseType::Json,
         ),
       ),
     )
@@ -184,7 +180,7 @@ async test "forced json response type reports parse failure" {
     error => Some(error)
   }
   let error = error.unwrap()
-  assert_eq(error.code(), @easy-http-client.ErrorCode::BadResponse)
+  assert_eq(error.code(), @moonhttp.ErrorCode::BadResponse)
   assert_eq(error.response().unwrap().status, 200)
 }
 
@@ -193,15 +189,13 @@ async test "forced json response type reports parse failure" {
 async test "allow absolute urls can be turned off" {
   let (client, mock) = client_with(raw_response(200, "OK", "{}"))
   let api = client.create(
-    @easy-http-client.Config::default().with_base_url("https://api.example.com"),
+    @moonhttp.Config::default().with_base_url("https://api.example.com"),
   )
-  ignore(
-    api.request(@easy-http-client.Config::new("https://other.example.com/x")),
-  )
+  ignore(api.request(@moonhttp.Config::new("https://other.example.com/x")))
   assert_eq(mock.last_request().unwrap().url, "https://other.example.com/x")
   ignore(
     api.request(
-      @easy-http-client.Config::new("https://other.example.com/x").with_allow_absolute_urls(
+      @moonhttp.Config::new("https://other.example.com/x").with_allow_absolute_urls(
         false,
       ),
     ),
@@ -217,9 +211,7 @@ async test "allow absolute urls can be turned off" {
 async test "forced json response type parses on success" {
   let (client, _) = client_with(raw_response(200, "OK", "{\"a\": 1}"))
   let response = client.request(
-    @easy-http-client.Config::new("/x").with_response_type(
-      @easy-http-client.ResponseType::Json,
-    ),
+    @moonhttp.Config::new("/x").with_response_type(@moonhttp.ResponseType::Json),
   )
   assert_eq(response.data, { "a": 1 })
 }
@@ -228,7 +220,7 @@ async test "forced json response type parses on success" {
 /// `content_length` 是原始字节数而不是字符数：中文在 UTF-8 下占 3 字节。
 async test "response content length counts bytes" {
   let (client, _) = client_with(raw_response(200, "OK", "中文"))
-  let response = client.request(@easy-http-client.Config::new("/x"))
+  let response = client.request(@moonhttp.Config::new("/x"))
   assert_eq(response.content_length(), 6)
   assert_eq(response.text(), "中文")
 }

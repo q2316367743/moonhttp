@@ -88,7 +88,16 @@ pub impl Transport for MockTransport with fn send(self, request) {
     self.responses.length() - 1
   }
   self.cursor = self.cursor + 1
-  self.responses[index]
+  let response = self.responses[index]
+  // 响应体是**流**：同一个响应被服务多次时必须给一份从头开始读的副本，
+  // 否则第二次请求读到的会是空 body，用例会静默地变假。
+  match response.body.rewind() {
+    Some(body) => { ..response, body, }
+    None =>
+      raise TransportError::Unsupported(
+        "MockTransport 只能复用内存响应体，请用 ResponseBody::from_bytes 构造",
+      )
+  }
 }
 
 ///|

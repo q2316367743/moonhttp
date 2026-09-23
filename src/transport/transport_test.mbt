@@ -5,7 +5,7 @@ fn ok_response(body : Bytes) -> @transport.RawResponse {
     status: 200,
     status_text: "OK",
     headers: @transport.Headers::new().set("Content-Type", "text/plain"),
-    body,
+    body: @transport.ResponseBody::from_bytes(body),
   }
 }
 
@@ -25,12 +25,13 @@ async test "mock transport records requests and serves queued responses" {
     timeout: None,
   }
   let first = transport.send(request)
-  assert_eq(first.body, b"first")
+  assert_eq(first.body.read_all(), b"first")
   let second = transport.send(request)
-  assert_eq(second.body, b"second")
-  // 队列耗尽后继续复用最后一个响应
+  assert_eq(second.body.read_all(), b"second")
+  // 队列耗尽后继续复用最后一个响应；复用的是「从头开始读」的副本，
+  // 所以第二次读到的仍然是完整 body 而不是空流。
   let third = transport.send(request)
-  assert_eq(third.body, b"second")
+  assert_eq(third.body.read_all(), b"second")
   assert_eq(mock.request_count(), 3)
   assert_eq(mock.last_request().unwrap().url, "https://example.com/a")
 }

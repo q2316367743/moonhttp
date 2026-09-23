@@ -67,6 +67,55 @@ fn build_prepared_request(
 }
 
 ///|
+/// 不做 JSON 解析的响应对象：`data` 是原文、`raw` 是原始字节。
+///
+/// `Auto` 解析失败与 `Text` 模式都落在这里；流式路径读错误体时也用它——
+/// 错误体的格式不可预期，强行解析只会把「状态码失败」这个更准确的原因盖掉。
+fn plain_response(
+  raw : @transport.RawResponse,
+  body : Bytes,
+  config : Config,
+) -> Response {
+  {
+    data: Json::string(@utf8.decode_lossy(body)),
+    status: raw.status,
+    status_text: raw.status_text,
+    headers: raw.headers,
+    config,
+    raw: body,
+  }
+}
+
+///|
+/// 把传输层错误翻译成对外的 `HttpError`。
+///
+/// 这层翻译的意义是：调用方不需要认识 `moonbitlang/async` 的错误类型，
+/// 也不必知道底层用的是哪套 HTTP 实现。流式读取失败走的是同一条映射。
+fn transport_error(
+  error : @transport.TransportError,
+  config : Config,
+) -> HttpError {
+  match error {
+    @transport.TransportError::Timeout =>
+      make_error("请求超时", ErrorCode::Timeout, config, None)
+    @transport.TransportError::Network(message) =>
+      make_error(
+        "网络请求失败：" + message,
+        ErrorCode::Network,
+        config,
+        None,
+      )
+    @transport.TransportError::Unsupported(message) =>
+      make_error(
+        "传输层不支持该请求：" + message,
+        ErrorCode::NotSupported,
+        config,
+        None,
+      )
+  }
+}
+
+///|
 /// 尝试把响应文本按 JSON 解析；不是合法 JSON 时返回 `None`。
 ///
 /// 「不是 JSON」在这里是一种正常结果而不是异常：默认的 `Auto` 模式
@@ -86,19 +135,15 @@ fn try_parse_json(text : String) -> Json? {
 ///
 /// 强制 JSON 失败时，错误里会带上一个「data 为原文」的响应对象，
 /// 让调用方仍能看到状态码与响应头，对应 axios 把 `response` 挂在错误上的做法。
+/// `body` 由调用方读好传进来：传输层交出来的是响应体**流**，
+/// 读全量这一步是调用方的选择（`request` 读全量，`stream` 不读）。
 fn build_response(
   raw : @transport.RawResponse,
+  body : Bytes,
   config : Config,
 ) -> Response raise HttpError {
-  let text = @utf8.decode_lossy(raw.body)
-  let fallback : Response = {
-    data: Json::string(text),
-    status: raw.status,
-    status_text: raw.status_text,
-    headers: raw.headers,
-    config,
-    raw: raw.body,
-  }
+  let text = @utf8.decode_lossy(body)
+  let fallback = plain_response(raw, body, config)
   // 解析失败的判定统一在这里做一次，三条分支只是对结果的不同取舍。
   let parsed = try_parse_json(text)
   match config.response_type.unwrap_or(ResponseType::Auto) {
@@ -123,29 +168,52 @@ fn build_response(
 }
 
 ///|
-/// 状态码校验，对应 axios 的 `settle`。
+/// 状态码是否被配置放行，对应 axios 的 `settle` 判定。
 ///
 /// - `validate_status` 为 `None` 时一律放行（axios 里 `!validateStatus` 的效果）；
 /// - 内置默认值是 `200 <= status < 300`，只认 2xx，
-///   所以 3xx 也算失败——这与 axios 一致（它不把重定向当成功）；
-/// - 失败时按 axios 的分档给错误码：4xx → `BadRequest`，其余 → `BadResponse`
-///   （axios 用 `[ERR_BAD_REQUEST, ERR_BAD_RESPONSE][floor(status/100) - 4]` 取到同一结果）。
+///   所以 3xx 也算失败——这与 axios 一致（它不把重定向当成功）。
+///
+/// 流式路径（`Client::stream`）复用这个判定：那时响应体还没读，
+/// 不能先造出 `Response` 再校验。
+fn status_allowed(status : Int, config : Config) -> Bool {
+  match config.validate_status {
+    None => true
+    Some(validate) => validate(status)
+  }
+}
+
+///|
+/// 校验失败时按 axios 的分档给错误码：4xx → `BadRequest`，其余 → `BadResponse`
+/// （axios 用 `[ERR_BAD_REQUEST, ERR_BAD_RESPONSE][floor(status/100) - 4]` 取到同一结果）。
+fn status_error_code(status : Int) -> ErrorCode {
+  if status >= 400 && status < 500 {
+    ErrorCode::BadRequest
+  } else {
+    ErrorCode::BadResponse
+  }
+}
+
+///|
+/// 状态码不被放行时的统一错误。两条路径（读全量 / 流式）共用同一份文案与分档。
+/// `response` 在流式路径下可能还没解析出来，此时传 `None`。
+fn status_error(
+  status : Int,
+  config : Config,
+  response : Response?,
+) -> HttpError {
+  make_error(
+    "请求失败，状态码 " + status.to_string(),
+    status_error_code(status),
+    config,
+    response,
+  )
+}
+
+///|
+/// 校验响应状态码；不通过就抛出带响应的错误。
 fn validate_response(response : Response) -> Unit raise HttpError {
-  match response.config.validate_status {
-    None => ()
-    Some(validate) =>
-      if !validate(response.status) {
-        let code = if response.status >= 400 && response.status < 500 {
-          ErrorCode::BadRequest
-        } else {
-          ErrorCode::BadResponse
-        }
-        raise make_error(
-          "请求失败，状态码 " + response.status.to_string(),
-          code,
-          response.config,
-          Some(response),
-        )
-      }
+  if !status_allowed(response.status, response.config) {
+    raise status_error(response.status, response.config, Some(response))
   }
 }

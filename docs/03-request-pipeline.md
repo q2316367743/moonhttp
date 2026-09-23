@@ -4,12 +4,13 @@
 
 | 文件 | 职责 |
 |---|---|
-| `src/client.mbt` | `Client::request` 的编排：合并 → 定方法 → 发送 → 解析 → 校验 |
-| `src/pipeline.mbt` | 管线里的三个纯函数：`build_prepared_request` / `build_response` / `validate_response` |
+| `src/client.mbt` | `Client::request` / `Client::stream` 的编排：合并 → 定方法 → 发送 →（读全量）→ 解析 → 校验 |
+| `src/pipeline.mbt` | 管线里的纯函数：`build_prepared_request` / `build_response` / `plain_response` / `validate_response` / `transport_error` |
 | `src/url/combine.mbt` | 绝对地址判定、`combine_urls`、`build_full_path` |
 | `src/url/build_url.mbt` | `params` → query string |
 | `src/url/encode.mbt` | 单个 URL 组件的百分号编码 |
 | `src/response.mbt` | `Response` 类型与 `text()` / `is_success()` |
+| `src/stream_response.mbt` | `StreamResponse` 类型：不读 body 的流式响应 |
 
 `pipeline.mbt` 与 `url/` 都是**纯函数**（没有 IO、不涉及异步），可以脱离网络单独测试，`url/url_test.mbt` 就是逐条钉住边界行为的。
 
@@ -25,6 +26,15 @@
 6. **发送**：交给 `Transport::send`（契约见 `05-transport.md`）。失败映射见 `04-errors.md`。
 7. **解析响应体**：按 `response_type` 处理（见下）。
 8. **校验状态码**：`validate_status` 不通过则抛 `HttpError`。
+
+第 1–5 步是「拼出一份能发出去的请求」，与是否流式无关。第 6 步起有两条路：
+
+| 入口 | 第 6 步之后 | 适用 |
+|---|---|---|
+| `Client::request` | 先把响应体读到 EOF（`ResponseBody::read_all`），再解析 + 校验 | 常规请求，需要完整 `data` |
+| `Client::stream` | 直接把响应头与响应体流交出去（`StreamResponse`） | SSE、大文件下载等「边到边读」 |
+
+两条路的状态码校验规则完全一致（共用 `status_allowed` / `status_error_code`）。差别只在失败时拿什么：`request` 报错时带的是按 `response_type` 解析过的响应，`stream` 报错前会把错误体读完，但**不做 JSON 解析**（错误体格式不可预期，强行解析会把「状态码失败」这个更准确的原因盖掉），原文放在 `HttpError::response()` 的 `data` / `raw` 上。流式路径的超时语义见 `05-transport.md`。
 
 ## URL 拼接规则
 

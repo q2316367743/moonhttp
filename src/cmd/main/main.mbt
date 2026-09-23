@@ -10,8 +10,8 @@
 async fn main {
   // 1) 创建实例：base_url 与公共头都写在实例的默认配置里，
   //    后续每次请求不必重复设置；config 会叠加在内置默认值之上。
-  let api = @easy-http-client.create(
-    @easy-http-client.Config::default()
+  let api = @moonhttp.create(
+    @moonhttp.Config::default()
     .with_base_url("https://api.github.com")
     .with_timeout(10_000)
     .with_common_header("Accept", "application/vnd.github+json"),
@@ -20,8 +20,8 @@ async fn main {
 
   // 2) 纯文本响应：response_type 设为 Text 时不尝试 JSON 解析。
   let zen = api.request(
-    @easy-http-client.Config::new("/zen").with_response_type(
-      @easy-http-client.ResponseType::Text,
+    @moonhttp.Config::new("/zen").with_response_type(
+      @moonhttp.ResponseType::Text,
     ),
   )
   println("\n[GET /zen] 状态码 = \{zen.status} \{zen.status_text}")
@@ -32,9 +32,7 @@ async fn main {
 
   // 3) JSON 响应：默认的 Auto 模式会自动解析成对象，
   //    所以可以直接用 JSON 模式匹配把字段取出来。
-  let repo = api.request(
-    @easy-http-client.Config::new("/repos/moonbitlang/core"),
-  )
+  let repo = api.request(@moonhttp.Config::new("/repos/moonbitlang/core"))
   println("\n[GET /repos/moonbitlang/core] 状态码 = \{repo.status}")
   match repo.data {
     {
@@ -49,11 +47,9 @@ async fn main {
 
   // 4) 查询参数与实例派生：create 派生出的实例继承父实例的 base_url，
   //    再叠加本次的配置。
-  let search = api.create(
-    @easy-http-client.Config::default().with_timeout(15_000),
-  )
+  let search = api.create(@moonhttp.Config::default().with_timeout(15_000))
   let found = search.request(
-    @easy-http-client.Config::new("/search/repositories").with_params({
+    @moonhttp.Config::new("/search/repositories").with_params({
       "q": "moonbit",
       "sort": "stars",
       "per_page": 3,
@@ -77,12 +73,10 @@ async fn main {
   //    错误上带着分类、已合并的配置以及服务端返回的响应。
   ignore(
     api.request(
-      @easy-http-client.Config::new(
-        "/repos/moonbitlang/definitely-not-a-real-repo",
-      ),
+      @moonhttp.Config::new("/repos/moonbitlang/definitely-not-a-real-repo"),
     ),
   ) catch {
-    @easy-http-client.HttpError(info) => {
+    @moonhttp.HttpError(info) => {
       println("\n[GET 不存在的仓库] 按预期失败")
       println("  错误分类 = \{info.code}")
       println("  错误描述 = \{info.message}")

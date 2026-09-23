@@ -2,7 +2,7 @@
 // 用 `moon run src/cmd/main` 执行（需要联网）。
 import {
   "moonbitlang/async",
-  "q2316368843/easy-http-client",
+  "q2316368843/moonhttp",
 }
 
 pkgtype(kind: "executable")

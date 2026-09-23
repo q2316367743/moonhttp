@@ -1,5 +1,5 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "q2316368843/easy-http-client/headers"
+package "q2316368843/moonhttp/headers"
 
 import {
   "moonbitlang/core/debug",

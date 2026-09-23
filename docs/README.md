@@ -1,6 +1,6 @@
 # 技术文档索引
 
-本目录记录 `easy-http-client` 的实现思路、关键文件、数据结构 / API 契约与注意事项，供后续开发（含 AI 协作）快速接管。
+本目录记录 `moonhttp` 的实现思路、关键文件、数据结构 / API 契约与注意事项，供后续开发（含 AI 协作）快速接管。
 
 面向使用者的入门文档在仓库根目录的 [README.mbt.md](../README.mbt.md)；本目录面向维护者，重点回答「为什么这样设计」和「改动时要同步什么」。
 
@@ -10,7 +10,7 @@
 | 02 | [配置合并契约](02-config-merge.md) | axios `mergeConfig` 四种策略在本项目的落法、字段归属表、`Option` 与 `undefined` 的对应、数组替换语义 | 要改合并行为、或要新增配置字段时 |
 | 03 | [请求管线](03-request-pipeline.md) | `request` 的八个步骤、URL 拼接与 query 序列化规则、body 序列化与自动补头、状态码校验 | 要改请求行为（URL、头的优先级、body 处理）时 |
 | 04 | [错误契约](04-errors.md) | `HttpError` / `ErrorCode` 形状、与 axios 错误码的对应、各类错误的触发点、错误里带什么上下文 | 要新增错误分类或调整错误信息时 |
-| 05 | [传输层契约](05-transport.md) | `Transport` trait 与 `PreparedRequest` / `RawResponse` 字段含义、`AsyncHttpTransport` 的实现注意事项、如何写自定义传输 | 要换 HTTP 实现、加连接池 / 代理 / 进度回调时 |
+| 05 | [传输层契约](05-transport.md) | `Transport` trait 与 `PreparedRequest` / `RawResponse` 字段含义、`ResponseBody` 响应体流的读语义与超时语义、`AsyncHttpTransport` 的实现注意事项、如何写自定义传输 | 要换 HTTP 实现、加连接池 / 代理 / 上传进度，或要动流式读取时 |
 
 ## 改动时的同步清单
 
@@ -19,4 +19,6 @@
 1. **新增配置字段**：`Config` 加字段 → 在 `merge_config` 里显式选一档合并策略 → 需要的话加 `with_*` 构建器与 `Config::to_string` 渲染 → 若参与请求，接到 `build_prepared_request` 或 `build_response` → 补测试（`merge` 包测合并、根包测端到端）→ 更新 `02-config-merge.md` 的字段归属表。
 2. **新增包**：确认依赖方向仍是 DAG（见 `01-architecture.md`）→ 新包若暴露新类型，用 `pub using` 再导出 → 根包 `moon.pkg` 加 import → 更新 README 与 `01-architecture.md` 的目录树。
 3. **改公开 API**：跑 `moon info` 后检查 `pkg.generated.mbti` 的 diff，确认只包含预期的变化。
-4. **对接底层库（`moonbitlang/async`）的改动**：只允许出现在 `src/transport/async_http.mbt`；如果发现必须让上层认识底层类型，说明抽象漏了，应当先补 `Transport` 契约。
+4. **对接底层库（`moonbitlang/async`）的改动**：只允许出现在 `src/transport/` 这个包里（`async_http.mbt` 是主要落点，`stream.mbt` 负责响应体流的读写封装）；如果发现必须让上层认识底层类型，说明抽象漏了，应当先补 `Transport` / `ResponseBody` 契约。
+5. **改 `RawResponse` 或 `ResponseBody` 的结构 / 语义**：它们出现在公开签名里，要同步 `05-transport.md`、`03-request-pipeline.md`，并检查根包两条入口（`Client::request` 读全量、`Client::stream` 不读）是否都还成立；`MockTransport` 的响应体必须仍能用 `ResponseBody::from_bytes` 造出来。
+6. **改超时相关的行为**：超时在两处生效（响应头阶段整体、响应体每次读取），见 `05-transport.md` 的「超时语义」，改任何一处都要同时看另一处与非流式路径的既有行为。

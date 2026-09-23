@@ -67,7 +67,7 @@ pub(all) struct ErrorInfo {
 ///
 /// 用 `pub(all) suberror` 而不是 `pub suberror`：后者不导出构造子，
 /// 使用方就只能拿到错误、无法按分类匹配。这里刻意把构造子放开，
-/// 让调用方能写 `catch { @easy-http-client.HttpError(info) => ... }`。
+/// 让调用方能写 `catch { @moonhttp.HttpError(info) => ... }`。
 pub(all) suberror HttpError {
   HttpError(ErrorInfo)
 }

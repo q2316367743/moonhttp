@@ -3,15 +3,16 @@
 ## 目录结构
 
 ```
-easy-http-client/
+moonhttp/
 ├── moon.mod                     模块元数据（source = "src"，业务代码全在 src/ 下）
 ├── README.mbt.md                使用者文档（README.md 是指向它的符号链接）
 ├── docs/                        本目录：维护者文档
 └── src/
     ├── moon.pkg                 根包：门面 + 请求管线
-    ├── client.mbt               Client / create / create() 派生
+    ├── client.mbt               Client / create / create() 派生 / request / stream
     ├── pipeline.mbt             纯函数管线：拼请求、解析响应、校验状态码
     ├── response.mbt             Response 与它的便捷方法
+    ├── stream_response.mbt      StreamResponse：不读 body 的流式响应
     ├── error.mbt                HttpError / ErrorCode / ErrorInfo
     ├── facade.mbt               pub using 再导出
     ├── *_test.mbt               根包黑盒测试（用 MockTransport 跑整条管线）
@@ -19,7 +20,7 @@ easy-http-client/
     ├── headers/                 大小写不敏感的 Headers
     ├── merge/                   配置合并（四种策略）与头拍平
     ├── url/                     绝对地址判定、拼接、params 序列化
-    ├── transport/               传输层：trait + 真实实现 + Mock
+    ├── transport/               传输层：trait + 真实实现 + Mock + 响应体流
     └── cmd/main/                可运行示例（真实网络）
 ```
 
@@ -46,10 +47,11 @@ transport ───────────┘
 
 MoonBit 标准库没有任何网络能力，唯一的 HTTP 实现在 `moonbitlang/async/http`，且是**全异步**的。如果把异步调用散在代码里，配置合并、URL 拼接这些纯逻辑也要跑在异步环境里才能测。
 
-因此把「真的把字节发出去」抽成 `Transport` trait，异步实现只存在于 `src/transport/async_http.mbt`。收益：
+因此把「真的把字节发出去」抽成 `Transport` trait，异步实现只存在于 `src/transport/` 这个包里（`async_http.mbt` 是真实传输，`stream.mbt` 是响应体流）。收益：
 
 - `config` / `headers` / `merge` / `url` 四个包可以用**普通同步测试**覆盖，跑得快、不依赖网络；
 - 根包的管线测试用 `MockTransport` 注入，能确定性复现 4xx/5xx、超时、解析失败等分支；
+- 响应体是流（`ResponseBody`），但它的读语义在内存体与真实连接上完全一致，Mock 因此能代表网络侧的流式行为；
 - 使用方也能替换传输层（自定义实现只需一个方法）。
 
 ### 2. 配置是值语义 + `Option` 字段
@@ -64,7 +66,7 @@ MoonBit 的 import 是包级的：`Config` 的字段类型 `Headers` 定义在�
 
 > 凡是出现在公开签名里的类型，都在定义它的包里用 `pub using` 再导出一次；根包（`src/facade.mbt`）也再导出一份。
 
-所以日常使用只需要 `@easy-http-client` 一个 import。
+所以日常使用只需要 `@moonhttp` 一个 import。
 
 ## 怎么扩展
 
@@ -125,4 +127,7 @@ pub impl Transport for MyTransport with fn send(self, request) {
 | 枚举变体的具名字段（如 `Json::Number(Double, repr~ : String?)`）不能用位置模式匹配 | 用 `Number(n, repr~)` 或 `Number(n, repr=repr)`；写位置模式会报参数个数错误 |
 | `@json.parse` 只在 `Double` 无法精确表示时才填 `Json::Number` 的 `repr`（例如超大整数） | 序列化数字时优先用 `repr`，否则用 `Double` 的最短表示；见 `src/url/build_url.mbt` |
 | 一个目录一个包，包间不能循环依赖 | 分层方向见上文 |
-| 可选参数转发 / 具名传递的写法容易踩坑 | 本项目统一用具名实参调用可选参数（如 `Client::new(transport=transport)`） |
+| 可选参数是**具名**的，不能按位置传 | 用 `Trait::method(self, start=0, end=n)` 这类具名实参（写成 `method(self, 0, n)` 会报「只接受 1 个位置参数」）。本项目统一用具名实参调用可选参数：`Client::new(transport=transport)`、`body.read_some(max_len=2)` |
+| 顶层 `enum` / `struct` 不加 `priv` 会出现在 `.mbti` 里 | 纯内部类型（`BodyInner`、`MemoryBody`）必须标 `priv`，否则会污染公开接口——`moon info` 后能从 `.mbti` 的 diff 里看出来 |
+| `pub(all) struct` 里允许个别字段标 `priv` | `StreamResponse` 就靠这条：状态行与响应头公开，响应体流私有，读取必须走本类型的方法，错误才能统一成 `HttpError` |
+| `errdefer` 在 async 函数里同样有效，适合「失败就关连接」这类清理 | 传输层用它保证建连之后的任何失败都关闭连接；比 `try ... catch { cleanup; raise }` 更短，也不会触发 `fragile_catch_all` 告警 |
