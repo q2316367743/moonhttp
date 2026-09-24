@@ -14,6 +14,10 @@
 ///
 /// 拿到流之后必须读到 EOF 或调用 `close()`。本项目不复用连接，也没有析构器，
 /// 忘记关闭就会漏掉一条 TCP 连接。
+///
+/// 本文件只放**读**这一半（读语义、超时、取消作用域）；构造与释放
+/// （`from_bytes` / `open` / `rewind` / `close`）在 `stream_lifecycle.mbt`，
+/// 读全量那三件套在 `stream_all.mbt`——都是 RL-04 的 300 行上限逼出来的拆分。
 pub struct ResponseBody {
   priv mut inner : BodyInner
   /// 单次读取的等待上限（毫秒），来自 `PreparedRequest::timeout`；
@@ -25,6 +29,11 @@ pub struct ResponseBody {
   /// 内存体是手上这份字节的长度（完整字节在手，长度总是已知）。
   /// 读取过程中不随消费变化：它描述的是**整个**响应体，不是「还剩多少」。
   priv total : Int?
+  /// 这次响应体所属请求的取消句柄，来自 `PreparedRequest::cancel_token`。
+  /// `None` 表示这个响应体不可取消（Mock 与自定义实现造的就是这种）。
+  priv cancel_token : CancelToken?
+  /// 挂在 token 上的「取消即关闭这条连接」那个登记的票号；`close()` 时注销。
+  priv mut cancel_ticket : Int?
 }
 
 ///|
@@ -44,53 +53,20 @@ priv struct MemoryBody {
 }
 
 ///|
-/// 用内存字节构造响应体。Mock 传输层与自定义实现用它造出
-/// 「不是网络来的」响应体，读语义与真实连接一致。
-pub fn ResponseBody::from_bytes(data : Bytes) -> ResponseBody {
-  {
-    inner: BodyInner::Memory({ data, offset: 0, }),
-    timeout: None,
-    // 完整字节在手，长度总是已知：下载进度的 total 就是它。
-    total: Some(data.length()),
-  }
-}
-
-///|
-/// 用一条已经收到响应头的真实连接构造响应体。
-/// 只有本包内的 `AsyncHttpTransport` 会用它——连接的生命周期从这里
-/// 交给响应体，读到 EOF 或 `close()` 时才会关闭。
-///
-/// `total` 是响应头里的 `Content-Length`，取不到就是 `None`。
-fn ResponseBody::open(
-  client : @http.Client,
-  timeout : Int?,
-  total : Int?,
-) -> ResponseBody {
-  { inner: BodyInner::Http(client), timeout, total, }
-}
-
-///|
-/// 复制一份「从头开始读」的响应体。
-///
-/// Mock 传输层要能把同一个响应交给多次请求，就不能共用已经消费过的游标，
-/// 所以它每服务一次都会 `rewind()` 一份。真实连接不可复制，返回 `None`——
-/// 使用方把网络来的响应体配给 Mock 是使用错误，应当响亮失败。
-fn ResponseBody::rewind(self : ResponseBody) -> ResponseBody? {
-  match self.inner {
-    Memory(memory) => Some(ResponseBody::from_bytes(memory.data))
-    _ => None
-  }
-}
-
-///|
 /// 按 `timeout` 执行一次读操作，并把底层错误收敛成传输层错误。
 ///
 /// 超时是**单次读取**的等待上限，不是整条请求的总时限：响应头已经到手，
 /// 剩下的时间只用于等数据。这既保住了「响应体下载慢也会超时」的原有行为，
 /// 也让 SSE 这种「长时间没有数据是正常的」场景可以通过
 /// `timeout: None` 真正长连。
+///
+/// `token` 有值时这次读取跑在可中断的子任务里：取消一旦发生，挂起中的读
+/// 立刻断，抛 `TransportError::Cancelled`。取消作用域套在**错误收敛之外**——
+/// 取消不是网络失败，不能被下面那条 catch-all 吞成 `Network`；同理它也不受
+/// `timeout` 约束，取消比超时先到就报取消。
 async fn[T] read_or_fail(
   timeout : Int?,
+  token : @config.CancelToken?,
   read : async () -> T,
 ) -> T raise TransportError {
   let attempt = () => {
@@ -100,11 +76,14 @@ async fn[T] read_or_fail(
       _ => read()
     }
   }
-  attempt() catch {
-    @async.TimeoutError => raise TransportError::Timeout
-    // 其余错误（连接被断开、TLS、协议错误等）统一归到网络层，并保留原始错误文本。
-    error => raise TransportError::Network(error.to_string())
+  let mapped = () => {
+    attempt() catch {
+      @async.TimeoutError => raise TransportError::Timeout
+      // 其余错误（连接被断开、TLS、协议错误等）统一归到网络层，并保留原始错误文本。
+      error => raise TransportError::Network(error.to_string())
+    }
   }
+  with_cancel_scope(token, mapped)
 }
 
 ///|
@@ -117,8 +96,14 @@ pub async fn ResponseBody::read_some(
   self : ResponseBody,
   max_len? : Int,
 ) -> Bytes? raise TransportError {
+  // 取消发生在两次读取之间时，这里报取消而不是把已关闭的流当成 EOF——
+  // 否则 `while read_some() is Some(_)` 会安静地结束，调用方以为对端正常收尾。
+  match cancelled_failure(self.cancel_token) {
+    Some(error) => raise error
+    None => ()
+  }
   // 读失败后连接状态已不可信：统一在这里关掉，调用方拿到的是
-  // Timeout / Network 分类，而不是一个「看起来还能用」的流。
+  // Timeout / Network / Cancelled 分类，而不是一个「看起来还能用」的流。
   errdefer self.close()
   match self.inner {
     Closed => None
@@ -144,7 +129,7 @@ pub async fn ResponseBody::read_some(
         Some(limit) => () => client.read_some(max_len=limit)
         None => () => client.read_some()
       }
-      match read_or_fail(self.timeout, read) {
+      match read_or_fail(self.timeout, self.cancel_token, read) {
         None => {
           self.close()
           None
@@ -165,6 +150,11 @@ pub async fn ResponseBody::read_until(
   self : ResponseBody,
   sep : String,
 ) -> String? raise TransportError {
+  // 与 read_some 同样的理由：取消之后要报取消，不能退化成「读到 EOF」。
+  match cancelled_failure(self.cancel_token) {
+    Some(error) => raise error
+    None => ()
+  }
   errdefer self.close()
   match self.inner {
     Closed => None
@@ -193,7 +183,10 @@ pub async fn ResponseBody::read_until(
       }
     }
     Http(client) =>
-      match read_or_fail(self.timeout, () => client.read_until(sep)) {
+      match
+        read_or_fail(self.timeout, self.cancel_token, () => {
+          client.read_until(sep)
+        }) {
         None => {
           self.close()
           None
@@ -201,19 +194,6 @@ pub async fn ResponseBody::read_until(
         Some(text) => Some(text)
       }
   }
-}
-
-///|
-/// 关闭流并释放底层连接。幂等：重复调用只生效一次。
-///
-/// 只读了半截就停止（例如 SSE 收到想结束就断开）时必须显式调用它，
-/// 否则连接会一直挂着。
-pub fn ResponseBody::close(self : ResponseBody) -> Unit {
-  match self.inner {
-    Http(client) => client.close()
-    _ => ()
-  }
-  self.inner = BodyInner::Closed
 }
 
 ///|

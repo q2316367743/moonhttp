@@ -128,6 +128,12 @@ pub fn Client::defaults(self : Client) -> Config {
 /// 读到的部分正文，从 `HttpError::response()` 取。连响应头都没到手时，
 /// 错误里没有响应。两类失败都会先经过响应拦截器的错误路径（重试的落点）。
 ///
+/// 取消走配置里的 `cancel_token`（`Config::with_cancel_token`，对应 axios 的
+/// `cancelToken`）：请求进入管线前 token 已经取消时什么都不做，进行中的取消会
+/// 打断挂起的连接动作，对外是一个 `ERR_CANCELED` 错误、可以用
+/// `HttpError::is_cancelled()` 认出来。设计、覆盖范围与注意事项见
+/// `docs/12-cancellation.md`。
+///
 /// 不想读全响应体时用另外两个入口：大文件下载用 `Client::stream`（原始字节流），
 /// SSE 用 `Client::sse`（事件流）。读不读、按什么单位读，由入口决定而不是配置；
 /// 它们只过请求拦截器，不过响应拦截器。
@@ -135,8 +141,13 @@ pub async fn Client::request(
   self : Client,
   config : Config,
 ) -> Response raise HttpError {
-  // 1、2. 合并配置、定方法
+  // 1、2. 合并配置、定方法；紧接着做取消预检查：token 在请求进入管线之前就已
+  //      取消时，这次请求**什么都不做**——不发任何 I/O，也不跑请求拦截器
+  //      （拦截器可能带副作用）。检查放在这一层而不是只放在传输层，是为了让
+  //      「取消」的语义与传输实现无关：Mock 传输层没有可中断的 I/O，但
+  //      「已取消的 token 让请求立刻失败」照样成立。
   let merged = self.merged_config(config)
+  check_cancelled(merged)
   // 3. 请求拦截器。被拦下时这次请求不发出，错误按 axios 的 promise 链语义
   //    交给响应侧错误处理器——所以这里不抛错，交给下面的 run_response 收口。
   let outcome = match self.interceptors.run_request(merged) {
@@ -161,6 +172,22 @@ fn Client::merged_config(self : Client, config : Config) -> Config {
   merged.with_method(
     @util.resolve_method(merged.http_method, self.defaults.http_method),
   )
+}
+
+///|
+/// 取消预检查：token 已经取消时让请求在进入管线前就失败。
+///
+/// 三个入口的调用点都紧跟在配置合并之后、请求拦截器之前，所以被取消的请求
+/// 连拦截器都不会跑。它管的是「取消发生在请求发出**之前**」这一种情况
+/// （包括拿一个已取消的 token 去发请求、以及复用同一个 token 的后续请求）；
+/// 「取消发生在请求进行中」由传输层的取消作用域负责（`docs/12-cancellation.md`）。
+///
+/// 错误里没有响应：这时确实一个字节都没发出去。
+fn check_cancelled(config : Config) -> Unit raise HttpError {
+  match config.cancel_token {
+    Some(token) if token.is_cancelled() => raise cancelled_error(config, None)
+    _ => ()
+  }
 }
 
 ///|
@@ -230,7 +257,10 @@ async fn Client::open_stream(
   self : Client,
   config : Config,
 ) -> (@transport.RawResponse, Config) raise HttpError {
+  // 取消预检查的位置与 `request` 一致：合并配置之后、请求拦截器之前。
+  // 两个流式入口共用这一条，所以 `stream` / `sse` 也被它覆盖。
   let merged = self.merged_config(config)
+  check_cancelled(merged)
   let merged = match self.interceptors.run_request(merged) {
     Ok(config) => config
     Err(error) => raise error

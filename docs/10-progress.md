@@ -11,7 +11,7 @@
 | `src/config/merge.mbt` | `prefer_request` 那一档（请求级整体替换实例默认值） |
 | `src/transport/async_http.mbt` | 上传：`write_body` 分块写 + 逐块回调；`content_length` 解析响应头 |
 | `src/transport/stream_all.mbt` | 下载：读全量时逐块回调（`drain_into` / `read_all_partial`） |
-| `src/transport/stream.mbt` | `ResponseBody::total`（进度的分母从哪来） |
+| `src/transport/stream.mbt` / `stream_lifecycle.mbt` | `ResponseBody::total`（进度的分母从哪来）；构造在后者 |
 | `src/util/request.mbt` | 把 `Config::on_upload_progress` 透传进 `PreparedRequest` |
 | `src/client.mbt` | `Client::request` 读全量时接上下载回调 |
 | `src/facade.mbt` | `StreamResponse::read_all` 同样接上下载回调；再导出两个类型 |
@@ -93,7 +93,8 @@ body（完整字节）
 ## 不做的事
 
 - **请求体流式上传（Reader 形态的 body）**：进度回调不依赖它（上面已经说明分块写就够），所以本期只做回调。README 的「暂不支持」里标了下一期。
-- **取消 / 中断**：`CancelToken` / `signal` 仍未实现，`timeout` 是唯一的中断手段。
+- **取消 / 中断**：已由 `cancel_token` 承担（`docs/12-cancellation.md`），并且取消会打断挂起中的
+  上传写入——从上传进度回调里调 `CancelToken::cancel` 就能停在下一块。
 - **节流**：回调次数等于块数（64 KiB 一块）。要按百分比节流，在回调里自己判断。
 
 ## 注意事项（改动时）

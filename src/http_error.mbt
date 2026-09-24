@@ -39,6 +39,8 @@ pub(all) enum ErrorCode {
   InvalidUrl
   /// 本地就失败了：配置有误，或用了传输层不支持的能力
   NotSupported
+  /// 被 `cancel_token` 取消：调用方主动中止，不是网络故障
+  Cancelled
   /// 重定向次数超过 `max_redirects`：多半是重定向成环，或上限设得太小
   TooManyRedirects
 } derive(Eq, Debug)
@@ -55,6 +57,10 @@ pub extend ErrorCode with @debug.Debug::{to_repr}
 /// 超时用的是 `ECONNABORTED` 而不是 `ETIMEDOUT`：axios 默认就是前者，
 /// 只有在打开 `transitional.clarifyTimeoutError` 时才会改用后者。
 ///
+/// 取消用的是 `ERR_CANCELED`（axios 的 `AxiosError.ERR_CANCELED`，也是
+/// 它 `CanceledError` 上的 `code`）；与超时分开，调用方才能把「用户主动中止」
+/// 与「超时兜底」区分对待——前者通常不该重试，也不该报给用户。
+///
 /// 重定向上限用 `ERR_FR_TOO_MANY_REDIRECTS`：这是 axios 透传的
 /// follow-redirects 错误码（axios 自己也定义了 `AxiosError.ERR_FR_TOO_MANY_REDIRECTS`
 /// 这个常量），跟着用同一个字符串，调用方按码分支时不必区分是哪一家的实现。
@@ -66,6 +72,7 @@ pub fn ErrorCode::to_string(self : ErrorCode) -> String {
     Timeout => "ECONNABORTED"
     InvalidUrl => "ERR_INVALID_URL"
     NotSupported => "ERR_NOT_SUPPORT"
+    Cancelled => "ERR_CANCELED"
     TooManyRedirects => "ERR_FR_TOO_MANY_REDIRECTS"
   }
 }
@@ -131,6 +138,23 @@ pub fn HttpError::info(self : HttpError) -> ErrorInfo {
 /// 错误的分类。
 pub fn HttpError::code(self : HttpError) -> ErrorCode {
   self.info().code
+}
+
+///|
+/// 这次失败是不是被取消（对应 axios 的 `axios.isCancel`）。
+///
+/// 等价于 `error.code() is ErrorCode::Cancelled`，存在的意义是让调用点读起来
+/// 与 axios 的写法一致，也避免每次手写模式匹配。取消来自调用方自己的
+/// `CancelToken`（不是超时、不是网络错误），通常该安静地收场而不是报错。
+///
+/// ```moonbit nocheck
+/// client.request(config) catch {
+///   error if error.is_cancelled() => println("已取消：" + error.message())
+///   error => println(error.to_string())
+/// }
+/// ```
+pub fn HttpError::is_cancelled(self : HttpError) -> Bool {
+  self.code() is ErrorCode::Cancelled
 }
 
 ///|
@@ -256,7 +280,30 @@ fn transport_error(
         config,
         response,
       )
+    @transport.TransportError::Cancelled => cancelled_error(config, response)
   }
+}
+
+///|
+/// 取消引起的失败：消息取 `cancel_token` 上的理由，没给理由就用默认文案。
+///
+/// 两个入口共用它——传输层报 `TransportError::Cancelled` 时（取消落在某段
+/// I/O 上），以及上层进入管线时的预检查（token 在请求发出**之前**已经取消）。
+/// 放在一起是为了让「取消长什么样」只有一份定义。
+///
+/// `response` 沿用「失败时带上已经收到的响应」那条规则：取消发生在响应头
+/// 到手之后时，状态行、响应头与已读到的字节照样挂上（与超时、断连一致）；
+/// 请求还没发出去就取消时是 `None`。
+fn cancelled_error(config : Config, response : Response?) -> HttpError {
+  let message = match config.cancel_token {
+    Some(token) =>
+      match token.reason() {
+        Some(reason) => reason
+        None => "请求已取消"
+      }
+    None => "请求已取消"
+  }
+  make_error(message, ErrorCode::Cancelled, config, response)
 }
 
 ///|

@@ -79,6 +79,7 @@ pub fn merge_config(base : Config, request : Config) -> Config {
 | `params_serializer` | 请求优先/否则默认 | 自定义 query 序列化器（axios 的 `paramsSerializer`，登记为 `defaultToConfig2`）。请求级提供即**整体替换**实例默认值，不是深合并——函数没法「合并」；字段说明见 `03-request-pipeline.md` |
 | `on_upload_progress` | 请求优先/否则默认 | 上传进度回调（axios 的 `onUploadProgress`，同为 `defaultToConfig2`）。请求级提供即整体替换实例默认值，不会出现「实例级与请求级的回调都被调用」；字段说明见 `10-progress.md` |
 | `on_download_progress` | 请求优先/否则默认 | 下载进度回调（axios 的 `onDownloadProgress`），与上一条同档、同样整体替换 |
+| `cancel_token` | 请求优先/否则默认 | 取消句柄（axios 的 `cancelToken`）。两个 token 没法「合并」，所以同样整体替换：请求级提供就用请求级那个；实例级 token 的用法是「本实例发出的所有请求共用一个取消信号」，不该被某次请求悄悄换掉后其余请求还留着旧的。字段说明见 `12-cancellation.md` |
 | `allow_absolute_urls` | 深合并（标量） | 等价于请求优先/否则默认 |
 | `params` | 深合并 | 逐键递归；数组**整体替换** |
 | `auth` | 深合并 | 逐字段 |

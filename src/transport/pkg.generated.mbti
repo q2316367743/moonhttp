@@ -14,6 +14,7 @@ pub(all) suberror TransportError {
   Timeout
   Network(String)
   Unsupported(String)
+  Cancelled
 }
 
 // Types and methods
@@ -44,6 +45,7 @@ pub(all) struct PreparedRequest {
   timeout : Int?
   proxy : ProxyEndpoint?
   on_upload_progress : ((@config.ProgressEvent) -> Unit)?
+  cancel_token : @config.CancelToken?
 }
 pub fn PreparedRequest::to_repr(Self) -> @debug.Repr
 pub impl @debug.Debug for PreparedRequest
@@ -75,6 +77,8 @@ pub fn ResponseBody::to_repr(Self) -> @debug.Repr
 pub impl @debug.Debug for ResponseBody
 
 // Type aliases
+pub using @config {type CancelToken}
+
 pub using @headers {type Headers}
 
 pub using @config {type Method}

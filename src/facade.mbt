@@ -38,6 +38,8 @@
 /// 请求体的相关类型也一并再导出：`with_data_from_form` 的入参是 `FormData`，
 /// `serialize_body` 的返回值是 `SerializedBody`，用它们不该再 import 一个 `@config`。
 /// 进度回调的两个类型同理：`with_on_upload_progress` 的入参是 `ProgressCallback`。
+/// 取消句柄也一样：`with_cancel_token` 的入参是 `CancelToken`，而取消之后
+/// 调用方还要拿它查状态（`is_cancelled` / `reason`）。
 pub using @config {
   type Config,
   type Method,
@@ -51,6 +53,7 @@ pub using @config {
   type SerializedBody,
   type ProgressEvent,
   type ProgressCallback,
+  type CancelToken,
 }
 
 ///|

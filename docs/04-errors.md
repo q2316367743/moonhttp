@@ -46,6 +46,7 @@ pub(all) suberror HttpError {
 | `Timeout` | `ECONNABORTED` | `TransportError::Timeout`（含读响应体中途的单次读取超时，以及与代理的 CONNECT 握手超时） |
 | `InvalidUrl` | `ERR_INVALID_URL` | `build_prepared_request`（`src/util/request.mbt`）返回 `None` 的两种原因：既没有 `url` 也没有可用的 `base_url`；或者**配了代理却没给 host**。都交由根包 `prepare_request` 翻译成 `HttpError`（两种原因分别报，文案不同） |
 | `NotSupported` | `ERR_NOT_SUPPORT` | `TransportError::Unsupported`（传输层做不到，例如相对地址、重定向到非 http(s) 协议）；`Client::sse`：响应头没有声明 `text/event-stream`（拿到的不是 SSE 却要按事件读，见 `06-sse.md`）——报错前会先关掉连接 |
+| `Cancelled` | `ERR_CANCELED` | `cancel_token` 被取消：请求进入管线前的预检查（`Client::request` / `Client::open_stream`），或取消打断了挂起中的 I/O（`TransportError::Cancelled`，见 `12-cancellation.md`） |
 | `TooManyRedirects` | `ERR_FR_TOO_MANY_REDIRECTS` | `Client::send_following_redirects`：重定向次数超过 `max_redirects`（默认 5，见 `08-redirects.md`） |
 
 关于超时用的是 `ECONNABORTED` 而不是 `ETIMEDOUT`：axios 默认就是前者，只有打开 `transitional.clarifyTimeoutError` 时才换成后者。这里保持默认行为。
@@ -65,6 +66,7 @@ pub(all) suberror HttpError {
 | 状态码没通过 `validate_status` | **完整响应**：三个入口都会先把错误体读完，字节原样放在 `Response` 里（要文本按 `response_encoding` 调 `text()`，要原样调 `bytes()`），错误体内容不额外解释 |
 | 传输层失败发生在**响应头到手之后**（读响应体时超时、断连） | 已经收到的部分：状态行与响应头一定在，响应体字节是**失败前读到的部分**（`bytes()` / `text()` 拿到的可能只有半截） |
 | 重定向次数超过 `max_redirects` | **最后那个 3xx 响应**（用 `read_all_partial` 读，正文可能是半截）：`Location` 与状态码都在里面，重定向成环时这是最直接的现场。axios 的同一个错误里没有响应 |
+| 取消（`cancel_token`）发生在**响应头到手之后** | 与「传输层失败在中途」一致：状态行、响应头与已读到的半截正文都在。请求发出前就被取消（预检查）时是 `None`——一个字节都没发出去 |
 | 本地失败（缺 url、代理配置缺 host、传输层不支持）与响应头到手之前的传输层失败（连不上、DNS 失败、**代理拒绝建立隧道**） | `None`——那时确实没有响应。代理拒绝时 CONNECT 的响应属于**代理**而不是源站，混进 `response` 会让人误以为「目标服务器回了 407」，所以只把它写进 `message` |
 
 | 字段 | 什么时候有值 |
@@ -89,12 +91,12 @@ pub(all) suberror HttpError {
 ```
 底层 HTTP 实现（moonbitlang/async）
         ↓ 任意错误
-TransportError { Timeout | Network(String) | Unsupported(String) }   ← src/transport/
+TransportError { Timeout | Network(String) | Unsupported(String) | Cancelled } ← src/transport/
         ↓ Client::request 做一次映射（顺带挂上已经收到的响应）
 ErrorCode { Timeout | Network | NotSupported | ... }                 ← src/
 ```
 
-中间加了一层 `TransportError` 的目的：让上层**不需要认识异步库的错误类型**。`Client::request` 只需要 `catch` 三个构造子；自定义传输实现也只需要把自己的错误归到这三类里，不必知道底层用的是哪套 HTTP 库。
+中间加了一层 `TransportError` 的目的：让上层**不需要认识异步库的错误类型**。`Client::request` 只需要 `catch` 这几个构造子；自定义传输实现也只需要把自己的错误归到这几类里，不必知道底层用的是哪套 HTTP 库。
 
 「已经收到的响应」跨的是另一层：传输层只管把字节交出来（`RawResponse` / `read_all_partial`），拼成对外的 `Response`、挂到错误上是根包的事——传输层不认识 `Response`。
 

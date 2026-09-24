@@ -59,6 +59,12 @@ pub async fn ResponseBody::read_all_partial(
   self : ResponseBody,
   on_progress? : @config.ProgressCallback,
 ) -> (Bytes, TransportError?) noraise {
+  // 取消发生在「响应头到手」与「开始读全量」之间时，这里报取消，而不是落到
+  // 下面的 `Closed => (b"", None)` —— 后者会被上层当成「读完了但一个字节都没有」。
+  match cancelled_failure(self.cancel_token) {
+    Some(error) => return (b"", Some(error))
+    None => ()
+  }
   match self.inner {
     Closed => (b"", None)
     Memory(memory) => {
@@ -90,7 +96,7 @@ pub async fn ResponseBody::read_all_partial(
       let buffer = @buffer.Buffer::Buffer()
       // 失败不当异常走，而是作为值返回：调用方要的是「已读到的字节 + 错误」。
       let failure : TransportError? = try {
-        read_or_fail(self.timeout, () => {
+        read_or_fail(self.timeout, self.cancel_token, () => {
           drain_into(client, buffer, self.total, on_progress)
         })
         None

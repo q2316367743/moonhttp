@@ -22,6 +22,7 @@ pub(all) suberror HttpError {
 pub fn HttpError::code(Self) -> ErrorCode
 pub fn HttpError::config(Self) -> @config.Config
 pub fn HttpError::info(Self) -> ErrorInfo
+pub fn HttpError::is_cancelled(Self) -> Bool
 pub fn HttpError::message(Self) -> String
 pub fn HttpError::new(String, ErrorCode, @config.Config) -> Self
 pub fn HttpError::output(Self, &Logger) -> Unit
@@ -47,6 +48,7 @@ pub(all) enum ErrorCode {
   Timeout
   InvalidUrl
   NotSupported
+  Cancelled
   TooManyRedirects
 } derive(Eq, @debug.Debug)
 pub fn ErrorCode::equal(Self, Self) -> Bool
@@ -118,6 +120,8 @@ pub fn StreamResponse::to_repr(Self) -> @debug.Repr
 
 // Type aliases
 pub using @config {type Auth}
+
+pub using @config {type CancelToken}
 
 pub using @config {type Config}
 

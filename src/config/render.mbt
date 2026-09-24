@@ -73,6 +73,12 @@ pub fn Config::to_string(self : Config) -> String {
     Some(_) => first = push_field(buf, first, "on_download_progress", "<fn>")
     None => ()
   }
+  // 取消句柄渲染成 `<token>`，不带「取消没取消」：token 是可变的共享状态，
+  // 把它的瞬时状态写进来会让同一份配置在不同时刻渲染出不同字符串。
+  match self.cancel_token {
+    Some(_) => first = push_field(buf, first, "cancel_token", "<token>")
+    None => ()
+  }
   // 请求体按形态渲染：JSON 给序列化后的文本、urlencoded 给编码后的键值对
   // （两者都与真正发出去的一致），原样文本给原文，
   // 表单交给 FormData 自己渲染（文件只给字节数）。

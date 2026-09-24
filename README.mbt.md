@@ -2,7 +2,7 @@
 
 axios 风格的 MoonBit HTTP 客户端。当前实现聚焦三件事：**创建实例**、**通用 `request`**、**配置合并**；并在此基础上提供**自动跟随重定向**（`max_redirects`，默认 5 跳）、**流式响应 / SSE**（`Client::stream` 交原始字节流，`Client::sse` 交解析好的事件流）与**请求 / 响应拦截器**（`Interceptors`，顺序与语义对齐 axios）。
 
-设计上刻意留出扩展点（可替换的传输层、`instance.create` 派生、两段式拦截器），但暂不实现取消等 axios 高级特性——详见文末「暂不支持」。
+设计上刻意留出扩展点（可替换的传输层、`instance.create` 派生、两段式拦截器），并提供 **取消请求**（`CancelToken`，能打断挂起中的连接动作，见「取消请求」）。其余暂不实现的 axios 高级特性见文末「暂不支持」。
 
 ```moonbit nocheck
 ///|
@@ -317,9 +317,56 @@ async fn watch_events(
 - `timeout` 在流式路径下，`read_some` / `read_until` 是**每次读取的等待上限**，`read_all` 是**整段读完的时限**（不是整条请求的总时限），SSE 用默认的不限时即可；
 - **不要用 `read_until("\n\n")` 切 SSE 事件**：SSE 允许 CRLF / LF / CR 三种行尾，而 CRLF 流上事件边界的字节 `0D 0A 0D 0A` 里没有连续两个 LF，这个分隔符永远匹配不到（内存体上表现为整段原样返回，真实连接上会一直等到连接关闭）。细节与全部解析规则见 [docs/06-sse.md](docs/06-sse.md)。
 
+## 取消请求
+
+`CancelToken` 对应 axios 的 `cancelToken`：一个句柄可以传给任意多次请求，从**任何地方**喊停
+（另一条协程、某个进度回调、看门狗），被取消的请求拿到 `ERR_CANCELED` 错误。
+
+```moonbit nocheck
+///|
+async fn main {
+  let api = @moonhttp.create(
+    @moonhttp.Config::default().with_base_url("https://api.example.com"),
+  )
+  let stop = @moonhttp.CancelToken::new()
+
+  @async.with_task_group(group => {
+    // 请求放进子任务；喊停来自别处（UI 的停止按钮、超时看门狗、用户按 Ctrl-C……）
+    let running = group.spawn(() => {
+      api.request(
+        @moonhttp.Config::new("/reports/big.csv").with_cancel_token(stop),
+      ) catch {
+        error if error.is_cancelled() => println("已取消：" + error.message())
+        error => println(error.to_string())
+      }
+    })
+    @async.sleep(2000)
+    stop.cancel(message="Operation canceled by the user.")
+    running.wait()
+  })
+}
+```
+
+几条口径：
+
+- **能打断挂起中的连接动作**：取消落在协程的挂起点上——卡在「等首字节」「建连中」「传大 body」
+  时立刻断，不需要等到下一个检查点。机制是协程级取消（与 `timeout` 同一套），细节见
+  [docs/12-cancellation.md](docs/12-cancellation.md)。
+- **覆盖三个入口**：`request`（含重定向链与读全量）、`stream`、`sse`。流式入口在**消费过程中**
+  取消也生效：下一次 `read_some` / `next_event` 抛 `ERR_CANCELED`（不是返回 `None`，免得被当成
+  「对端正常结束」），同时连接立刻释放。
+- **取消晚一步也算数**：已经取消的 token 让后续请求（包括拦截器里的重试）**立刻失败、不发 I/O**；
+  token 是一次性的（与 axios 一致），要多次取消就每次 `CancelToken::new()`。
+- **取消理由就是错误文案**：`stop.cancel(message="…")` 的 message 原样成为 `HttpError::message()`；
+  没给就是默认的「请求已取消」。
+- **失败现场不丢**：取消发生在响应头到手之后时，错误里带着状态行、响应头与已读到的半截正文
+  （与超时、断连一致，这点比 axios 多给一点信息）。
+- **顺手能取消一个实例的全部请求**：把 token 放进实例默认值即可
+  （`Client::create(Config::default().with_cancel_token(stop))`）。
+
 ## 可替换的传输层
 
-真正「把字节发出去」这一步被抽象成 `Transport` trait，整个 `moonbitlang/async` 依赖只存在于 [`src/transport/`](src/transport/) 这个包里（真实实现是 `async_http.mbt`，响应体流是 `stream.mbt`）。带来的好处：
+真正「把字节发出去」这一步被抽象成 `Transport` trait，整个 `moonbitlang/async` 依赖只存在于 [`src/transport/`](src/transport/) 这个包里（真实实现是 `async_http.mbt`，取消作用域是 `cancel.mbt`，响应体流是 `stream.mbt` + `stream_lifecycle.mbt`）。带来的好处：
 
 - `config` / `headers` / `merge` / `url` 四个包不依赖网络与异步，可以用普通同步测试覆盖；
 - 使用方可以注入自己的实现，测试时不必真的联网。
@@ -439,7 +486,6 @@ moonhttp/
 以下 axios 能力本版本**没有**实现，配置里也不会出现对应字段（避免「配置了但完全不生效」）：
 
 - `get` / `post` / `put` / `delete` / `head` / `options` / `patch` 等快捷方法（都是 `request` 的薄封装，见「后续扩展」）
-- 取消（`CancelToken` / `signal`）：中止一次请求的手段是拦截器里抛 `HttpError`，或在超时上兜底
 - 拦截器的 `eject` / `clear` / `runWhen`：拦截器本身已支持（见「拦截器」），但这三个 axios 的注册期辅助能力不做——撤下一个拦截器就重新构建一份 `Interceptors` 值
 - 代理的 SOCKS 支持、`http_proxy` / `no_proxy` 环境变量与按请求关闭代理的开关（显式 `proxy` 配置已支持，见「代理」）
 - 重定向的 `beforeRedirect` 回调与自定义敏感头名单（`sensitiveHeaders`）：跟随规则固定，见 [`docs/08-redirects.md`](docs/08-redirects.md)
@@ -462,6 +508,7 @@ moonhttp/
 - 没有可变的全局默认值。axios 的全局 `axios.defaults` 在本项目里对应 `@config.defaults()`（固定的内置默认值）；要定制请用 `create(...)` 或 `client.create(...)` 派生。
 - 重定向（`maxRedirects`）默认 5 跳（axios 请求配置文档的默认值；它底层 follow-redirects 自己兜底是 21，文档与实现并不一致，本项目取文档口径）。四处与 axios 不同：超限错误的 `code` 同名但**带最后那个 3xx 响应**（axios 的错误里没有响应）；`response.config` 是**最后一跳**的配置（axios 是最初的配置，最终地址只在 `response.request` 上）；`timeout` 是**每一跳各算一份**（axios 是整条链一个计时器）；负数上限按「不跟随」处理。完整规则与差异表见 [`docs/08-redirects.md`](docs/08-redirects.md)。
 - 代理有五处与 axios 不同：**不读** `http_proxy` / `https_proxy` / `no_proxy` 环境变量；没有 `proxy: false` 这类「按请求关掉」的写法；http 目标也走 CONNECT 隧道（axios 对 http 目标用「请求行里放完整地址」的经典写法）；用户在 `headers` 里自定义的 `Proxy-Authorization` 在有代理时只发给代理、不会随请求穿过隧道发给源站；`protocol` 是枚举 `ProxyProtocol` 而不是字符串。差异表见 [`docs/09-proxy.md`](docs/09-proxy.md)。
+- 取消有五处与 axios 不同：**只有一个对象**（`CancelToken`，不做 `CancelToken.source()` 那层 token/source 二分，也没有 `AbortController` / `signal` 的对应物）；判定取消用 `HttpError::is_cancelled()`（看错误码）而不是 `axios.isCancel` 的 `__CANCEL__` 标记；取消错误里**带有已经收到的响应**（半截正文也在），axios 的 `CanceledError` 不带 `response`；默认文案是「请求已取消」（axios 是 `"canceled"`）；中断范围是建连、写请求、等响应头、读响应体、SSE 事件读取全都能断。差异表与机制见 [`docs/12-cancellation.md`](docs/12-cancellation.md)。
 - 拦截器有七处与 axios 不同：没有 `eject` / `clear` / `runWhen`；请求拦截器不提供「错误处理器」那一半（`use_request` 只有一个处理器，因为请求侧还没来得及产生 I/O 错误）；响应拦截器只作用于 `Client::request`（两个流式入口不过响应链）；`Response` 只能改写、不能凭空合成（axios 里返回普通对象即可）；`client.create(...)` 派生的实例**继承**拦截器（axios 的 `axios.create()` 造出的是没有拦截器的新实例）；拦截器与「重定向的每一跳」无关——整条链只跑一次（axios 也是，因为它跟随重定向发生在适配器内部）；axios 的 `transformRequest` / `transformResponse` 不做成独立 hook，由两段拦截器承担（它们是超集，但改写要落回字节——`Response` 里只有字节，没有 `data` 那样的任意值）。差异表见 [`docs/11-interceptors.md`](docs/11-interceptors.md)。
 
 ### 后续扩展
@@ -495,7 +542,7 @@ moon info && moon fmt   # 更新 .mbti 接口文件并格式化
 moon coverage analyze   # 覆盖率
 ```
 
-测试分层：`config` / `headers` / `merge` / `url` / `sse` 五个包是纯逻辑，用同步测试逐条钉住合并语义与 SSE 解析规则；根包与 `transport` 用 `async test` 配合 `MockTransport` 跑完整管线。`src/sse_stream_test.mbt`、`transport/stream_test.mbt`、`src/error_test.mbt` 与 `src/progress_test.mbt` 会各起一个本机 server（`127.0.0.1` 随机端口）——分别验证 CRLF 的 SSE 事件能在服务端停顿期间就到达、真实连接的流式读取与单次读取超时、「读响应体中途失败时错误里带着已经收到的部分」（内存体读得完，只有真实连接能造出「读到一半」），以及上传进度按块回调与 chunked 响应的 `total` 未知（内存体的长度总是已知，只有真实连接能造出「长度未知」）。同样不需要外网，只有 `src/cmd/main` 会访问真实网络。
+测试分层：`config` / `headers` / `merge` / `url` / `sse` 五个包是纯逻辑，用同步测试逐条钉住合并语义与 SSE 解析规则；根包与 `transport` 用 `async test` 配合 `MockTransport` 跑完整管线。`src/sse_stream_test.mbt`、`transport/stream_test.mbt`、`src/error_test.mbt`、`src/progress_test.mbt`、`src/cancel_test.mbt` 与 `src/cancel_stream_test.mbt` 会各起一个本机 server（`127.0.0.1` 随机端口）——分别验证 CRLF 的 SSE 事件能在服务端停顿期间就到达、真实连接的流式读取与单次读取超时、「读响应体中途失败时错误里带着已经收到的部分」（内存体读得完，只有真实连接能造出「读到一半」），上传进度按块回调与 chunked 响应的 `total` 未知（内存体的长度总是已知，只有真实连接能造出「长度未知」），以及取消真的打断了挂起中的连接动作（Mock 同步返回，没有挂起点可中断）。同样不需要外网，只有 `src/cmd/main` 会访问真实网络。
 
 `util` 没有自己的 `_test.mbt`：里面的函数都被根包的黑盒测试从端到端一路覆盖（`src/encoding_test.mbt` 钉四种编码、`src/request_test.mbt` 钉拼请求与错误分档、`src/moonhttp_test.mbt` 钉方法回退），再补一份单元测试只是重复覆盖。
 

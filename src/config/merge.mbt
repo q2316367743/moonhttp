@@ -193,6 +193,10 @@ pub fn merge_config(base : Config, request : Config) -> Config {
       base.on_download_progress,
       request.on_download_progress,
     ),
+    // 取消句柄同样走策略 2：两个 token 没法「合并」成第三个，只能二选一。
+    // 请求级提供就整体替换实例默认值——实例级 token 是「本实例发出的所有请求
+    // 共用一个取消信号」的用法，不该被某次请求悄悄换掉后其余请求还留着旧的。
+    cancel_token: prefer_request(base.cancel_token, request.cancel_token),
     // 策略 3：深合并
     params: merge_json_option(base.params, request.params),
     auth: merge_auth(base.auth, request.auth),

@@ -167,5 +167,8 @@ pub fn build_prepared_request(config : Config) -> @transport.PreparedRequest? {
     // 上传进度回调原样交给传输层：怎么分块、什么时候报告由实现决定
     // （`AsyncHttpTransport` 按 64 KiB 分块写，见 `docs/10-progress.md`）。
     on_upload_progress: config.on_upload_progress,
+    // 取消句柄同样原样交给传输层：这一层只搬，不判断（token 的可变状态
+    // 由它自己维护，传输层读到的是同一个句柄）。
+    cancel_token: config.cancel_token,
   })
 }

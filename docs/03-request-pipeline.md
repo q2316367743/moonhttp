@@ -4,7 +4,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `src/client.mbt` | `Client::request` / `Client::stream` / `Client::sse` 的编排：合并 → 定方法 → 请求拦截器 → 发送 →（读全量 / 交还流）→ 校验 → 响应拦截器 |
+| `src/client.mbt` | `Client::request` / `Client::stream` / `Client::sse` 的编排：合并 → 定方法 → 取消预检查 → 请求拦截器 → 发送 →（读全量 / 交还流）→ 校验 → 响应拦截器 |
 | `src/interceptors.mbt` | 拦截器链：`Interceptors`（注册）、`run_request` / `run_response`（顺序与错误流转，详见 `11-interceptors.md`） |
 | `src/config/merge.mbt` | 合并契约：四种策略、`merge_config`、`flatten_headers`（为什么在 `config` 包见 `02-config-merge.md`） |
 | `src/config/body.mbt` | 请求体的四种形态与序列化：`serialize_body`（字节 + 建议的 `Content-Type`） |
@@ -45,6 +45,13 @@
 
 两段都在 `Client::send_following_redirects` **之外**，所以整条重定向链只跑一遍拦截器。
 三个入口都过请求侧链；响应侧链只作用于 `Client::request`（`stream` / `sse` 的「响应」是还没读的字节流）。
+
+### 取消预检查：第 2 步之后、请求侧拦截器之前
+
+配置合并完（第 1、2 步）就查一次 `cancel_token`：已经取消时立刻抛 `ERR_CANCELED`，
+**既不拼地址也不跑请求拦截器**——被取消的请求什么都不做（拦截器可能带副作用）。
+这一层与传输实现无关，所以 `MockTransport` 上也成立；请求发出**之后**的取消由传输层的取消作用域
+负责（`05-transport.md` 的「取消语义」、完整机制见 `12-cancellation.md`）。
 
 第 1–5 步是「拼出一份能发出去的请求」，与读不读响应体无关。第 6 步包含自动跟随重定向（`request` 与两个流式入口共用同一段循环，所以上行地址、方法与头在跟随后的形态完全一致）；第 6 步起有三种**读法**，各有自己的入口与返回类型：
 

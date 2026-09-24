@@ -19,7 +19,7 @@ pub using @headers {type Headers}
 /// - 只取请求级（axios `valueFromConfig2`）：url / http_method / data
 /// - 请求级优先、否则回退默认（`defaultToConfig2`）：
 ///   base_url / timeout / max_redirects / response_encoding / params_serializer /
-///   on_upload_progress / on_download_progress
+///   on_upload_progress / on_download_progress / cancel_token
 /// - 深合并（`mergeDeepProperties`）：
 ///   params / auth / proxy / headers / common_headers / method_headers / allow_absolute_urls
 /// - 请求级存在即生效（`mergeDirectKeys`）：validate_status
@@ -90,6 +90,11 @@ pub(all) struct Config {
   /// 只由库执行的「读全量」触发（`Client::request` / `StreamResponse::read_all`），
   /// 构建器是 `with_on_download_progress`。
   on_download_progress : ProgressCallback?
+  /// 取消句柄，对应 axios 的 `cancelToken` / `signal`；`None` 表示这次请求不可取消。
+  ///
+  /// 语义（能打断什么、覆盖哪些入口、与 `timeout` / 重试的关系）见 cancel.mbt
+  /// 与 `docs/12-cancellation.md`；构建器是 `with_cancel_token`。
+  cancel_token : CancelToken?
   auth : Auth?
   /// 代理服务器设置，对应 axios 的 `proxy`；`None` 表示直连。
   ///

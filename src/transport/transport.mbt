@@ -1,7 +1,8 @@
 ///|
 /// 这两个类型出现在 `PreparedRequest` / `RawResponse` 的公开签名里，
 /// 因此随本包一起再导出，使用者不必为了构造一份请求再 import 两个包。
-pub using @config {type Method, type ProgressCallback}
+/// `CancelToken` 同理：它由 `PreparedRequest` 携带到这一层。
+pub using @config {type Method, type ProgressCallback, type CancelToken}
 
 ///|
 pub using @headers {type Headers}
@@ -59,6 +60,16 @@ pub(all) struct PreparedRequest {
   /// 它不真的发送数据，所以上传进度无从报告）。
   /// 语义与粒度见 `docs/10-progress.md`。
   on_upload_progress : ProgressCallback?
+  /// 这次请求的取消句柄；`None` 表示不可取消。
+  ///
+  /// **由传输实现负责尊重它**：内置的 `AsyncHttpTransport` 在发送每一跳、
+  /// 以及响应体每次读取时把中断手段登记到它上面，取消一旦发生，挂起中的
+  /// 连接动作会立刻被中断，对外表现为 `TransportError::Cancelled`。
+  /// 自定义实现可以不理会它（测试用的 `MockTransport` 就不理会——它不真的
+  /// 做 I/O，没有「挂起」可中断；这种情况下取消仍然由上层在请求进入管线时
+  /// 的预检查兜住「已取消的 token」这一种情况）。
+  /// 语义与覆盖范围见 `docs/12-cancellation.md`。
+  cancel_token : CancelToken?
 }
 
 ///|
@@ -94,6 +105,12 @@ pub impl @debug.Debug for PreparedRequest with fn to_repr(self) {
     Some(_) => @debug.Repr::literal("<fn>")
     None => @debug.Repr::literal("<none>")
   }
+  // token 与回调一样只区分「有没有」：它的取消状态会随外部调用变化，
+  // 渲染进去会让同一份请求在不同时刻给出不同字符串。
+  fields["cancel_token"] = match self.cancel_token {
+    Some(_) => @debug.Repr::literal("<token>")
+    None => @debug.Repr::literal("<none>")
+  }
   @debug.Repr::opaque_("PreparedRequest", @debug.Repr::record(fields))
 }
 
@@ -121,7 +138,7 @@ pub(all) struct RawResponse {
 pub extend RawResponse with @debug.Debug::{to_repr}
 
 ///|
-/// 传输层错误：把「网络世界里可能出什么事」收敛成三种情况，
+/// 传输层错误：把「网络世界里可能出什么事」收敛成四种情况，
 /// 上层再映射成对外的 `ErrorCode`。
 ///
 /// 有了这层收敛，上层不需要 import 任何 async 相关的包，
@@ -133,6 +150,13 @@ pub(all) suberror TransportError {
   Network(String)
   /// 请求还没发出去就失败了：协议不支持、地址非法等
   Unsupported(String)
+  /// 被 `cancel_token` 取消了。
+  ///
+  /// 不带文案：取消理由（`CancelToken::reason`）由上层连同**合并后的配置**
+  /// 一起翻译，默认文案与「HTTP 状态码类错误」的文案保持在同一处
+  /// （`src/http_error.mbt`）。这里只表达「这次失败是取消，不是网络故障」，
+  /// 上层据此报 `ERR_CANCELED` 而不是 `ERR_NETWORK`。
+  Cancelled
 }
 
 ///|

@@ -30,6 +30,16 @@ pub fn Auth::not_equal(Self, Self) -> Bool
 pub fn Auth::to_repr(Self) -> @debug.Repr
 pub fn Auth::to_string(Self) -> String
 
+pub struct CancelToken {
+  // private fields
+}
+pub fn CancelToken::attach(Self, () -> Unit) -> Int
+pub fn CancelToken::cancel(Self, message? : String) -> Unit
+pub fn CancelToken::detach(Self, Int) -> Unit
+pub fn CancelToken::is_cancelled(Self) -> Bool
+pub fn CancelToken::new() -> Self
+pub fn CancelToken::reason(Self) -> String?
+
 pub(all) struct Config {
   url : String?
   http_method : Method?
@@ -41,6 +51,7 @@ pub(all) struct Config {
   params_serializer : ((Json) -> String)?
   on_upload_progress : ((ProgressEvent) -> Unit)?
   on_download_progress : ((ProgressEvent) -> Unit)?
+  cancel_token : CancelToken?
   auth : Auth?
   proxy : Proxy?
   headers : @headers.Headers?
@@ -60,6 +71,7 @@ pub fn Config::to_string(Self) -> String
 pub fn Config::with_allow_absolute_urls(Self, Bool) -> Self
 pub fn Config::with_auth(Self, String, String) -> Self
 pub fn Config::with_base_url(Self, String) -> Self
+pub fn Config::with_cancel_token(Self, CancelToken) -> Self
 pub fn Config::with_common_header(Self, StringView, String) -> Self
 pub fn Config::with_data_from_form(Self, FormData) -> Self
 pub fn Config::with_data_from_json(Self, Json) -> Self

@@ -6,6 +6,7 @@
 |---|---|
 | `src/transport/transport.mbt` | `Transport` trait、`PreparedRequest`、`RawResponse`、`TransportError` |
 | `src/transport/stream.mbt` | `ResponseBody`：响应体流（真实连接 / 内存体两种来源），按块读的部分 |
+| `src/transport/stream_lifecycle.mbt` | `ResponseBody` 的构造与释放（`from_bytes` / `open` / `rewind` / `close`），含取消登记 |
 | `src/transport/stream_all.mbt` | `ResponseBody` 的「读全量」三件套（`drain_into` / `read_all_partial` / `read_all`）与下载进度的逐块报告 |
 | `src/transport/async_http.mbt` | 真实实现（唯一对接 `moonbitlang/async` 的文件），含上传进度的分块写 |
 | `src/transport/mock.mbt` | 测试用实现：记录请求、按队列返回响应、可注入失败 |
@@ -31,6 +32,7 @@ pub(open) trait Transport {
 | `timeout` | 超时毫秒数；`None` 或 `<= 0` 表示不限时 |
 | `proxy` | 代理服务器（`ProxyEndpoint`：`url` + `authorization`）；`None` 表示直连。契约见 `09-proxy.md` |
 | `on_upload_progress` | 上传进度回调；`None` 表示不报告。**由传输实现负责调用**（内置实现按 64 KiB 分块写、逐块回调；`MockTransport` 不调用）。语义见 `10-progress.md` |
+| `cancel_token` | 取消句柄；`None` 表示这次请求不可取消。**由传输实现负责尊重它**（内置实现在每跳发送与每次读取时把中断手段登记到它上面；`MockTransport` 不理会——它同步返回、没有挂起点可中断）。语义见 `12-cancellation.md` |
 
 `RawResponse` 是**纯传输结果**，刻意不叫 `Response`（上层的 `Response` 还要承担响应体解码与状态码校验）：
 
@@ -41,7 +43,9 @@ pub(open) trait Transport {
 | `headers` | 响应头（本项目自己的 `Headers`，大小写不敏感） |
 | `body` | **响应体流**（`ResponseBody`），不是字节 |
 
-`TransportError` 只有三类：`Timeout` / `Network(String)` / `Unsupported(String)`。分类的用途见 `04-errors.md`。
+`TransportError` 有四类：`Timeout` / `Network(String)` / `Unsupported(String)` / `Cancelled`。
+前三类是「网络世界里可能出什么事」，`Cancelled` 是「调用方自己喊了停」——它不带文案（取消理由在
+`PreparedRequest::cancel_token` 上，由上层连同合并后的配置一起翻译），也不该与网络故障混为一谈。分类的用途见 `04-errors.md`。
 
 ### 为什么 `body` 是流
 
@@ -98,6 +102,22 @@ pub fn ResponseBody::close(Self) -> Unit
 - SSE 这类长连「长时间没有数据是正常的」，必须完全不限时。内置默认值就是不限时（`defaults()` 给的是 `Some(0)`，`<= 0` 一律视为不限时），所以在默认实例上直接 `stream` 就能长连；显式设过 `timeout` 的实例要用 `with_timeout(0)` 关掉。
 
 读取阶段超时同样抛 `TransportError::Timeout`，上层映射成 `ErrorCode::Timeout`。中途超时前已经读到的字节不会丢：`read_all_partial` 把它们交出来，上层挂到错误上（见 `04-errors.md`）。
+
+### 取消语义
+
+`PreparedRequest::cancel_token` 是「这次请求可以被谁打断」的那个句柄。机制与对外语义在 `12-cancellation.md`，传输层的责任只有三条：
+
+| 阶段 | 传输层做什么 |
+|---|---|
+| 每一跳发送（建连、写头、写 body、等响应头） | 把这一跳放进 `with_cancel_scope`（`src/transport/cancel.mbt`）：token 取消 → 子任务被 `Task::cancel` → 挂起中的 socket 动作立刻中断，对外抛 `TransportError::Cancelled` |
+| 响应体每次读取 | 同一条取消作用域（在 `read_or_fail` 里），所以按块读、读全量、SSE 都能被中断 |
+| 取消已经发生之后 | 读入口先查一遍 token：报 `TransportError::Cancelled` 而**不是**退化成 EOF（`Closed => None` 会被上层当成「对端正常结束」）。同时 `ResponseBody` 挂在 token 上的那条登记会 `close()` 连接——调用方取消之后不再读也不会漏连接（`close` 幂等，注销发生在 `close()` 里） |
+
+三条必须知道的口径：
+
+- **取消不是网络失败**：它在协程模型里是信号，`catch` 抓不住（`defer` / `errdefer` 会跑）。所以由 `with_cancel_scope` 在 `task.wait()` 处把 `TaskCancelled` 翻译成 `TransportError::Cancelled`——指望上层 `catch` 是抓不到的。传输层也不生成取消文案：理由在 `cancel_token` 上，由上层翻译。
+- **取消的落点是挂起点**：一段纯计算（或回调里的长循环）不会被打断，取消在下一个挂起点生效。取消与超时互不吞并，先到的那个说了算（取消的作用域在超时之外）。
+- **自定义实现的义务**：尊重 `cancel_token` 是可选但推荐的。`MockTransport` 不理会它（同步返回、没有挂起点可中断），此时「已取消的 token 让请求失败」仍由上层进入管线时的预检查兜住，只是「打断进行中的请求」这一条不成立。
 
 ## 写一个自定义实现
 

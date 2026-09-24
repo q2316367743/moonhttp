@@ -259,22 +259,30 @@ async fn send_head(
 /// 错误分类的意义在于：上层只需要认识 `TransportError` 就能决定
 /// 对外报 `ErrorCode::Timeout` 还是 `ErrorCode::Network`，
 /// 不必知道底层用的是哪套 HTTP 实现、抛了哪些具体错误类型。
+///
+/// 取消作用域包住**整跳**：建连、写头、写 body（含上传进度回调）、等响应头。
+/// 从上传进度回调里取消也落在同一个子任务上，所以下一块写出去之前就会断。
 // 实现里的方法写 `fn` 而不是 `async fn`：异步性是 trait 声明的一部分，
 // 由 trait 决定，实现侧不再重复标注（与 moonbitlang/async 自身的写法一致）。
 pub impl Transport for AsyncHttpTransport with fn send(self, request) {
   ignore(self)
-  let (client, response) = send_head(request)
+  // 取消句柄随请求带过来（`PreparedRequest::cancel_token`）；没有就直跑，
+  // 不建任务组（见 with_cancel_scope）。
+  let sent = with_cancel_scope(request.cancel_token, () => send_head(request))
+  let (client, response) = sent
   {
     status: response.code,
     status_text: response.reason,
     headers: from_http_headers(response.headers),
     // 响应体还没读：连接的所有权转移给这个流，读到 EOF 或 close() 时关闭。
     // 不在这里读全，是为了让 chunked / SSE 这类协议能边到边读。
-    // `Content-Length` 一并交出去，它是下载进度的 total（可能没有，见 content_length）。
+    // `Content-Length` 一并交出去，它是下载进度的 total（可能没有，见 content_length）；
+    // token 也交出去：每次读取都靠它可被取消，取消时它还会顺手关掉这条连接。
     body: ResponseBody::open(
       client,
       request.timeout,
       content_length(response.headers),
+      request.cancel_token,
     ),
   }
 }
