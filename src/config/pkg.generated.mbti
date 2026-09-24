@@ -9,6 +9,14 @@ import {
 // Values
 pub fn defaults() -> Config
 
+pub fn flatten_headers(@headers.Headers?, Map[Method, @headers.Headers]?, @headers.Headers?, Method) -> @headers.Headers
+
+pub fn merge_config(Config, Config) -> Config
+
+pub fn merge_json(Json, Json) -> Json
+
+pub fn merge_json_option(Json?, Json?) -> Json?
+
 // Errors
 
 // Types and methods
@@ -25,7 +33,6 @@ pub fn Auth::to_string(Self) -> String
 pub(all) struct Config {
   url : String?
   http_method : Method?
-  data : Json?
   base_url : String?
   timeout : Int?
   response_encoding : ResponseEncoding?
@@ -36,17 +43,21 @@ pub(all) struct Config {
   method_headers : Map[Method, @headers.Headers]?
   validate_status : ((Int) -> Bool)?
   allow_absolute_urls : Bool?
+  // private fields
 } derive(Default)
 pub fn Config::default() -> Self
 pub fn Config::new(String) -> Self
 pub fn Config::output(Self, &Logger) -> Unit
+pub fn Config::serialize_body(Self) -> SerializedBody
 pub fn Config::to_repr(Self) -> @debug.Repr
 pub fn Config::to_string(Self) -> String
 pub fn Config::with_allow_absolute_urls(Self, Bool) -> Self
 pub fn Config::with_auth(Self, String, String) -> Self
 pub fn Config::with_base_url(Self, String) -> Self
 pub fn Config::with_common_header(Self, StringView, String) -> Self
-pub fn Config::with_data(Self, Json) -> Self
+pub fn Config::with_data_from_form(Self, FormData) -> Self
+pub fn Config::with_data_from_json(Self, Json) -> Self
+pub fn Config::with_data_from_str(Self, String) -> Self
 pub fn Config::with_header(Self, StringView, String) -> Self
 pub fn Config::with_headers(Self, @headers.Headers) -> Self
 pub fn Config::with_method(Self, Method) -> Self
@@ -58,6 +69,32 @@ pub fn Config::with_url(Self, String) -> Self
 pub fn Config::with_validate_status(Self, (Int) -> Bool) -> Self
 pub impl Show for Config
 pub impl @debug.Debug for Config
+
+pub struct FormData {
+  // private fields
+}
+pub fn FormData::append_file(Self, StringView, StringView, Bytes, content_type? : String) -> Self
+pub fn FormData::append_text(Self, StringView, String) -> Self
+pub fn FormData::entries(Self) -> Array[(String, FormValue)]
+pub fn FormData::is_empty(Self) -> Bool
+pub fn FormData::length(Self) -> Int
+pub fn FormData::new() -> Self
+pub fn FormData::output(Self, &Logger) -> Unit
+pub fn FormData::to_repr(Self) -> @debug.Repr
+pub fn FormData::to_string(Self) -> String
+pub impl Show for FormData
+pub impl @debug.Debug for FormData
+
+pub(all) struct FormFile {
+  filename : String
+  content_type : String
+  bytes : Bytes
+}
+
+pub(all) enum FormValue {
+  Text(String)
+  File(FormFile)
+}
 
 pub(all) enum Method {
   Get
@@ -88,6 +125,11 @@ pub fn ResponseEncoding::equal(Self, Self) -> Bool
 pub fn ResponseEncoding::not_equal(Self, Self) -> Bool
 pub fn ResponseEncoding::to_repr(Self) -> @debug.Repr
 pub fn ResponseEncoding::to_string(Self) -> String
+
+pub(all) struct SerializedBody {
+  bytes : Bytes?
+  content_type : String?
+}
 
 // Type aliases
 pub using @headers {type Headers}

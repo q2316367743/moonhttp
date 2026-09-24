@@ -14,7 +14,6 @@ import {
   "moonbitlang/core/encoding/utf8",
   "q2316368843/moonhttp/config",
   "q2316368843/moonhttp/headers",
-  "q2316368843/moonhttp/merge",
   "q2316368843/moonhttp/transport",
   "q2316368843/moonhttp/url",
 }

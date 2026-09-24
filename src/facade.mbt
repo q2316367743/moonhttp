@@ -35,7 +35,18 @@
 ///
 /// 约定：凡是出现在公开签名里的类型，都在定义它的包里再导出一次，
 /// 因此各层之间不会出现「要用这个 API 却不知道类型该从哪 import」的情况。
-pub using @config {type Config, type Method, type Auth, type ResponseEncoding}
+/// 请求体的相关类型也一并再导出：`with_data_from_form` 的入参是 `FormData`，
+/// `serialize_body` 的返回值是 `SerializedBody`，用它们不该再 import 一个 `@config`。
+pub using @config {
+  type Config,
+  type Method,
+  type Auth,
+  type ResponseEncoding,
+  type FormData,
+  type FormValue,
+  type FormFile,
+  type SerializedBody,
+}
 
 ///|
 pub using @headers {type Headers}

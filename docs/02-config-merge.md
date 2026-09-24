@@ -6,13 +6,27 @@
 
 | 文件 | 职责 |
 |---|---|
+| `src/config/merge.mbt` | 四种合并策略、`merge_config`、`flatten_headers` |
+| `src/config/json_merge.mbt` | `params` 用的 JSON 深合并 |
+| `src/config/merge_test.mbt` | 逐条钉住合并语义的黑盒测试 |
+| `src/config/merge_wbtest.mbt` | 直接测四个策略函数本身的白盒测试（含只有包内造得出的部分凭据配置） |
 | `src/config/config.mbt` | `Config` 的字段定义与 `with_*` 构建器 |
 | `src/config/types.mbt` | `Auth` / `ResponseEncoding` 等小值类型 |
 | `src/config/default.mbt` | 内置默认值 `defaults()`（对应 axios 的 `lib/defaults/index.js`） |
-| `src/merge/merge.mbt` | 四种合并策略、`merge_config`、`flatten_headers` |
-| `src/merge/json_merge.mbt` | `params` 用的 JSON 深合并 |
-| `src/merge/merge_test.mbt` | 逐条钉住合并语义的黑盒测试 |
-| `src/merge/merge_wbtest.mbt` | 直接测四个策略函数本身的白盒测试 |
+
+### 为什么合并逻辑在 `config` 包里（而不是独立的 `merge` 包）
+
+它**曾经**是独立的 `merge` 包。`Config.data` 改成私有字段之后，这一层站不住了：
+
+- 构造一份合并结果必须写 `Config` 的每个字段，而**包外既不能写记录字面量、
+  也不能用记录展开**（编译器报 `Cannot use struct update syntax on struct Config
+  because it has private fields`），所以 `merge_config` 只能与 `Config` 同包；
+- 顺带得到一个更强的保证：往 `Config` 加字段却忘了在 `merge_config` 里选一档策略，
+  **是编译错误**，而不是静默地漏合并（`Config::default()` / 记录字面量必须列全字段）。
+
+`config` 因此同时是「配置的形状」与「配置的合并契约」，两层都是纯逻辑、都能用同步测试覆盖，
+`merge` 这个包名消失只是名字上的变化。唯一的连带影响：`flatten_headers` 也搬来了 `config`，
+`util` 的调用点从 `@merge.flatten_headers` 改成 `@config.flatten_headers`。
 
 ## 为什么不用「表驱动」
 
@@ -30,7 +44,9 @@ pub fn merge_config(base : Config, request : Config) -> Config {
 }
 ```
 
-好处是每个字段属于哪一档在源码里一眼可见，不需要再去查表；代价是新增字段必须记得同步这一处（见 `README.md` 的同步清单）。
+好处是每个字段属于哪一档在源码里一眼可见，不需要再去查表；而且**漏字段是编译错误**——
+记录字面量必须列全 `Config` 的所有字段（这条在 `data` 变成私有字段后更强了：
+跨包连字面量都写不出来，见下文「为什么合并逻辑在 `config` 包里」）。
 
 ## 四种策略
 
@@ -54,7 +70,7 @@ pub fn merge_config(base : Config, request : Config) -> Config {
 |---|---|---|
 | `url` | 只取请求级 | 默认值里的 url 永远不生效，也不回退 |
 | `http_method` | 只取请求级 | 见下方「方法缺省」 |
-| `data` | 只取请求级 | 同上 |
+| `data` | 只取请求级 | 默认值里的 body 同样不生效。字段是私有的，设置只能经 `with_data_from_str` / `with_data_from_json` / `with_data_from_form`（见 `07-request-body.md`） |
 | `base_url` | 请求优先/否则默认 | |
 | `timeout` | 请求优先/否则默认 | |
 | `response_encoding` | 请求优先/否则默认 | 内置默认值是 `Utf8`（axios 的 `responseEncoding: 'utf8'`） |
@@ -93,7 +109,7 @@ config.method = (config.method || this.defaults.method || 'get').toLowerCase();
 
 ### 数组是替换而不是拼接
 
-axios 的 `utils.merge` 只对普通对象递归，数组走 `val.slice()` 直接替换。所以默认值 `params: {"tags": ["a"]}` + 请求 `params: {"tags": ["b"]}` 的结果是 `["b"]`。这条由 `src/merge/merge_test.mbt` 的 "params arrays are replaced not concatenated" 用例钉住。
+axios 的 `utils.merge` 只对普通对象递归，数组走 `val.slice()` 直接替换。所以默认值 `params: {"tags": ["a"]}` + 请求 `params: {"tags": ["b"]}` 的结果是 `["b"]`。这条由 `src/config/merge_test.mbt` 的 "params arrays are replaced not concatenated" 用例钉住。
 
 ### 头是三层的，合并与拍平是两步
 

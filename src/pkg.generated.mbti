@@ -104,11 +104,19 @@ pub using @config {type Auth}
 
 pub using @config {type Config}
 
+pub using @config {type FormData}
+
+pub using @config {type FormFile}
+
+pub using @config {type FormValue}
+
 pub using @headers {type Headers}
 
 pub using @config {type Method}
 
 pub using @config {type ResponseEncoding}
+
+pub using @config {type SerializedBody}
 
 pub using @sse {type SseEvent}
 

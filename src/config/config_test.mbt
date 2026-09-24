@@ -9,7 +9,9 @@ test "default config has every field unset" {
   assert_eq(config.timeout, None)
   assert_eq(config.response_encoding, None)
   assert_eq(config.params, None)
-  assert_eq(config.data, None)
+  // 请求体是私有字段，读法只有 serialize_body；没设置时字节与建议类型都是 None
+  assert_eq(config.serialize_body().bytes, None)
+  assert_eq(config.serialize_body().content_type, None)
   assert_eq(config.headers, None)
   assert_eq(config.common_headers, None)
   assert_eq(config.method_headers, None)
@@ -27,14 +29,17 @@ test "builders set fields and chain" {
     .with_timeout(5000)
     .with_response_encoding(@config.ResponseEncoding::Latin1)
     .with_params({ "page": 1 })
-    .with_data({ "name": "moonbit" })
+    .with_data_from_json({ "name": "moonbit" })
   assert_eq(config.base_url, Some("https://api.example.com"))
   assert_eq(config.url, Some("/users"))
   assert_eq(config.http_method, Some(@config.Method::Post))
   assert_eq(config.timeout, Some(5000))
   assert_eq(config.response_encoding, Some(@config.ResponseEncoding::Latin1))
   assert_eq(config.params, Some({ "page": 1 }))
-  assert_eq(config.data, Some({ "name": "moonbit" }))
+  // 请求体的落位经序列化验证：JSON 值串成文本并给出建议的 Content-Type
+  let serialized = config.serialize_body()
+  assert_eq(serialized.bytes, Some(b"{\"name\":\"moonbit\"}"))
+  assert_eq(serialized.content_type, Some("application/json"))
 }
 
 ///|
@@ -49,19 +54,8 @@ test "builders do not mutate the source config" {
   assert_eq(template.headers, None)
 }
 
-///|
-/// 记录字面量展开（`{ ..Config::default(), field: ... }`）是「不走构建器」的写法，
-/// 两种写法必须等价，否则说明有字段没按 Option 语义设计。
-test "record spread is equivalent to builders" {
-  let config : @config.Config = {
-    ..@config.Config::default(),
-    url: Some("/users"),
-    http_method: Some(@config.Method::Get),
-  }
-  assert_eq(config.url, Some("/users"))
-  assert_eq(config.http_method, Some(@config.Method::Get))
-  assert_eq(config.base_url, None)
-}
+// 「记录展开与构建器等价」的用例在 config_wbtest.mbt：`Config.data` 私有之后，
+// 包外用不了记录字面量 / 记录展开（编译器直接拒绝），那种写法只有包内合法。
 
 ///|
 /// `with_header` 累加多条头，同名时后者覆盖前者（大小写不敏感）。
@@ -206,7 +200,7 @@ test "config rendering covers every provided field" {
     .with_timeout(1000)
     .with_response_encoding(@config.ResponseEncoding::Utf16le)
     .with_params({ "page": 1 })
-    .with_data({ "name": "moon" })
+    .with_data_from_json({ "name": "moon" })
     .with_auth("alice", "secret")
     .with_header("X-Trace", "1")
     .with_common_header("Accept", "application/json")

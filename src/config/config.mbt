@@ -35,8 +35,14 @@ pub(all) struct Config {
   url : String?
   /// 请求方法，缺省为 `Method::Get`
   http_method : Method?
-  /// 请求体；`Json::String` 原样发送，其它 Json 值序列化成 JSON 文本
-  data : Json?
+  /// 请求体：原样文本 / JSON / 表单三种形态，定义与序列化见 body.mbt、form.mbt。
+  ///
+  /// **这是本类型唯一的私有字段**：外部只能经 `with_data_from_str` /
+  /// `with_data_from_json` / `with_data_from_form` 设置，读法走 `serialize_body`。
+  /// 私有是为了让「设置 body」与「该补什么 Content-Type」绑在一起——
+  /// 直接塞一个 `Json` 值没法表达「它是裸文本还是 JSON 字面量」，
+  /// 也没法承载带文件的表单。
+  priv data : Body?
   /// 基础地址；`url` 是相对路径时会拼在它后面
   base_url : String?
   /// 超时毫秒数；`None` 或 `0` 表示不超时（与 axios 的 timeout 默认值 0 一致）。
@@ -105,12 +111,6 @@ pub fn Config::with_url(self : Config, url : String) -> Config {
 /// 设置请求方法。字段名是 `http_method`，这里保留 axios 风格的短名。
 pub fn Config::with_method(self : Config, meth : Method) -> Config {
   { ..self, http_method: Some(meth), }
-}
-
-///|
-/// 设置请求体。`Json::String` 会原样发送，其余 Json 值序列化为 JSON 文本。
-pub fn Config::with_data(self : Config, data : Json) -> Config {
-  { ..self, data: Some(data), }
 }
 
 ///|

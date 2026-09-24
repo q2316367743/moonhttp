@@ -50,7 +50,7 @@ import {
 
 ## 配置合并语义
 
-这是本项目的重点。行为严格对齐 axios `lib/core/mergeConfig.js`，但 MoonBit 没有运行时反射，因此不采用「字段 → 合并函数」查表，而是**每个字段显式写出它用哪一档策略**——打开 [`src/merge/merge.mbt`](src/merge/merge.mbt) 就能一眼看到每个字段的归属。
+这是本项目的重点。行为严格对齐 axios `lib/core/mergeConfig.js`，但 MoonBit 没有运行时反射，因此不采用「字段 → 合并函数」查表，而是**每个字段显式写出它用哪一档策略**——打开 [`src/config/merge.mbt`](src/config/merge.mbt) 就能一眼看到每个字段的归属。
 
 | 字段 | axios 策略 | 本项目行为 |
 |---|---|---|
@@ -78,7 +78,7 @@ import {
 2. 确定请求方法（缺省回退到实例默认值，再回退到 `GET`）
 3. `base_url` + `url` 拼成完整地址，再追加序列化后的 query
 4. 三层头拍平成一份（`common` < 按方法 < 请求级平铺）
-5. 序列化 body：`Json::String` 原样发送，其它 JSON 值序列化成 JSON 文本并补 `Content-Type`；有 `auth` 则补 `Authorization`
+5. 取请求体：`Config::serialize_body()` 给出字节与**建议**的 `Content-Type`（三种形态见下文「请求体」）；有 `auth` 则补 `Authorization`
 6. 交给传输层发送（`timeout > 0` 时套超时），并把响应体读到 EOF
 7. 按 `response_encoding` 把响应体字节解码成 `data`（**不做 JSON 解析**）
 8. 用 `validate_status` 校验状态码，失败则抛 `HttpError`
@@ -86,6 +86,46 @@ import {
 第 3～8 步的实现分别在 [`src/url/`](src/url/)、[`src/util/`](src/util/) 与 [`src/client.mbt`](src/client.mbt) 里：拼地址/头/body 与解码、判定是纯函数（`util`），把它们拼成 `Response`、翻译错误是根包与门面类型接壤的那一层。纯函数那部分可以脱离网络单独测试。第 6 步里「读全量」是 `request` 的选择，不需要完整响应体时改用 [`Client::stream`](#流式响应与-sse) 或 [`Client::sse`](#流式响应与-sse)。
 
 失败时抛出的 `HttpError` 会带上**已经收到的响应**：响应头到手之后才可能开始读响应体，所以读取阶段的任何失败（超时、断连）都不等于「什么都没收到」——状态行、响应头与失败前读到的部分正文都会挂在错误上，见[错误处理](#错误处理)。
+
+### 请求体：三种形态
+
+请求体只能经三个构建器设置，`data` 字段本身是私有的——**包外也写不了 `Config` 的记录字面量 /
+记录展开**（编译器直接拒绝），构造配置请一律走 `Config::new(url)` / `Config::default()` + `with_*`：
+
+| 构建器 | 发出去的内容 | 自动补的 `Content-Type` |
+|---|---|---|
+| `with_data_from_str(s)` | `s` 的 UTF-8 字节，一个字节不改 | 不补 |
+| `with_data_from_json(j)` | `j.stringify()` 后的 JSON 文本 | `application/json` |
+| `with_data_from_form(form)` | `multipart/form-data` 正文 | `multipart/form-data; boundary=...` |
+
+字符串那一路最容易踩：**「是不是 JSON」由你选的方法决定，不由值的类型决定**——
+`with_data_from_json("hi")` 发出去的是带引号的 `"hi"`（合法 JSON 字面量并补头），
+`with_data_from_str("hi")` 发出去的是裸 `hi`（不补头）。
+
+```moonbit nocheck
+// JSON：对象、数组、字符串都行
+api.request(@moonhttp.Config::new("/users")
+  .with_method(@moonhttp.Method::Post)
+  .with_data_from_json({ "name": "moon" }))
+
+// 表单 + 文件：文件按「字节 + 文件名」传入，库不读盘
+let form = @moonhttp.FormData::new()
+  .append_text("title", "假期照片")
+  .append_file("avatar", "a.png", bytes, content_type="image/png")
+api.request(@moonhttp.Config::new("/upload")
+  .with_method(@moonhttp.Method::Post)
+  .with_data_from_form(form))
+
+// 自己序列化好的载体（urlencoded、protobuf…）：发字节 + 自己设头
+api.request(@moonhttp.Config::new("/login")
+  .with_method(@moonhttp.Method::Post)
+  .with_data_from_str("user=alice&password=s3cret")
+  .with_header("Content-Type", "application/x-www-form-urlencoded"))
+```
+
+自动补的 `Content-Type` 是**补默认值**（`set_if_absent`）：你自己设了就一个字节都不改，
+代价是头与正文可能对不上（例如你钉死了 boundary）。表单的逐字节布局、
+`name` / `filename` 的 WHATWG 转义、boundary 的生成规则见 [`docs/07-request-body.md`](docs/07-request-body.md)。
 
 ### `data` 是解码后的原文
 
@@ -238,16 +278,15 @@ try {
 
 ## 包结构
 
-八个包构成无环依赖，每个包只依赖它真正需要的下层：
+七个包构成无环依赖，每个包只依赖它真正需要的下层：
 
 ```
 moonhttp/
 └── src/                     业务代码全部在 src/ 下（根目录只放模块元数据与文档）
     ├── (根包)               门面 + 编排：Client / create / request / stream / sse
     │                        / Response / StreamResponse / SseStream / HttpError
-    ├── config/              配置形状、Method、内置默认值、with_* 构建器
+    ├── config/              配置形状、Method、内置默认值、with_* 构建器、合并契约、请求体序列化
     ├── headers/             大小写不敏感的 Headers
-    ├── merge/               配置合并（四种策略）与头拍平
     ├── sse/                 SSE 事件解析（纯逻辑：吃字节、吐事件）
     ├── url/                 绝对地址判定、拼接、params 序列化
     ├── util/                纯函数层：拼请求、解码、Content-Type 与状态码判定
@@ -257,7 +296,9 @@ moonhttp/
 
 约定：凡是出现在公开签名里的类型，都在**用到它**的包里**再导出一次**（`pub using`），根包也再导出一份。所以日常使用只需要 `@moonhttp` 一个 import。
 
-拆包的依据是「签名里能不能不出现门面类型」：`config` / `headers` / `merge` / `url` / `sse` / `util` 都不依赖 `Response` / `StreamResponse` / `SseStream` / `HttpError`，所以能独立成包、能用同步测试覆盖、能脱离网络跑。反过来，这几个门面类型互相引用（`HttpError` 要带 `Response`，流式类型要抛 `HttpError`，`Client` 抛 `HttpError` 又返回这三个响应类型），必须同属根包——而且**只能**在根包：`pub using` 再导出不了错误构造子，`HttpError` 一离开根包，`catch { @moonhttp.HttpError(info) }` 就写不出来了（实验证据见 `docs/01-architecture.md`）。
+拆包的依据是「签名里能不能不出现门面类型」：`config` / `headers` / `url` / `sse` / `util` 都不依赖 `Response` / `StreamResponse` / `SseStream` / `HttpError`，所以能独立成包、能用同步测试覆盖、能脱离网络跑。反过来，这几个门面类型互相引用（`HttpError` 要带 `Response`，流式类型要抛 `HttpError`，`Client` 抛 `HttpError` 又返回这三个响应类型），必须同属根包——而且**只能**在根包：`pub using` 再导出不了错误构造子，`HttpError` 一离开根包，`catch { @moonhttp.HttpError(info) }` 就写不出来了（实验证据见 `docs/01-architecture.md`）。
+
+配置合并跟着 `config` 走（它原来是一个独立的 `merge` 包）：`Config` 有私有字段（请求体）之后，别的包连 `{ ..config, x: ... }` 这种记录展开都写不出来，而合并必须逐字段构造新配置——顺带得到一条更强的保证，往 `Config` 加字段忘了配合并策略是**编译错误**（理由见 `docs/02-config-merge.md`）。
 
 **根包因此拆成三个源文件**（同一个包，只是为了别写成一个超长文件）：`client.mbt`（`Client` + 三个入口 + 接壤层）、`http_error.mbt`（错误类型与所有抛错点）、`facade.mbt`（对外响应类型与再导出）。AGENTS.md 的 RL-04 为根包文件放宽到 1000 行，超限的文件在文件头声明例外；子包仍守 300 行（`util/` 两个文件各不足 100 行）。
 
@@ -270,10 +311,11 @@ moonhttp/
 - `get` / `post` / `put` / `delete` / `head` / `options` / `patch` 等快捷方法（都是 `request` 的薄封装，见「后续扩展」）
 - 拦截器（`interceptors`）、取消（`CancelToken` / `signal`）
 - 自动跟随重定向（`maxRedirects`）、代理（`proxy`）
-- 上传进度（`onUploadProgress`）：请求体是一次性字节，不支持流式上传
+- 上传进度（`onUploadProgress`）：请求体是一次性字节，不支持流式上传（表单含文件时整块驻留内存）
 - 下载进度回调（`onDownloadProgress`）：没有回调字段，但流式路径下按 `read_some` 每块大小累加即可自己统计
 - SSE 自动重连：事件里带了 `id` / `retry`（重连所需的全部状态），但没有按 `retry` 间隔自动重订阅、也不自动带 `Last-Event-ID`——重连策略交给上层
-- 请求/响应转换器（`transformRequest` / `transformResponse`）——目前 body 序列化与响应解析固定为内置行为
+- 请求/响应转换器（`transformRequest` / `transformResponse`）：请求体固定为三种形态（`with_data_from_str` / `with_data_from_json` / `with_data_from_form`，见「请求体」），响应体固定为原文
+- `application/x-www-form-urlencoded` 的自动编码（axios 传 `URLSearchParams` 即可）：自己拼字符串 + `with_data_from_str` + 自己设 `Content-Type`，一样一行
 - `withCredentials` / `xsrfCookieName` / `xsrfHeaderName`（本项目不管理 cookie）
 - 响应 cookie：底层的响应 cookie 单独存放，没有并入 `headers`，所以读不到 `Set-Cookie`
 - 连接复用：每次请求新建连接
@@ -282,6 +324,7 @@ moonhttp/
 ### 与 axios 的其它差异
 
 - `Config` 的 `method` 字段在本项目里叫 `http_method`（保留字原因，见上文）。
+- `Config` 的请求体是**私有字段**（构造配置只能用构建器，见「请求体」）；`multipart/form-data` 的 `name` / `filename` 按 WHATWG 规则转义（`"` → `%22`、CR / LF → `%0D` / `%0A`），axios 依赖的 node `form-data` 不做转义。
 - `Headers` 内部以小写保存头名（写入时的原始拼写会被记住并用于输出），但不支持 axios 用 `false` 表示「禁止被同名默认值覆盖」的哨兵值。
 - `Response::data` 是 `String`（响应体按 `response_encoding` 解码后的原文），不是 axios 的 `any`：本项目不做 `responseType` / `transformResponse` / `forcedJSONParsing` 那一套自动解析，要 JSON 请自己 `@json.parse(response.data)`。二进制内容读 `Response::raw`（或改走 `Client::stream`）。
 - 没有可变的全局默认值。axios 的全局 `axios.defaults` 在本项目里对应 `@config.defaults()`（固定的内置默认值）；要定制请用 `create(...)` 或 `client.create(...)` 派生。

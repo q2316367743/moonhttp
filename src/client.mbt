@@ -46,7 +46,7 @@ pub fn Client::new(
   transport? : &@transport.Transport,
 ) -> Client {
   let defaults = match config {
-    Some(config) => @merge.merge_config(@config.defaults(), config)
+    Some(config) => @config.merge_config(@config.defaults(), config)
     None => @config.defaults()
   }
   let transport : &@transport.Transport = match transport {
@@ -64,7 +64,7 @@ pub fn Client::new(
 /// 该实例自己的 defaults、与全局 defaults 无关，这里的行为一致。
 pub fn Client::create(self : Client, config : Config) -> Client {
   {
-    defaults: @merge.merge_config(self.defaults, config),
+    defaults: @config.merge_config(self.defaults, config),
     transport: self.transport,
   }
 }
@@ -106,14 +106,12 @@ pub async fn Client::request(
   config : Config,
 ) -> Response raise HttpError {
   // 1. 合并配置
-  let merged = @merge.merge_config(self.defaults, config)
+  let merged = @config.merge_config(self.defaults, config)
   // 2. 方法缺省时先回退到实例默认值，再回退到 HTTP 的默认约定 GET
-  let merged = {
-    ..merged,
-    http_method: Some(
-      @util.resolve_method(merged.http_method, self.defaults.http_method),
-    ),
-  }
+  //    （`Config` 有私有字段，包外写不了记录展开，回填只能用构建器）
+  let merged = merged.with_method(
+    @util.resolve_method(merged.http_method, self.defaults.http_method),
+  )
   // 3. 地址、头、body
   let prepared = prepare_request(merged)
   // 4. 发送：这一步失败说明响应头还没到手，错误里没有响应可挂。
@@ -163,13 +161,10 @@ async fn Client::open_stream(
   self : Client,
   config : Config,
 ) -> (@transport.RawResponse, Config) raise HttpError {
-  let merged = @merge.merge_config(self.defaults, config)
-  let merged = {
-    ..merged,
-    http_method: Some(
-      @util.resolve_method(merged.http_method, self.defaults.http_method),
-    ),
-  }
+  let merged = @config.merge_config(self.defaults, config)
+  let merged = merged.with_method(
+    @util.resolve_method(merged.http_method, self.defaults.http_method),
+  )
   let prepared = prepare_request(merged)
   let raw = self.transport.send(prepared) catch {
     error => raise transport_error(error, merged, None)

@@ -1,11 +1,11 @@
-///|
-/// 引入配置相关类型，让本包的签名可以直接写短名；
-/// 这些类型也随本包一起再导出，使用者不必层层 import。
-pub using @config {type Config, type Method, type Auth, type ResponseEncoding}
-
-///|
-/// 同上，`Headers` 出现在 `flatten_headers` 的签名里。
-pub using @headers {type Headers}
+// 配置合并契约（对应 axios `lib/core/mergeConfig.js`），契约细节见 docs/02-config-merge.md。
+//
+// 它曾经是独立的 `merge` 包，现在与 `Config` 同包：`Config.data` 是私有字段之后，
+// 只有 config 包能构造 `Config`（跨包的记录字面量与记录展开都会被编译器拒绝，
+// 报 `cannot use struct update syntax ... because it has private fields`），
+// 而 `merge_config` 必须逐字段构造出一份新配置。
+// 同包的额外好处是「字段 → 策略」的同步被编译器强制：往 `Config` 加字段而忘了
+// 在这里选一档策略，是编译错误，不是静默漏合并。
 
 ///|
 /// 策略 1：只取请求级（对应 axios `mergeConfig` 的 `valueFromConfig2`）。

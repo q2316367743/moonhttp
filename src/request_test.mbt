@@ -68,7 +68,7 @@ async test "request headers win over layered defaults" {
 }
 
 ///|
-/// body 的序列化：Json 对象变成 JSON 文本并自动补 `Content-Type`，
+/// body 的序列化：JSON 值变成 JSON 文本并自动补 `Content-Type`，
 /// 但用户显式设置的类型不会被盖掉。
 async test "json body sets content type only when absent" {
   let (client, mock) = client_with(raw_response(200, "OK", "{}"))
@@ -76,7 +76,7 @@ async test "json body sets content type only when absent" {
     client.request(
       @moonhttp.Config::new("/users")
       .with_method(@moonhttp.Method::Post)
-      .with_data({ "name": "moon" }),
+      .with_data_from_json({ "name": "moon" }),
     ),
   )
   let sent = mock.last_request().unwrap()
@@ -87,7 +87,7 @@ async test "json body sets content type only when absent" {
     client.request(
       @moonhttp.Config::new("/users")
       .with_method(@moonhttp.Method::Post)
-      .with_data({ "name": "moon" })
+      .with_data_from_json({ "name": "moon" })
       .with_header("Content-Type", "application/vnd.custom+json"),
     ),
   )
@@ -105,12 +105,88 @@ async test "string body is sent verbatim without content type" {
     client.request(
       @moonhttp.Config::new("/text")
       .with_method(@moonhttp.Method::Post)
-      .with_data("raw text body"),
+      .with_data_from_str("raw text body"),
     ),
   )
   let sent = mock.last_request().unwrap()
   assert_eq(@utf8.decode_lossy(sent.body.unwrap()), "raw text body")
   assert_eq(sent.headers.get("Content-Type"), None)
+  // 想发 JSON 文本就自己声明类型：这条路径发出去的东西一个字节都不动
+  ignore(
+    client.request(
+      @moonhttp.Config::new("/text")
+      .with_method(@moonhttp.Method::Post)
+      .with_data_from_str("{\"pre\":\"serialized\"}")
+      .with_header("Content-Type", "application/json"),
+    ),
+  )
+  let sent = mock.last_request().unwrap()
+  assert_eq(@utf8.decode_lossy(sent.body.unwrap()), "{\"pre\":\"serialized\"}")
+  assert_eq(sent.headers.get("Content-Type"), Some("application/json"))
+}
+
+///|
+/// 表单 body 走 `multipart/form-data`：头里声明的 boundary 与正文里的分隔符
+/// 是同一个，文本项与文件项都在（字节级的精确断言在 `config/body_test.mbt`）。
+async test "form body goes out as multipart" {
+  let (client, mock) = client_with(raw_response(200, "OK", "{}"))
+  let form = @moonhttp.FormData::new()
+    .append_text("title", "假期")
+    .append_file("avatar", "a.png", b"\x89PNG", content_type="image/png")
+  ignore(
+    client.request(
+      @moonhttp.Config::new("/upload")
+      .with_method(@moonhttp.Method::Post)
+      .with_data_from_form(form),
+    ),
+  )
+  let sent = mock.last_request().unwrap()
+  let content_type = sent.headers.get("Content-Type").unwrap()
+  assert_true(
+    content_type.contains("multipart/form-data; boundary=----moonhttp-"),
+  )
+  // boundary 从头里取出来，正文必须严格按它分段，并以结束分隔符收尾
+  let boundary = content_type.after("boundary=").unwrap().to_owned()
+  let body = @utf8.decode_lossy(sent.body.unwrap())
+  assert_true(
+    body.contains(
+      "--" +
+      boundary +
+      "\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\n假期\r\n",
+    ),
+  )
+  assert_true(
+    body.contains(
+      "Content-Disposition: form-data; name=\"avatar\"; filename=\"a.png\"\r\nContent-Type: image/png\r\n\r\n",
+    ),
+  )
+  assert_true(body.contains("--" + boundary + "--\r\n"))
+}
+
+///|
+/// 表单的 `Content-Type` 同样是「补默认值」：用户显式写了就一个字节都不改。
+///
+/// 代价是头与正文可能对不上（正文用的仍是自动生成的 boundary）——
+/// 这是调用方自己钉死类型时必须承担的，库不做「帮你改头」这种事。
+async test "user content type wins over the form default" {
+  let (client, mock) = client_with(raw_response(200, "OK", "{}"))
+  ignore(
+    client.request(
+      @moonhttp.Config::new("/upload")
+      .with_method(@moonhttp.Method::Post)
+      .with_data_from_form(@moonhttp.FormData::new().append_text("a", "1"))
+      .with_header("Content-Type", "multipart/form-data; boundary=mine"),
+    ),
+  )
+  let sent = mock.last_request().unwrap()
+  assert_eq(
+    sent.headers.get("Content-Type"),
+    Some("multipart/form-data; boundary=mine"),
+  )
+  // 正文仍按自己生成的 boundary 编码
+  let body = @utf8.decode_lossy(sent.body.unwrap())
+  assert_false(body.contains("boundary=mine"))
+  assert_true(body.contains("----moonhttp-"))
 }
 
 ///|

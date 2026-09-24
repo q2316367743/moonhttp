@@ -5,6 +5,9 @@
 | 文件 | 职责 |
 |---|---|
 | `src/client.mbt` | `Client::request` / `Client::stream` / `Client::sse` 的编排：合并 → 定方法 → 发送 →（读全量 / 交还流）→ 解码 → 校验 |
+| `src/config/merge.mbt` | 合并契约：四种策略、`merge_config`、`flatten_headers`（为什么在 `config` 包见 `02-config-merge.md`） |
+| `src/config/body.mbt` | 请求体的三种形态与序列化：`serialize_body`（字节 + 建议的 `Content-Type`） |
+| `src/config/form.mbt` | 表单的 `multipart/form-data` 编码（详见 `07-request-body.md`） |
 | `src/util/request.mbt` | 请求侧的纯函数：`resolve_method`、`build_prepared_request`（地址、头、body 的拼装）与只给它用的 `basic_auth` |
 | `src/util/response.mbt` | 响应侧的纯函数：`decode_body`、`declares_event_stream`（与只给它用的 `media_type`）、`status_allowed` |
 | `src/client.mbt` | 与门面类型接壤的那两个函数：`prepare_request`（把纯函数的 `None` 翻译成 `InvalidUrl` 错误）、`build_response` |
@@ -24,7 +27,7 @@
 2. **确定方法**：合并结果 → 实例默认值 → `Method::Get`。
 3. **拼完整地址**：`build_full_path(base_url, url, allow_absolute_urls)`，再 `build_url(url, params)` 追加 query。
 4. **拍平头**：`flatten_headers(common_headers, method_headers, headers, method)`，优先级 `common` < 按方法 < 请求级平铺。
-5. **序列化 body**：`Json::String` 原样发送；其它 JSON 值 `stringify()` 并补 `Content-Type: application/json`；有 `auth` 则补 `Authorization`。补默认头一律用 `Headers::set_if_absent`，用户显式设置的同名头永远优先。
+5. **取请求体**：`Config::serialize_body()` 给出字节与**建议**的 `Content-Type`（序列化在 `config` 包内完成，见 `07-request-body.md`），有 `auth` 则补 `Authorization`。补默认头一律用 `Headers::set_if_absent`，用户显式设置的同名头永远优先。
 6. **发送**：交给 `Transport::send`（契约见 `05-transport.md`）。失败映射见 `04-errors.md`。
 7. **解码响应体**：按 `response_encoding` 把字节解成 `Response::data`（见下）。
 8. **校验状态码**：`validate_status` 不通过则抛 `HttpError`。
@@ -98,15 +101,23 @@ URL 里已有 `?` 时用 `&` 续接，否则用 `?`；`#fragment` 会被**丢弃
 
 ## body 序列化与自动补头
 
-| `data` 的取值 | 发送内容 | 自动补的头 |
+`Config` 的请求体是**私有字段**，只能经三个构建器设置，字节与建议类型由 `Config::serialize_body()` 产出：
+
+| 构建器 | 发送内容 | 自动补的头 |
 |---|---|---|
-| `None` | 不带 body | — |
-| `Json::String(s)` | `s` 的 UTF-8 字节，原样 | 不推断类型 |
-| 其它 `Json` 值 | `stringify()` 后的 UTF-8 字节 | `Content-Type: application/json` |
+| （未设置） | 不带 body | — |
+| `with_data_from_str(s)` | `s` 的 UTF-8 字节，原样 | 不推断类型 |
+| `with_data_from_json(j)` | `j.stringify()` 后的 UTF-8 字节 | `Content-Type: application/json` |
+| `with_data_from_form(form)` | `multipart/form-data` 正文（含 boundary） | `Content-Type: multipart/form-data; boundary=...` |
+
+序列化为什么在 `config` 包而不是这里：`data` 私有，只有 `config` 包能 match 三种形态；
+而「body 怎么变成字节」本就是请求体类型自己的事。本层只做最后一步——把给出的建议类型
+用 `set_if_absent` 落到头上。三种形态的细节（含 `Json::String` 的分水岭与 multipart 布局）
+见 `07-request-body.md`。
 
 `auth` 有值时补 `Authorization: Basic base64(username:password)`，缺一半的用户名/密码按空串处理。
 
-**补头一律用 `set_if_absent`**：用户显式设置的同名头永远优先。这条由 `src/request_test.mbt` 的两个用例守着（"json body sets content type only when absent"、"auth produces basic authorization header" 的第二个断言）。
+**补头一律用 `set_if_absent`**：用户显式设置的同名头永远优先。这条由 `src/request_test.mbt` 的三个用例守着（"json body sets content type only when absent"、"auth produces basic authorization header" 的第二个断言、"user content type wins over the form default"）。
 
 ## 响应体解码
 

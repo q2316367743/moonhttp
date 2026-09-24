@@ -47,7 +47,8 @@ fn basic_auth(auth : Auth) -> String {
 /// 这里承担三件事，顺序与 axios 一致：
 /// 1. `base_url` + `url` 拼成完整地址，再追加序列化后的 query；
 /// 2. 把三层头（common < 按方法 < 请求级平铺）拍平成一份；
-/// 3. 序列化请求体，并按需补 `Content-Type` 与 `Authorization`。
+/// 3. 取请求体字节（`Config::serialize_body`，序列化在 config 包内完成），
+///    并按需补 `Content-Type` 与 `Authorization`。
 ///
 /// 补默认头一律用 `set_if_absent`：用户显式设置的同名头永远优先，
 /// 否则自动补的 `Content-Type: application/json` 会盖掉用户写的表单类型。
@@ -68,23 +69,21 @@ pub fn build_prepared_request(config : Config) -> @transport.PreparedRequest? {
   // query 在地址拼接完成之后追加，避免参数被当成路径的一部分。
   let url = @url.build_url(url, config.params)
   let meth = config.http_method.unwrap_or(Method::Get)
-  let mut headers = @merge.flatten_headers(
+  let mut headers = @config.flatten_headers(
     config.common_headers,
     config.method_headers,
     config.headers,
     meth,
   )
-  let body = match config.data {
-    None => None
-    // 字符串按原文发送，且不推断 Content-Type：调用方可能就是想发一段
-    // 纯文本或一段自己序列化好的载体。
-    Some(Json::String(text)) => Some(@utf8.encode(text))
-    Some(data) => {
-      // 其它 Json 值按 axios 默认的 transformRequest 处理：序列化成 JSON 文本，
-      // 并补上 Content-Type: application/json（不覆盖用户已设置的值）。
-      headers = headers.set_if_absent("Content-Type", "application/json")
-      Some(@utf8.encode(data.stringify()))
-    }
+  // 请求体的字节与建议的 Content-Type 由 config 包产出（`Config::serialize_body`）：
+  // body 的三种形态（原样文本 / JSON / 表单）只有 config 包认识，
+  // 这里只负责把建议的类型落到头上，仍是「补默认值」而非覆盖用户显式设置。
+  let serialized = config.serialize_body()
+  let body = serialized.bytes
+  match serialized.content_type {
+    Some(content_type) =>
+      headers = headers.set_if_absent("Content-Type", content_type)
+    None => ()
   }
   let headers = match config.auth {
     // Basic 认证同样不覆盖用户自己设置的 Authorization。

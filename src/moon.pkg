@@ -9,7 +9,6 @@ import {
   "moonbitlang/core/debug",
   "q2316368843/moonhttp/config",
   "q2316368843/moonhttp/headers",
-  "q2316368843/moonhttp/merge",
   "q2316368843/moonhttp/sse",
   "q2316368843/moonhttp/transport",
   "q2316368843/moonhttp/util",
