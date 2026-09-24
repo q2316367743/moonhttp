@@ -78,7 +78,7 @@ import {
 2. 确定请求方法（缺省回退到实例默认值，再回退到 `GET`）
 3. `base_url` + `url` 拼成完整地址，再追加序列化后的 query
 4. 三层头拍平成一份（`common` < 按方法 < 请求级平铺）
-5. 取请求体：`Config::serialize_body()` 给出字节与**建议**的 `Content-Type`（三种形态见下文「请求体」）；有 `auth` 则补 `Authorization`
+5. 取请求体：`Config::serialize_body()` 给出字节与**建议**的 `Content-Type`（四种形态见下文「请求体」）；有 `auth` 则补 `Authorization`
 6. 交给传输层发送（`timeout > 0` 时套超时），并把响应体读到 EOF
 7. 用 `validate_status` 校验状态码，失败则抛 `HttpError`
 
@@ -86,9 +86,9 @@ import {
 
 失败时抛出的 `HttpError` 会带上**已经收到的响应**：响应头到手之后才可能开始读响应体，所以读取阶段的任何失败（超时、断连）都不等于「什么都没收到」——状态行、响应头与失败前读到的部分正文都会挂在错误上，见[错误处理](#错误处理)。
 
-### 请求体：三种形态
+### 请求体：四种形态
 
-请求体只能经三个构建器设置，`data` 字段本身是私有的——**包外也写不了 `Config` 的记录字面量 /
+请求体只能经四个构建器设置，`data` 字段本身是私有的——**包外也写不了 `Config` 的记录字面量 /
 记录展开**（编译器直接拒绝），构造配置请一律走 `Config::new(url)` / `Config::default()` + `with_*`：
 
 | 构建器 | 发出去的内容 | 自动补的 `Content-Type` |
@@ -96,6 +96,7 @@ import {
 | `with_data_from_str(s)` | `s` 的 UTF-8 字节，一个字节不改 | 不补 |
 | `with_data_from_json(j)` | `j.stringify()` 后的 JSON 文本 | `application/json` |
 | `with_data_from_form(form)` | `multipart/form-data` 正文 | `multipart/form-data; boundary=...` |
+| `with_data_from_urlencoded(j)` | `a=1&b=2` 形式（与 `params` 同一套编码） | `application/x-www-form-urlencoded` |
 
 字符串那一路最容易踩：**「是不是 JSON」由你选的方法决定，不由值的类型决定**——
 `with_data_from_json("hi")` 发出去的是带引号的 `"hi"`（合法 JSON 字面量并补头），
@@ -107,7 +108,12 @@ api.request(@moonhttp.Config::new("/users")
   .with_method(@moonhttp.Method::Post)
   .with_data_from_json({ "name": "moon" }))
 
-// 表单 + 文件：文件按「字节 + 文件名」传入，库不读盘
+// 普通表单（a=1&b=2）：与 params 用的是同一个序列化器
+api.request(@moonhttp.Config::new("/login")
+  .with_method(@moonhttp.Method::Post)
+  .with_data_from_urlencoded({ "user": "alice", "password": "s3cret" }))
+
+// 带文件的表单：文件按「字节 + 文件名」传入，库不读盘
 let form = @moonhttp.FormData::new()
   .append_text("title", "假期照片")
   .append_file("avatar", "a.png", bytes, content_type="image/png")
@@ -115,12 +121,15 @@ api.request(@moonhttp.Config::new("/upload")
   .with_method(@moonhttp.Method::Post)
   .with_data_from_form(form))
 
-// 自己序列化好的载体（urlencoded、protobuf…）：发字节 + 自己设头
-api.request(@moonhttp.Config::new("/login")
+// 内置规则不合用时（例如 protobuf，或后端要 tags=a&tags=b 这种重复平键）：自己拼 + 自己设头
+api.request(@moonhttp.Config::new("/other")
   .with_method(@moonhttp.Method::Post)
-  .with_data_from_str("user=alice&password=s3cret")
+  .with_data_from_str("tags=a&tags=b")
   .with_header("Content-Type", "application/x-www-form-urlencoded"))
 ```
+
+`with_data_from_urlencoded` 的数组/嵌套对象走 query 那套括号约定（`tags%5B%5D=a&tags%5B%5D=b`），
+`null` 键跳过、空格写成 `+`；顶层不是对象时等于一份空正文。
 
 自动补的 `Content-Type` 是**补默认值**（`set_if_absent`）：你自己设了就一个字节都不改，
 代价是头与正文可能对不上（例如你钉死了 boundary）。表单的逐字节布局、
@@ -323,8 +332,7 @@ moonhttp/
 - 上传进度（`onUploadProgress`）：请求体是一次性字节，不支持流式上传（表单含文件时整块驻留内存）
 - 下载进度回调（`onDownloadProgress`）：没有回调字段，但流式路径下按 `read_some` 每块大小累加即可自己统计
 - SSE 自动重连：事件里带了 `id` / `retry`（重连所需的全部状态），但没有按 `retry` 间隔自动重订阅、也不自动带 `Last-Event-ID`——重连策略交给上层
-- 请求/响应转换器（`transformRequest` / `transformResponse`）：请求体固定为三种形态（`with_data_from_str` / `with_data_from_json` / `with_data_from_form`，见「请求体」），响应体交出去的是原始字节，要文本/对象分别用 `text()` / `json()`（见「响应体怎么读」）
-- `application/x-www-form-urlencoded` 的自动编码（axios 传 `URLSearchParams` 即可）：自己拼字符串 + `with_data_from_str` + 自己设 `Content-Type`，一样一行
+- 请求/响应转换器（`transformRequest` / `transformResponse`）：请求体固定为四种形态（`with_data_from_str` / `with_data_from_json` / `with_data_from_form` / `with_data_from_urlencoded`，见「请求体」），响应体交出去的是原始字节，要文本/对象分别用 `text()` / `json()`（见「响应体怎么读」）
 - `withCredentials` / `xsrfCookieName` / `xsrfHeaderName`（本项目不管理 cookie）
 - 响应 cookie：底层的响应 cookie 单独存放，没有并入 `headers`，所以读不到 `Set-Cookie`
 - 连接复用：每次请求新建连接
@@ -334,6 +342,7 @@ moonhttp/
 
 - `Config` 的 `method` 字段在本项目里叫 `http_method`（保留字原因，见上文）。
 - `Config` 的请求体是**私有字段**（构造配置只能用构建器，见「请求体」）；`multipart/form-data` 的 `name` / `filename` 按 WHATWG 规则转义（`"` → `%22`、CR / LF → `%0D` / `%0A`），axios 依赖的 node `form-data` 不做转义。
+- `application/x-www-form-urlencoded` 只提供一种约定（与 `params` 共用的那套：数组/嵌套走 `tags%5B%5D=a` 括号形式、空格写成 `+`）。axios 会按 `URLSearchParams` / 对象 / `formSerializer` 选项给出多种输出；本项目要换约定就自己拼字符串 + 自己设头。
 - `Headers` 内部以小写保存头名（写入时的原始拼写会被记住并用于输出），但不支持 axios 用 `false` 表示「禁止被同名默认值覆盖」的哨兵值。
 - 响应体没有默认解码的字段：`Response` 只保存原始字节，`text()`（按 `response_encoding` 解码）、`bytes()`（精确字节）、`json()`（解码后 `@json.parse`）由你显式选。axios 的 `res.data` 是 `any`，靠 `responseType` / `transformResponse` / `forcedJSONParsing` 自动解析；本项目不做那一套，`json()` 不看 `Content-Type`、失败抛 `@json.ParseError`。二进制内容用 `bytes()`（或改走 `Client::stream`）。
 - 没有可变的全局默认值。axios 的全局 `axios.defaults` 在本项目里对应 `@config.defaults()`（固定的内置默认值）；要定制请用 `create(...)` 或 `client.create(...)` 派生。

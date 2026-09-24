@@ -8,11 +8,11 @@
 |---|---|---|---|
 | 01 | [架构与分层](01-architecture.md) | 目录结构、七个包的职责与依赖方向、为什么把 async 关在一层、为什么测试文件不能挪出包目录、为什么实现层不能整体搬进子包（`pub using` 再导出不了错误构造子）而纯逻辑可以独立成 `util`、如何新增一个配置字段或一个新包 | 要动手改代码之前 |
 | 02 | [配置合并契约](02-config-merge.md) | axios `mergeConfig` 四种策略在本项目的落法、字段归属表、`Option` 与 `undefined` 的对应、数组替换语义、为什么合并逻辑必须与 `Config` 同包（私有字段与记录字面量的硬约束） | 要改合并行为、或要新增配置字段时 |
-| 03 | [请求管线](03-request-pipeline.md) | 三种入口（`request` / `stream` / `sse`）的分工、八个步骤、URL 拼接与 query 序列化规则、请求体三种形态与自动补头、`Response` 的三种读法（`text` / `bytes` / `json`）与 `response_encoding` 的作用面（为什么没有默认解码、为什么不自动解析 JSON）、状态码校验 | 要改请求行为（URL、头的优先级、body 处理、响应体读取）时 |
+| 03 | [请求管线](03-request-pipeline.md) | 三种入口（`request` / `stream` / `sse`）的分工、八个步骤、URL 拼接与 query 序列化规则、请求体四种形态与自动补头、`Response` 的三种读法（`text` / `bytes` / `json`）与 `response_encoding` 的作用面（为什么没有默认解码、为什么不自动解析 JSON）、状态码校验 | 要改请求行为（URL、头的优先级、body 处理、响应体读取）时 |
 | 04 | [错误契约](04-errors.md) | `HttpError` / `ErrorCode` 形状、与 axios 错误码的对应、各类错误的触发点、错误里带什么上下文（完整响应 / 失败前已收到的部分 / `None`） | 要新增错误分类或调整错误信息时 |
 | 05 | [传输层契约](05-transport.md) | `Transport` trait 与 `PreparedRequest` / `RawResponse` 字段含义、`ResponseBody` 响应体流的读语义（含 `read_all_partial` 的半截字节）与超时语义、`AsyncHttpTransport` 的实现注意事项、如何写自定义传输 | 要换 HTTP 实现、加连接池 / 代理 / 上传进度，或要动流式读取时 |
 | 06 | [SSE 事件解析](06-sse.md) | 为什么 `read_until("\n\n")` 切不了 SSE、为什么解析器独立成包、为什么按事件读是独立类型、`SseEvent` / `SseParser` 的公开 API、EventSource 规范逐条落点、`id` / `retry` 的持久状态、跨块安全与 `finish()`、不自动重连的边界 | 要改 SSE 行为、接新的 SSE 服务端，或要加自动重连时 |
-| 07 | [请求体](07-request-body.md) | 为什么 `Config.data` 是私有字段（`Json::String` 的歧义、Content-Type 必须与 body 配套）、三个 `with_data_from_*` 的线上格式、`multipart/form-data` 的逐字节布局与 `name` / `filename` 转义、文件怎么给（只收字节、库不读盘）、与 axios 的差异 | 要改请求体行为、加新的 body 形态、或接文件上传时 |
+| 07 | [请求体](07-request-body.md) | 为什么 `Config.data` 是私有字段（`Json::String` 的歧义、Content-Type 必须与 body 配套）、四个 `with_data_from_*` 的线上格式、`multipart/form-data` 的逐字节布局与 `name` / `filename` 转义、文件怎么给（只收字节、库不读盘）、`urlencoded` 的括号约定与它复用的 query 序列化器、与 axios 的差异 | 要改请求体行为、加新的 body 形态、或接文件上传时 |
 
 ## 改动时的同步清单
 
@@ -28,4 +28,4 @@
 8. **新增失败路径（抛 `HttpError` 的地方）**：先问一句「这时已经收到多少响应」。响应头到手之后的失败一律把已经收到的响应挂上去（`transport_error(error, config, Some(...))` / `make_error(..., Some(response))`），不要图省事传 `None`；读到一半失败时用 `ResponseBody::read_all_partial` 保住已读到的字节。这条规则与用例见 `04-errors.md`。
 9. **改 SSE 解析**：解析规则在 `src/sse/`（独立包，同步测试在 `src/sse/sse_test.mbt`），接到 HTTP 上的部分在 `src/facade.mbt`（`SseStream`）/ `src/client.mbt`（`Client::sse`）。先补用例再改代码；CRLF 家族（裸 CR 收尾、CR 跨块）最容易改坏。同步 `06-sse.md`。
 10. **想给 `StreamResponse` 加「按事件读」的方法**：不要这样做。它是下载用的原始字节流，把二进制喂给事件解析器只会解出无意义的东西；SSE 有独立的 `SseStream` 与 `Client::sse`，理由见 `06-sse.md`。
-11. **改请求体（结构 / 编码 / 新增形态）**：形态与序列化在 `src/config/body.mbt`，表单的 multipart 编码在 `src/config/form.mbt`，落头在 `src/util/request.mbt`（只做 `set_if_absent`），渲染在 `src/config/render.mbt`。字节级用例在 `src/config/body_test.mbt`，端到端在 `src/request_test.mbt`。**别动的前提**：`data` 是私有字段（构造配置只能走构建器，包外的记录字面量/展开会被编译器拒绝）、`Json::String` 的语义由构建器决定（`with_data_from_json("hi")` 发带引号的 `"hi"`）、用户显式设的 `Content-Type` 永远优先。同步 `07-request-body.md` 与 `03-request-pipeline.md` 的表格。
+11. **改请求体（结构 / 编码 / 新增形态）**：形态与序列化在 `src/config/body.mbt`，表单的 multipart 编码在 `src/config/form.mbt`，urlencoded 复用的是 `src/url/build_url.mbt` 的 `serialize_params`，落头在 `src/util/request.mbt`（只做 `set_if_absent`），渲染在 `src/config/render.mbt`。字节级用例在 `src/config/body_test.mbt`，端到端在 `src/request_test.mbt`。**别动的前提**：`data` 是私有字段（构造配置只能走构建器，包外的记录字面量/展开会被编译器拒绝）、`Json::String` 的语义由构建器决定（`with_data_from_json("hi")` 发带引号的 `"hi"`）、urlencoded 与 query 共用同一个序列化器（改它等于同时改两处线上行为）、用户显式设的 `Content-Type` 永远优先。同步 `07-request-body.md` 与 `03-request-pipeline.md` 的表格。

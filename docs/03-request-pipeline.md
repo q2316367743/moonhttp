@@ -6,7 +6,7 @@
 |---|---|
 | `src/client.mbt` | `Client::request` / `Client::stream` / `Client::sse` 的编排：合并 → 定方法 → 发送 →（读全量 / 交还流）→ 解码 → 校验 |
 | `src/config/merge.mbt` | 合并契约：四种策略、`merge_config`、`flatten_headers`（为什么在 `config` 包见 `02-config-merge.md`） |
-| `src/config/body.mbt` | 请求体的三种形态与序列化：`serialize_body`（字节 + 建议的 `Content-Type`） |
+| `src/config/body.mbt` | 请求体的四种形态与序列化：`serialize_body`（字节 + 建议的 `Content-Type`） |
 | `src/config/form.mbt` | 表单的 `multipart/form-data` 编码（详见 `07-request-body.md`） |
 | `src/util/request.mbt` | 请求侧的纯函数：`resolve_method`、`build_prepared_request`（地址、头、body 的拼装）与只给它用的 `basic_auth` |
 | `src/util/response.mbt` | 响应侧的纯函数：`decode_body`、`declares_event_stream`（与只给它用的 `media_type`）、`status_allowed` |
@@ -103,7 +103,7 @@ URL 里已有 `?` 时用 `&` 续接，否则用 `?`；`#fragment` 会被**丢弃
 
 ## body 序列化与自动补头
 
-`Config` 的请求体是**私有字段**，只能经三个构建器设置，字节与建议类型由 `Config::serialize_body()` 产出：
+`Config` 的请求体是**私有字段**，只能经四个构建器设置，字节与建议类型由 `Config::serialize_body()` 产出：
 
 | 构建器 | 发送内容 | 自动补的头 |
 |---|---|---|
@@ -111,15 +111,16 @@ URL 里已有 `?` 时用 `&` 续接，否则用 `?`；`#fragment` 会被**丢弃
 | `with_data_from_str(s)` | `s` 的 UTF-8 字节，原样 | 不推断类型 |
 | `with_data_from_json(j)` | `j.stringify()` 后的 UTF-8 字节 | `Content-Type: application/json` |
 | `with_data_from_form(form)` | `multipart/form-data` 正文（含 boundary） | `Content-Type: multipart/form-data; boundary=...` |
+| `with_data_from_urlencoded(j)` | `serialize_params(j)`（与上面的 query 同一套规则） | `Content-Type: application/x-www-form-urlencoded` |
 
-序列化为什么在 `config` 包而不是这里：`data` 私有，只有 `config` 包能 match 三种形态；
+序列化为什么在 `config` 包而不是这里：`data` 私有，只有 `config` 包能 match 四种形态；
 而「body 怎么变成字节」本就是请求体类型自己的事。本层只做最后一步——把给出的建议类型
-用 `set_if_absent` 落到头上。三种形态的细节（含 `Json::String` 的分水岭与 multipart 布局）
-见 `07-request-body.md`。
+用 `set_if_absent` 落到头上。四种形态的细节（含 `Json::String` 的分水岭、multipart 布局、
+urlencoded 的括号约定）见 `07-request-body.md`。
 
 `auth` 有值时补 `Authorization: Basic base64(username:password)`，缺一半的用户名/密码按空串处理。
 
-**补头一律用 `set_if_absent`**：用户显式设置的同名头永远优先。这条由 `src/request_test.mbt` 的三个用例守着（"json body sets content type only when absent"、"auth produces basic authorization header" 的第二个断言、"user content type wins over the form default"）。
+**补头一律用 `set_if_absent`**：用户显式设置的同名头永远优先。这条由 `src/request_test.mbt` 的四个用例守着（"json body sets content type only when absent"、"auth produces basic authorization header" 的第二个断言、"urlencoded body sets its content type"、"user content type wins over the form default"）。
 
 ## 响应体读取：`text()` / `bytes()` / `json()`
 

@@ -54,14 +54,17 @@ pub fn Config::to_string(self : Config) -> String {
     Some(params) => first = push_field(buf, first, "params", params.stringify())
     None => ()
   }
-  // 请求体按形态渲染：JSON 给序列化后的文本（与真正发出去的一致），
-  // 原样文本给原文，表单交给 FormData 自己渲染（文件只给字节数）。
+  // 请求体按形态渲染：JSON 给序列化后的文本、urlencoded 给编码后的键值对
+  // （两者都与真正发出去的一致），原样文本给原文，
+  // 表单交给 FormData 自己渲染（文件只给字节数）。
   match self.data {
     Some(Body::Raw(text)) => first = push_field(buf, first, "data", text)
     Some(Body::Json(data)) =>
       first = push_field(buf, first, "data", data.stringify())
     Some(Body::Form(form)) =>
       first = push_field(buf, first, "data", form.to_string())
+    Some(Body::UrlEncoded(fields)) =>
+      first = push_field(buf, first, "data", urlencoded_text(fields))
     None => ()
   }
   match self.auth {

@@ -76,7 +76,7 @@ pub fn build_prepared_request(config : Config) -> @transport.PreparedRequest? {
     meth,
   )
   // 请求体的字节与建议的 Content-Type 由 config 包产出（`Config::serialize_body`）：
-  // body 的三种形态（原样文本 / JSON / 表单）只有 config 包认识，
+  // body 的四种形态（原样文本 / JSON / 表单 / urlencoded）只有 config 包认识，
   // 这里只负责把建议的类型落到头上，仍是「补默认值」而非覆盖用户显式设置。
   let serialized = config.serialize_body()
   let body = serialized.bytes

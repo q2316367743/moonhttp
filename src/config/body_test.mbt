@@ -55,6 +55,46 @@ test "json body is stringified and declares application/json" {
 }
 
 ///|
+/// urlencoded：键值对编码成 `a=1&b=2` 并补 `application/x-www-form-urlencoded`。
+///
+/// 编码规则直接复用 query 那一套（axios 的 `toFormData` 默认选项），所以这里断言的
+/// 全是 `url_test.mbt` 已经钉过的形状：数组/嵌套走括号、`null` 跳过、空格写成 `+`、
+/// 非 ASCII 按 UTF-8 字节转义。
+test "urlencoded body reuses the query serializer" {
+  let flat = @config.Config::default()
+    .with_data_from_urlencoded({ "user": "alice", "password": "s3cret" })
+    .serialize_body()
+  assert_eq(flat.bytes, Some(b"user=alice&password=s3cret"))
+  assert_eq(flat.content_type, Some("application/x-www-form-urlencoded"))
+  // 数组与嵌套对象：方括号会被百分号编码（axios 的真实输出）
+  assert_eq(
+    @config.Config::default()
+    .with_data_from_urlencoded({ "tags": ["a", "b"] })
+    .serialize_body().bytes,
+    Some(b"tags%5B%5D=a&tags%5B%5D=b"),
+  )
+  assert_eq(
+    @config.Config::default()
+    .with_data_from_urlencoded({ "filter": { "status": 1 } })
+    .serialize_body().bytes,
+    Some(b"filter%5Bstatus%5D=1"),
+  )
+  // 空格写成 +、中文按 UTF-8 字节转义、null 键跳过
+  assert_eq(
+    @config.Config::default()
+    .with_data_from_urlencoded({ "q": "中文 空格", "skip": Json::null() })
+    .serialize_body().bytes,
+    Some(@utf8.encode("q=%E4%B8%AD%E6%96%87+%E7%A9%BA%E6%A0%BC")),
+  )
+  // 顶层不是对象 → 空表单（与 axios 的 paramsSerializer 一致），类型照补
+  let scalar = @config.Config::default()
+    .with_data_from_urlencoded(123)
+    .serialize_body()
+  assert_eq(scalar.bytes, Some(b""))
+  assert_eq(scalar.content_type, Some("application/x-www-form-urlencoded"))
+}
+
+///|
 /// 表单：`multipart/form-data` + 自动 boundary，文本项与文件项按追加顺序成段。
 ///
 /// 逐字节钉住布局：`--B\r\n` 起段、`Content-Disposition` 带 `name`，
@@ -152,7 +192,7 @@ test "form data renders names and file sizes" {
 
 ///|
 /// `Config::to_string` 按 body 形态渲染 `data` 一栏：原样文本给原文、
-/// JSON 给序列化后的文本（与真正发出去的一致）、表单交给 `FormData`。
+/// JSON 与 urlencoded 给真正会发出去的文本、表单交给 `FormData`。
 test "config renders every body kind" {
   assert_eq(
     @config.Config::default().with_data_from_str("raw").to_string(),
@@ -163,6 +203,12 @@ test "config renders every body kind" {
     .with_data_from_json({ "a": 1 })
     .to_string()
     .contains("data: {"),
+  )
+  assert_eq(
+    @config.Config::default()
+    .with_data_from_urlencoded({ "a": 1, "b": "x y" })
+    .to_string(),
+    "Config { data: a=1&b=x+y }",
   )
   let form = @config.FormData::new().append_text("a", "1")
   assert_true(

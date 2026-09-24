@@ -35,13 +35,14 @@ pub(all) struct Config {
   url : String?
   /// 请求方法，缺省为 `Method::Get`
   http_method : Method?
-  /// 请求体：原样文本 / JSON / 表单三种形态，定义与序列化见 body.mbt、form.mbt。
+  /// 请求体：原样文本 / JSON / 表单 / URL 编码表单四种形态，
+  /// 定义与序列化见 body.mbt、form.mbt。
   ///
   /// **这是本类型唯一的私有字段**：外部只能经 `with_data_from_str` /
-  /// `with_data_from_json` / `with_data_from_form` 设置，读法走 `serialize_body`。
-  /// 私有是为了让「设置 body」与「该补什么 Content-Type」绑在一起——
-  /// 直接塞一个 `Json` 值没法表达「它是裸文本还是 JSON 字面量」，
-  /// 也没法承载带文件的表单。
+  /// `with_data_from_json` / `with_data_from_form` / `with_data_from_urlencoded` 设置，
+  /// 读法走 `serialize_body`。私有是为了让「设置 body」与「该补什么 Content-Type」
+  /// 绑在一起——直接塞一个 `Json` 值没法表达「它是裸文本还是 JSON 字面量」，
+  /// 也没法区分 JSON 与 urlencoded、承载带文件的表单。
   priv data : Body?
   /// 基础地址；`url` 是相对路径时会拼在它后面
   base_url : String?

@@ -1,13 +1,16 @@
 // config 包只描述「请求配置」的数据形状、默认值、构建器、请求体序列化与配置合并，
 // 不依赖 async 运行时，因此可以用普通同步测试覆盖。
 // debug 仅用于实现 Debug（测试断言需要），headers 用于头集合类型，
-// buffer / utf8 用于把请求体编码成字节，random 用于生成 multipart boundary。
+// buffer / utf8 用于把请求体编码成字节，random 用于生成 multipart boundary；
+// url 只用来复用 query 的序列化器（urlencoded 请求体与 query 是同一套规则）——
+// url 不依赖本项目的任何包，所以这条依赖不成环。
 import {
   "moonbitlang/core/buffer",
   "moonbitlang/core/debug",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/random",
   "q2316368843/moonhttp/headers",
+  "q2316368843/moonhttp/url",
 }
 
 // 黑盒测试要自己声明依赖（它们是按「外部使用者」编译的）。

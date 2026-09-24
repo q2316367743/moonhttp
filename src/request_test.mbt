@@ -126,6 +126,44 @@ async test "string body is sent verbatim without content type" {
 }
 
 ///|
+/// urlencoded body：头补 `application/x-www-form-urlencoded`，正文是编码后的键值对；
+/// 用户显式设的类型同样优先。
+async test "urlencoded body sets its content type" {
+  let (client, mock) = client_with(raw_response(200, "OK", "{}"))
+  ignore(
+    client.request(
+      @moonhttp.Config::new("/login")
+      .with_method(@moonhttp.Method::Post)
+      .with_data_from_urlencoded({ "user": "alice", "password": "s3cret" }),
+    ),
+  )
+  let sent = mock.last_request().unwrap()
+  assert_eq(
+    sent.headers.get("Content-Type"),
+    Some("application/x-www-form-urlencoded"),
+  )
+  assert_eq(
+    @utf8.decode_lossy(sent.body.unwrap()),
+    "user=alice&password=s3cret",
+  )
+  // 同一条路径上用户显式设的类型优先（值里多带一个 charset 也照原样发）
+  ignore(
+    client.request(
+      @moonhttp.Config::new("/login")
+      .with_method(@moonhttp.Method::Post)
+      .with_data_from_urlencoded({ "a": "1" })
+      .with_header(
+        "Content-Type", "application/x-www-form-urlencoded;charset=utf-8",
+      ),
+    ),
+  )
+  assert_eq(
+    mock.last_request().unwrap().headers.get("Content-Type"),
+    Some("application/x-www-form-urlencoded;charset=utf-8"),
+  )
+}
+
+///|
 /// 表单 body 走 `multipart/form-data`：头里声明的 boundary 与正文里的分隔符
 /// 是同一个，文本项与文件项都在（字节级的精确断言在 `config/body_test.mbt`）。
 async test "form body goes out as multipart" {

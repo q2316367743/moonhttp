@@ -58,6 +58,7 @@ pub fn Config::with_common_header(Self, StringView, String) -> Self
 pub fn Config::with_data_from_form(Self, FormData) -> Self
 pub fn Config::with_data_from_json(Self, Json) -> Self
 pub fn Config::with_data_from_str(Self, String) -> Self
+pub fn Config::with_data_from_urlencoded(Self, Json) -> Self
 pub fn Config::with_header(Self, StringView, String) -> Self
 pub fn Config::with_headers(Self, @headers.Headers) -> Self
 pub fn Config::with_method(Self, Method) -> Self

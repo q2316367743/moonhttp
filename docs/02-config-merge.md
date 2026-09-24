@@ -70,7 +70,7 @@ pub fn merge_config(base : Config, request : Config) -> Config {
 |---|---|---|
 | `url` | 只取请求级 | 默认值里的 url 永远不生效，也不回退 |
 | `http_method` | 只取请求级 | 见下方「方法缺省」 |
-| `data` | 只取请求级 | 默认值里的 body 同样不生效。字段是私有的，设置只能经 `with_data_from_str` / `with_data_from_json` / `with_data_from_form`（见 `07-request-body.md`） |
+| `data` | 只取请求级 | 默认值里的 body 同样不生效。字段是私有的，设置只能经 `with_data_from_str` / `with_data_from_json` / `with_data_from_form` / `with_data_from_urlencoded`（见 `07-request-body.md`） |
 | `base_url` | 请求优先/否则默认 | |
 | `timeout` | 请求优先/否则默认 | |
 | `response_encoding` | 请求优先/否则默认 | 内置默认值是 `Utf8`（axios 的 `responseEncoding: 'utf8'`） |
