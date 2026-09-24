@@ -28,6 +28,7 @@ pub(open) trait Transport {
 | `headers` | 已按 `common` < 按方法 < 请求级平铺 拍平、且已补过 `Content-Type` / `Authorization` 的最终头集合 |
 | `body` | 请求体字节；`None` 表示不带 body |
 | `timeout` | 超时毫秒数；`None` 或 `<= 0` 表示不限时 |
+| `proxy` | 代理服务器（`ProxyEndpoint`：`url` + `authorization`）；`None` 表示直连。契约见 `09-proxy.md` |
 
 `RawResponse` 是**纯传输结果**，刻意不叫 `Response`（上层的 `Response` 还要承担响应体解码与状态码校验）：
 
@@ -138,6 +139,7 @@ pub impl Transport for MyTransport with fn send(self, request) {
 2. **枚举映射**：本项目的 `Method` 与底层的 `RequestMethod` 一一对应（`to_request_method`）。上层不认识底层类型，所以映射写在这里。
 3. **头的容器转换**：底层要求 `Map[CaseInsensitiveString, String]`（`to_http_headers` / `from_http_headers`）。两边都是大小写不敏感的容器，转换只搬类型不改语义。头与便捷函数一样在 `Client::Client` 建连时一次性交出，body 单独 `write`，语义与改造前一致。
 4. **超时与错误收敛**：见上文「超时语义」；底层 `TimeoutError` → `TransportError::Timeout`，其余错误统一归 `Network` 并保留原始错误文本。建连之后任何失败都靠 `errdefer client.close()` 关连接，不留半开连接。
+5. **代理**（`request.proxy` 非空时）：在同一个 `attempt` 里先建一个**干净的代理客户端**（`open_proxy`，凭据以持久头的形式交给它）再传给 `Client::Client(root, proxy?)`——放在这里是为了让 CONNECT 握手也落进 `timeout`。底层的代理客户端**所有权会被接管**，所以每次请求都得新建、不能缓存。CONNECT 非 2xx 时底层抛 `ProxyError`，这里翻译成 `Network("代理拒绝建立隧道：HTTP <状态码> <原因短语>")`（单独一条 catch 分支，在通用兜底之前）。细节见 `09-proxy.md`。
 
 ### 尚未处理的能力（改动时的落点）
 
@@ -146,12 +148,12 @@ pub impl Transport for MyTransport with fn send(self, request) {
 | 连接复用 | 每次请求新建连接 | 按 host 缓存 `@http.Client`；注意本项目不回传连接池状态给上层，缓存要自己做失效处理 |
 | 请求体流式上传 | 不支持（`PreparedRequest::body` 是完整字节） | 需要 `ResponseBody` 的对偶：一个挂在 `@http.Client` 上的可写流，`write` 完再 `end_request()` |
 | 上传进度 | 不支持 | 与上一条一起做；下载进度不需要新 API——调用方按 `read_some` 的每块大小累加即可 |
-| 代理 | 不支持 | `Client::Client(uri, proxy~)` 与 `@http.request(proxy~)` 都有这个参数，需要在 `Config` 里加 `proxy` 字段并传进来 |
+| 代理 | 已支持（`PreparedRequest::proxy`） | 底层 `Client::Client(uri, proxy~)` 的 CONNECT 隧道；凭据落在代理客户端自己的持久头上。契约与注意事项见 `09-proxy.md` |
 | TLS 校验开关 | 固定为默认（校验） | `Client::Client(trust~ / verify~)` |
 | 响应 cookie | 读不到 `Set-Cookie` | 底层把响应 cookie 单独放在 `Response::cookies` 里，没有并进 headers。要暴露需要先决定多值头的表示（本项目的 `Headers` 一个名字只能有一个值） |
 | SSE 事件解析 | 已实现，但**不在本模块** | 传输层只交出字节流；事件边界与 `event:` / `data:` 字段语义在 `sse` 包（`SseParser`），接到 HTTP 上的入口是根包的 `Client::sse` / `SseStream`，见 `06-sse.md`。分层的意义是「字节怎么来」与「字节怎么解」各自独立演进：换成别的字节来源（WebSocket、文件）也能复用同一个解析器 |
 
-改动这些能力时请只动 `src/transport/`——它是本模块唯一对接 `moonbitlang/async` 的包（`src/transport/*.mbt` 都可以改，不限于 `async_http.mbt`）。`PreparedRequest` 的字段语义不要动；`RawResponse` 的结构变化（例如本次 `body` 由字节改成流）必须同步本节与 `03-request-pipeline.md`，因为它出现在公开签名里。
+改动这些能力时请只动 `src/transport/`——它是本模块唯一对接 `moonbitlang/async` 的包（`src/transport/*.mbt` 都可以改，不限于 `async_http.mbt`）。`PreparedRequest` 的字段语义不要动（加字段是加能力，比如 `proxy`；改已有字段的含义不是）；`PreparedRequest` / `RawResponse` 的结构变化（例如本次 `body` 由字节改成流、`proxy` 字段的加入）必须同步本节与 `03-request-pipeline.md`，因为它们出现在公开签名里。
 
 ## `MockTransport` 的用法
 

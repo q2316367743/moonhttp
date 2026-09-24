@@ -20,7 +20,7 @@ pub using @headers {type Headers}
 /// - 请求级优先、否则回退默认（`defaultToConfig2`）：
 ///   base_url / timeout / max_redirects / response_encoding
 /// - 深合并（`mergeDeepProperties`）：
-///   params / auth / headers / common_headers / method_headers / allow_absolute_urls
+///   params / auth / proxy / headers / common_headers / method_headers / allow_absolute_urls
 /// - 请求级存在即生效（`mergeDirectKeys`）：validate_status
 ///
 /// 字段名用 `http_method` 而不是 axios 的 `method`：`method` 在 MoonBit 里
@@ -65,6 +65,14 @@ pub(all) struct Config {
   /// 查询参数，序列化后追加到 URL（不覆盖 URL 里已有的 query）
   params : Json?
   auth : Auth?
+  /// 代理服务器设置，对应 axios 的 `proxy`；`None` 表示直连。
+  ///
+  /// 设了它就**必须给出 host**（判定见 `Proxy::is_usable`），否则报
+  /// `ERR_INVALID_URL`——不做「缺 host 就当没配代理」的容错，那会让本该走代理的
+  /// 请求静默直连。`auth` 里的凭据只用于建立隧道，不会发给目标服务器。
+  /// 构建器是 `with_proxy`（与 `Proxy` 同文件，见 proxy.mbt），
+  /// 字段语义与合并规则见 `docs/09-proxy.md`。
+  proxy : Proxy?
   /// 请求级平铺的头，优先级最高
   headers : Headers?
   /// 默认值的 common 层头，优先级最低
@@ -112,6 +120,9 @@ pub fn Config::new(url : String) -> Config {
 ///
 /// 每个构建器都返回新实例（immutable 风格），所以可以安全地把一个
 /// 「模板配置」派生出多个变体，互不影响。
+///
+/// 例外：`with_proxy` 与 `Proxy` 类型同放在 proxy.mbt，便于「代理相关的一切」
+/// 集中在一处（文件长度限制见 AGENTS.md RL-04）。
 pub fn Config::with_url(self : Config, url : String) -> Config {
   { ..self, url: Some(url), }
 }

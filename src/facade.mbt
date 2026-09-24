@@ -41,6 +41,8 @@ pub using @config {
   type Config,
   type Method,
   type Auth,
+  type Proxy,
+  type ProxyProtocol,
   type ResponseEncoding,
   type FormData,
   type FormValue,

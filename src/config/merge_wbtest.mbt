@@ -50,3 +50,41 @@ test "auth merges field by field" {
   assert_eq(auth.username, Some("alice"))
   assert_eq(auth.password, Some("new-secret"))
 }
+
+///|
+/// `proxy` 与 `auth` 同一档：逐字段深合并。
+///
+/// 「默认值给代理地址、请求级只给凭据」是这种用法的现实场景
+/// （凭据由上层按请求注入），合并后地址与凭据必须同时在场——
+/// 整个 `Proxy` 被替换掉的话，地址就丢了。
+test "proxy merges field by field" {
+  let base = Config::default().with_proxy("127.0.0.1", port=9000)
+  let request : Config = {
+    ..Config::default(),
+    proxy: Some({
+      ..Proxy::default(),
+      auth: Some(Auth::{ username: Some("u"), password: Some("p"), }),
+    }),
+  }
+  let merged = merge_config(base, request).proxy.unwrap()
+  // 请求级没提地址：默认值的 host / port 保留下来
+  assert_eq(merged.host, Some("127.0.0.1"))
+  assert_eq(merged.port, Some(9000))
+  assert_eq(merged.protocol, None)
+  assert_eq(merged.auth.unwrap().username, Some("u"))
+}
+
+///|
+/// `merge_proxy` 的四种组合（对应策略 3 的通用形状）：两侧都空则为空，
+/// 只有一侧时原样保留，都有时逐字段以请求级为准。
+test "merge_proxy keeps whichever side is present" {
+  assert_true(merge_proxy(None, None) is None)
+  let base : Proxy = { ..Proxy::default(), host: Some("127.0.0.1"), }
+  let request : Proxy = { ..Proxy::default(), host: Some("proxy.corp"), }
+  assert_eq(merge_proxy(Some(base), None).unwrap().host, Some("127.0.0.1"))
+  assert_eq(merge_proxy(None, Some(base)).unwrap().host, Some("127.0.0.1"))
+  assert_eq(
+    merge_proxy(Some(base), Some(request)).unwrap().host,
+    Some("proxy.corp"),
+  )
+}

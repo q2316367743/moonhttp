@@ -16,7 +16,7 @@ moonhttp/
     │                            对外响应类型 + pub using 再导出
     ├── *_test.mbt               根包黑盒测试（用 MockTransport 跑整条管线）
     ├── *_wbtest.mbt             根包白盒测试（覆盖只能从包内部触达的分支）
-    ├── config/                  配置的形状、合并契约、默认值、构建器、请求体序列化与重定向的下一跳规则
+    ├── config/                  配置的形状、合并契约、默认值、构建器、请求体序列化、重定向的下一跳规则与代理配置
     ├── headers/                 大小写不敏感的 Headers
     ├── sse/                     SSE 事件解析（纯逻辑：吃字节、吐事件）
     ├── url/                     绝对地址判定、拼接、params 序列化、Location 的相对解析
@@ -113,6 +113,8 @@ MoonBit 的 import 是包级的：`Config` 的字段类型 `Headers` 定义在�
 5. 若它参与请求构造，接到 `src/util/request.mbt` 的 `build_prepared_request`（拼地址/头/body）或 `src/client.mbt` 的 `build_response`（解码已有 `src/util/response.mbt` 的 `decode_body`）。若它影响的是「每一跳怎么发」这类编排，落点同样在 `src/client.mbt`：`max_redirects` 由 `Client::send_following_redirects` 消费，配置侧的改写规则在 `src/config/redirect.mbt`（见 `08-redirects.md`）；
 6. 补测试：`src/config/merge_test.mbt` 测合并语义，根包 `src/*_test.mbt` 测端到端效果；
 7. 更新 `docs/02-config-merge.md` 的字段归属表。
+
+若新增的是一整个**嵌套配置对象**（`auth` / `proxy` 那样），除了上面七步还要：类型与构建器单独成文件（`src/config/types.mbt` / `proxy.mbt`），写一个 `merge_<名字>` 逐字段深合并函数（复合值的那一档），并确认它要不要一路传到传输层——`proxy` 就是这种：`PreparedRequest` 加字段 + `src/transport/` 消费，改动要同步 `09-proxy.md` 与 `05-transport.md` 的字段表。
 
 ### 新增一种请求体形态（如原始二进制体）
 

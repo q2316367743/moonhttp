@@ -6,8 +6,13 @@
 ///
 /// 当前实现每次都新建连接（用底层的 `@http.Client` 手动走
 /// 「connect → request → write → end_request」四步），不做连接复用；
-/// 代理与 TLS 校验开关也暂未暴露，见 README 的「暂不支持」清单。
+/// TLS 校验开关暂未暴露，见 README 的「暂不支持」清单。
 /// 手动四步而非 `@http.request` 便捷函数，是为了不在传输层就把响应体读光。
+///
+/// 代理（`PreparedRequest::proxy`）由底层的 CONNECT 隧道实现：给它一个干净的
+/// 代理客户端，它就负责发 `CONNECT host:port`、验收并进入隧道，https 目标
+/// 再在隧道上叠一层 TLS。逐请求各建一条隧道（与「不复用连接」一致），
+/// 契约见 `docs/09-proxy.md`。
 pub struct AsyncHttpTransport {}
 
 ///|
@@ -96,6 +101,30 @@ fn split_url(url : String) -> (String, String) raise TransportError {
 }
 
 ///|
+/// 建一个「处于干净状态」的代理客户端。
+///
+/// 底层的 `Client::Client(uri, proxy~)` 要求 proxy 是一个干净的 `@http.Client`
+/// 并且**会接管它的所有权**（进入隧道后调用方不能再碰它），所以每次请求都得
+/// 新建一个——这正好与本实现「每次请求新建连接」的现状一致。
+///
+/// 凭据以持久头的形式交给它：`CONNECT` 请求带的就是代理客户端自己的这批头
+/// （见底层 `Client::connect`），而不是目标请求的头——后者是隧道打通之后
+/// 发给目标服务器的。`Proxy-Authorization` 因此不会泄漏给目标服务器。
+///
+/// 已知微瑕：目标地址非法（例如端口越界）时，底层在接管这个客户端**之前**
+/// 就抛错，那条到代理的连接不会被关掉。它只出现在「地址本来就发不出去」的
+/// 失败路径上，代价是一条连接，不影响请求结果。
+async fn open_proxy(endpoint : ProxyEndpoint) -> @http.Client {
+  let headers : Map[@http.CaseInsensitiveString, String] = Map([])
+  match endpoint.authorization {
+    Some(authorization) =>
+      headers[@http.CaseInsensitiveString("Proxy-Authorization")] = authorization
+    None => ()
+  }
+  @http.Client::Client(endpoint.url, headers~)
+}
+
+///|
 /// 建连、发出请求头与请求体、等回响应头，然后把「还开着的连接」与响应头
 /// 一起交出去。
 ///
@@ -103,16 +132,25 @@ fn split_url(url : String) -> (String, String) raise TransportError {
 /// 读取阶段的超时由 `ResponseBody` 按**单次读取**来管，见 `stream.mbt`。
 /// 用 `@http.Client` 而不是 `@http.request` 的便捷函数，正是为了不在
 /// 这里就把响应体读光——`end_request()` 返回时响应体还在连接上。
+///
+/// 走代理时，与代理的 CONNECT 握手也在这一段里，因此同样受 `timeout` 约束。
 async fn send_head(
   request : PreparedRequest,
 ) -> (@http.Client, @http.Response) raise TransportError {
   let (root, path) = split_url(request.url)
   let attempt = () => {
+    // 代理客户端在这里（而不是外层）新建，握手代价才落进 timeout；
+    // 无代理时 `proxy?` 传 `None`，与不传该参数等价。
+    let proxy = match request.proxy {
+      Some(endpoint) => Some(open_proxy(endpoint))
+      None => None
+    }
     // 头一次性交给 connect（与便捷函数 @http.request 的用法一致：
     // 它同样是把 headers 交给 connect，body 单独 write）。
     let client = @http.Client::Client(
       root,
       headers=to_http_headers(request.headers),
+      proxy?,
     )
     // 失败路径必须关连接，否则会漏下一条没人管的半开连接。
     errdefer client.close()
@@ -136,6 +174,15 @@ async fn send_head(
     }
   } catch {
     @async.TimeoutError => raise TransportError::Timeout
+    // 代理拒绝建立隧道：CONNECT 的响应不是 2xx（`407` 需要认证最常见）。
+    // 单独翻成人话，比把底层的 `ProxyError({code: 407, ...})` 原样塞进网络错误有用。
+    @http.ProxyError(response) =>
+      raise TransportError::Network(
+        "代理拒绝建立隧道：HTTP " +
+        response.code.to_string() +
+        " " +
+        response.reason,
+      )
     // 其余错误（连接失败、DNS、TLS、协议错误等）统一归到网络层失败，
     // 并保留原始错误文本，便于排查。
     error => raise TransportError::Network(error.to_string())

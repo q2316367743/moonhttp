@@ -7,6 +7,25 @@ pub using @config {type Method}
 pub using @headers {type Headers}
 
 ///|
+/// 走代理需要的两样东西：连到哪儿、以及 CONNECT 请求带什么凭据。
+///
+/// 已经是**解析完的最小形态**：协议名与端口默认值在拼请求时就写进了 `url`，
+/// 凭据也已经编码成可直接落头的字符串。这样传输层不必认识 `ProxyProtocol`
+/// 这类配置枚举，也不必知道 Basic 认证怎么编码——与 `PreparedRequest`
+/// 「不含任何配置语义」的口径一致。
+pub(all) struct ProxyEndpoint {
+  /// 代理服务器地址，形如 `http://127.0.0.1:9000`；
+  /// 不带端口时由底层按协议补默认端口（http 80 / https 443）
+  url : String
+  /// 建立隧道用的 `Proxy-Authorization` 头值（如 `Basic ...`）；
+  /// `None` 表示匿名代理
+  authorization : String?
+} derive(Debug)
+
+///|
+pub extend ProxyEndpoint with @debug.Debug::{to_repr}
+
+///|
 /// 交给传输层去发送的一份请求。
 ///
 /// 到达这一步时，配置合并、`base_url` 拼接、query 序列化、头拍平都已经完成，
@@ -26,7 +45,12 @@ pub(all) struct PreparedRequest {
   ///
   /// 分两段生效：建连到拿到响应头这一段整体受它约束，响应体每次读取也受
   /// 它约束（见 `ResponseBody`）。所以长连的 SSE 请求应当传 `None`。
+  /// 走代理时**建连包含与代理的 CONNECT 握手**，它同样落在这段时限里。
   timeout : Int?
+  /// 代理服务器；`None` 表示直连。
+  ///
+  /// 有代理时流量全部经代理转发，http 目标也走 CONNECT 隧道（见 `docs/09-proxy.md`）。
+  proxy : ProxyEndpoint?
 } derive(Debug)
 
 ///|

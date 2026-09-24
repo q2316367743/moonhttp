@@ -61,6 +61,7 @@ pub fn merge_config(base : Config, request : Config) -> Config {
 
 - `merge_headers`：`Headers` 大小写不敏感合并（请求级同名头覆盖，默认值独有的头保留）；
 - `merge_auth`：`Auth` 逐字段合并（默认值给 `username`、请求给 `password`，两者都在）；
+- `merge_proxy`：`Proxy` 逐字段合并（默认值给代理地址、请求级给凭据，两者都在）；内层 `auth` 递归交回 `merge_auth`；
 - `merge_json_option` / `merge_json`：JSON 对象逐键递归合并；
 - `merge_method_headers`：按方法分桶合并（请求级只改一个方法不能清掉别的桶）。
 
@@ -78,6 +79,7 @@ pub fn merge_config(base : Config, request : Config) -> Config {
 | `allow_absolute_urls` | 深合并（标量） | 等价于请求优先/否则默认 |
 | `params` | 深合并 | 逐键递归；数组**整体替换** |
 | `auth` | 深合并 | 逐字段 |
+| `proxy` | 深合并 | 逐字段（内层 `auth` 同样逐字段）。「给了 proxy 却没给 host」是配置错误而不是「没配代理」，见 `09-proxy.md` |
 | `headers` | 深合并（大小写不敏感） | |
 | `common_headers` | 深合并 | |
 | `method_headers` | 深合并（按方法分桶） | |

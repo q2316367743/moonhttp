@@ -19,7 +19,7 @@ repository = "https://github.com/q2316367743/moonhttp"
 
 license = "Apache-2.0"
 
-keywords = [ ]
+keywords = [ "http", "client", "axios", "async", "sse", "networking" ]
 
 // HTTP 请求最终要靠 moonbitlang/async 的异步运行时发出去。
 // 该包官方偏好 native 后端（wasm1 上的异步支持仍标注为实验性），
@@ -32,7 +32,7 @@ preferred_target = "native"
 
 source = "src"
 
-description = "axios 风格的 MoonBit HTTP 客户端：实例创建、request 请求与配置合并"
+description = "axios 风格的 MoonBit HTTP 客户端：实例与配置合并、四种请求体形态、流式与 SSE、自动重定向"
 
 import {
   "moonbitlang/async@0.22.2",

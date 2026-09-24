@@ -82,6 +82,27 @@ fn merge_auth(base : Auth?, request : Auth?) -> Auth? {
 }
 
 ///|
+/// `Proxy` 的逐字段深合并，与 `merge_auth` 同一档策略。
+///
+/// 内层 `auth` 递归交回 `merge_auth`：代理凭据同样享受逐字段合并
+/// （默认值给 `username`、请求给 `password` 照样拼得齐），
+/// 而不是「请求级带了凭据就把代理对象整个换掉、顺手丢掉默认值的 host」。
+fn merge_proxy(base : Proxy?, request : Proxy?) -> Proxy? {
+  match (base, request) {
+    (None, None) => None
+    (Some(base), None) => Some(base)
+    (None, Some(request)) => Some(request)
+    (Some(base), Some(request)) =>
+      Some({
+        protocol: prefer_request(base.protocol, request.protocol),
+        host: prefer_request(base.host, request.host),
+        port: prefer_request(base.port, request.port),
+        auth: merge_auth(base.auth, request.auth),
+      })
+  }
+}
+
+///|
 /// 按方法分层的默认头（`common_headers` 之外的第二层）深合并。
 ///
 /// 合并发生在「桶」的粒度上：请求级只想改 GET 的头时，
@@ -120,7 +141,7 @@ fn merge_method_headers(
 /// 策略分配与 axios 保持一致：
 /// - 只取请求级：url / http_method / data
 /// - 请求级优先、否则默认：base_url / timeout / max_redirects / response_encoding / allow_absolute_urls
-/// - 深合并：params / auth / headers / common_headers / method_headers
+/// - 深合并：params / auth / proxy / headers / common_headers / method_headers
 /// - 存在即生效：validate_status
 ///
 /// 注意 `allow_absolute_urls` 这类标量在 axios 里走的是默认策略
@@ -153,6 +174,7 @@ pub fn merge_config(base : Config, request : Config) -> Config {
     // 策略 3：深合并
     params: merge_json_option(base.params, request.params),
     auth: merge_auth(base.auth, request.auth),
+    proxy: merge_proxy(base.proxy, request.proxy),
     headers: merge_headers(base.headers, request.headers),
     common_headers: merge_headers(base.common_headers, request.common_headers),
     method_headers: merge_method_headers(

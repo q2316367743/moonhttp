@@ -289,15 +289,29 @@ pub fn default_client() -> Client {
 // ---------------------------------------------------------------------------
 
 ///|
-/// 拼请求：调 `@util.build_prepared_request`，把「地址不可用」这唯一一种
-/// 纯逻辑失败翻译成对外错误。
+/// 拼请求：调 `@util.build_prepared_request`，把「这份配置拼不出可发送的请求」
+/// 翻译成对外错误。
 ///
 /// 为什么这层翻译要单独有个函数：纯函数用 `None` 表达失败（util 不认识
 /// `HttpError`，也拿不到 `ErrorCode`），错误码与文案只能由根包决定。
 /// `request` 与 `open_stream` 两条入口都走它，免得同一份文案写两遍。
+///
+/// 两种失败原因分别报：**代理配置缺 host** 与**请求缺 url**。
+/// 两者都是 `ERR_INVALID_URL`（都属于「地址不可用」），但修法完全不同，
+/// 文案上不能混为一谈——代理那条判在调 util 之前，正是为了能分开说。
 fn prepare_request(
   config : Config,
 ) -> @transport.PreparedRequest raise HttpError {
+  match config.proxy {
+    Some(proxy) if !proxy.is_usable() =>
+      raise make_error(
+        "代理配置缺少 host：请用 with_proxy 给出代理服务器地址",
+        ErrorCode::InvalidUrl,
+        config,
+        None,
+      )
+    _ => ()
+  }
   match @util.build_prepared_request(config) {
     Some(prepared) => prepared
     None =>

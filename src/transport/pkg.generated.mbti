@@ -42,8 +42,15 @@ pub(all) struct PreparedRequest {
   headers : @headers.Headers
   body : Bytes?
   timeout : Int?
+  proxy : ProxyEndpoint?
 } derive(@debug.Debug)
 pub fn PreparedRequest::to_repr(Self) -> @debug.Repr
+
+pub(all) struct ProxyEndpoint {
+  url : String
+  authorization : String?
+} derive(@debug.Debug)
+pub fn ProxyEndpoint::to_repr(Self) -> @debug.Repr
 
 pub(all) struct RawResponse {
   status : Int

@@ -102,6 +102,7 @@ async test "async transport streams a chunked response from a real server" {
       // SSE 场景的典型配置：不限时。响应体读取的超时是单次读取的等待上限，
       // 这里不设限，所以停顿不会被当成超时。
       timeout: None,
+      proxy: None,
     })
     assert_eq(raw.status, 200)
     assert_eq(raw.body.read_until("\n\n"), Some("data: first"))
@@ -138,6 +139,7 @@ async test "response body read times out after the configured wait" {
       headers: @transport.Headers::new(),
       body: None,
       timeout: Some(200),
+      proxy: None,
     })
     assert_eq(raw.status, 200)
     // 第一段已经在路上，能在上限内读到

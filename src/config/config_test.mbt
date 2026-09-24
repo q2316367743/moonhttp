@@ -204,6 +204,7 @@ test "config rendering covers every provided field" {
     .with_params({ "page": 1 })
     .with_data_from_json({ "name": "moon" })
     .with_auth("alice", "secret")
+    .with_proxy("127.0.0.1", port=9000)
     .with_header("X-Trace", "1")
     .with_common_header("Accept", "application/json")
     .with_method_header(@config.Method::Get, "X-Get", "1")
@@ -214,8 +215,8 @@ test "config rendering covers every provided field" {
     expected in [
       "url: /users", "method: POST", "base_url: https://api.example.com", "timeout: 1000",
       "response_encoding: utf-16le", "params: ", "data: ", "auth: Auth { username: alice, password: <redacted> }",
-      "headers: X-Trace: 1", "common_headers: Accept: application/json", "method_headers: GET -> X-Get: 1",
-      "validate_status: <fn>", "allow_absolute_urls: true",
+      "proxy: Proxy { host: 127.0.0.1, port: 9000 }", "headers: X-Trace: 1", "common_headers: Accept: application/json",
+      "method_headers: GET -> X-Get: 1", "validate_status: <fn>", "allow_absolute_urls: true",
     ] {
     assert_true(rendered.contains(expected))
   }

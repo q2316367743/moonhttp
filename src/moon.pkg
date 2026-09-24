@@ -28,9 +28,11 @@ import {
 // async 用于运行 async test。
 //
 // `async/http` 与 `async/socket` 只给测试用：SSE 的验收用例要起一个本机
-// server，用真实连接证明「事件能在服务端停顿期间就到达」。**生产代码不碰
-// 这两个包**——对底层库的依赖仍然只出现在 src/transport/ 里，
-// 这正是 docs/README.md 那条分层约束要的效果。
+// server，用真实连接证明「事件能在服务端停顿期间就到达」；代理的验收用例
+// 要起一个本机 CONNECT 代理。**生产代码不碰这两个包**——对底层库的依赖仍然
+// 只出现在 src/transport/ 里，这正是 docs/README.md 那条分层约束要的效果。
+// `util` 在黑盒测试里直接 import：代理凭据落在哪个请求上属于拼装层的契约，
+// 除了端到端用例，还要有一条不走网络的断言。
 // core/json 不在测试清单里：`Response::json()` 已经把它包在生产代码里，
 // 用例断言的是门面的返回值，不需要再直接调 `@json`。
 import {
@@ -39,4 +41,5 @@ import {
   "moonbitlang/async/socket",
   "moonbitlang/core/encoding/utf8",
   "q2316367743/moonhttp/transport",
+  "q2316367743/moonhttp/util",
 } for "test"

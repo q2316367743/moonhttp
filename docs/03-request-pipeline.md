@@ -27,8 +27,8 @@
 2. **确定方法**：合并结果 → 实例默认值 → `Method::Get`。
 3. **拼完整地址**：`build_full_path(base_url, url, allow_absolute_urls)`，再 `build_url(url, params)` 追加 query。
 4. **拍平头**：`flatten_headers(common_headers, method_headers, headers, method)`，优先级 `common` < 按方法 < 请求级平铺。
-5. **取请求体**：`Config::serialize_body()` 给出字节与**建议**的 `Content-Type`（序列化在 `config` 包内完成，见 `07-request-body.md`），有 `auth` 则补 `Authorization`。补默认头一律用 `Headers::set_if_absent`，用户显式设置的同名头永远优先。
-6. **发送**：交给 `Transport::send`（契约见 `05-transport.md`）。失败映射见 `04-errors.md`。收到 3xx 且带 `Location` 时**自动跟随重定向**（最多 `max_redirects` 跳，默认 5），一直跟到最后一跳——这段循环在 `Client::send_following_redirects`，规则见 `08-redirects.md`。
+5. **取请求体**：`Config::serialize_body()` 给出字节与**建议**的 `Content-Type`（序列化在 `config` 包内完成，见 `07-request-body.md`），有 `auth` 则补 `Authorization`。补默认头一律用 `Headers::set_if_absent`，用户显式设置的同名头永远优先。有 `proxy` 时，`Proxy-Authorization` 在这一步从目标头里取走、改落在 CONNECT 请求上（代理凭据不该发给源站，见 `09-proxy.md`）。
+6. **发送**：交给 `Transport::send`（契约见 `05-transport.md`）。配了代理时先与代理建立 CONNECT 隧道，再在隧道里发出请求（见 `09-proxy.md`）。失败映射见 `04-errors.md`。收到 3xx 且带 `Location` 时**自动跟随重定向**（最多 `max_redirects` 跳，默认 5），一直跟到最后一跳——这段循环在 `Client::send_following_redirects`，规则见 `08-redirects.md`。
 7. **读出响应体**：把响应体读到 EOF，字节原样放进 `Response`（解码不在这里，见下）。
 8. **校验状态码**：`validate_status` 不通过则抛 `HttpError`。
 

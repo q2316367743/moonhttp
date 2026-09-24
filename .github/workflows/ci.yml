@@ -1,0 +1,39 @@
+# 持续集成：检查 → 构建 → 测试
+#
+# 这三步对应赛事的验收要求「使用持续集成工具并且覆盖检查、构建、测试流程」。
+# 目标为模块默认的 native（见 moon.mod 的 preferred_target）。
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check-build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      # 让后续步骤能用到刚写入 GITHUB_PATH 的 moon
+      - name: Show toolchain versions
+        run: |
+          export PATH="$HOME/.moon/bin:$PATH"
+          moon version --all
+
+      - name: moon check
+        run: moon check
+
+      - name: moon build
+        run: moon build
+
+      - name: moon test
+        run: moon test

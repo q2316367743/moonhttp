@@ -76,6 +76,11 @@ pub fn Config::to_string(self : Config) -> String {
     Some(auth) => first = push_field(buf, first, "auth", auth.to_string())
     None => ()
   }
+  // 代理同样整体渲染，密码由 `Auth::to_string` 脱敏。
+  match self.proxy {
+    Some(proxy) => first = push_field(buf, first, "proxy", proxy.to_string())
+    None => ()
+  }
   match self.headers {
     Some(headers) =>
       first = push_field(buf, first, "headers", headers.to_string())

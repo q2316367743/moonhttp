@@ -59,6 +59,7 @@ import {
 | `max_redirects` | `defaultToConfig2`（axios 没登记，走默认的深合并） | 请求级优先，缺省则回退默认值（内置 **5**）；`0` 表示不跟随 |
 | `params` | `mergeDeepProperties` | 按 JSON 对象逐键递归合并；数组**整体替换而非拼接** |
 | `auth` | `mergeDeepProperties` | 逐字段合并：默认值给 `username`、请求给 `password`，两者都在 |
+| `proxy` | `mergeDeepProperties` | 逐字段合并（内层 `auth` 同样逐字段）：默认值给代理地址、请求级补凭据，两者都在 |
 | `headers` | caseless 深合并 | 头名大小写不敏感；请求级同名头覆盖默认值，默认值独有的头保留 |
 | `common_headers` / `method_headers` | 深合并 + 拍平 | 优先级 `common` < 按方法 < 请求级平铺，逐层覆盖 |
 | `allow_absolute_urls` | `mergeDeepProperties` | 标量上的深合并退化为「请求级有就用请求级」 |
@@ -79,8 +80,8 @@ import {
 2. 确定请求方法（缺省回退到实例默认值，再回退到 `GET`）
 3. `base_url` + `url` 拼成完整地址，再追加序列化后的 query
 4. 三层头拍平成一份（`common` < 按方法 < 请求级平铺）
-5. 取请求体：`Config::serialize_body()` 给出字节与**建议**的 `Content-Type`（四种形态见下文「请求体」）；有 `auth` 则补 `Authorization`
-6. 交给传输层发送（`timeout > 0` 时套超时）；3xx 且带 `Location` 时**自动跟随重定向**，最多 `max_redirects` 跳
+5. 取请求体：`Config::serialize_body()` 给出字节与**建议**的 `Content-Type`（四种形态见下文「请求体」）；有 `auth` 则补 `Authorization`；有代理则把 `Proxy-Authorization` 改成落在 CONNECT 上（见「代理」）
+6. 交给传输层发送（`timeout > 0` 时套超时，含与代理的 CONNECT 握手）；3xx 且带 `Location` 时**自动跟随重定向**，最多 `max_redirects` 跳
 7. 把响应体读到 EOF
 8. 用 `validate_status` 校验状态码，失败则抛 `HttpError`
 
@@ -264,6 +265,27 @@ pub impl Transport for MyTransport with fn send(self, request) {
 }
 ```
 
+## 代理
+
+`Config.proxy` 让请求经代理服务器转发（对应 axios 的 `proxy`）：
+
+```moonbit nocheck
+let client = @moonhttp.create(
+  @moonhttp.Config::default()
+    .with_base_url("https://api.example.com")
+    .with_proxy("127.0.0.1", port=9000, username="mikeymike", password="rapunz3l"),
+)
+```
+
+- `host` 必填；`port` 缺省由协议决定（http 80 / https 443）；`protocol` 缺省 `ProxyProtocol::Http`，选 `Https` 表示**到代理本身**走 TLS。
+- `username` / `password` 是代理的 HTTP Basic 凭据，落在建立隧道时的 `CONNECT` 请求上（`Proxy-Authorization`），**不会发给目标服务器**。你在头里自定义的 `Proxy-Authorization` 同样只发给代理；`with_proxy` 给了凭据时以凭据为准（axios 的覆写规则）。
+- 代理设置走「逐字段深合并」：实例默认值里配了地址、请求级只补凭据也能拼出完整配置（与 `auth` 同档）。给了 `proxy` 却没给 `host` 会报 `ERR_INVALID_URL`，而不是悄悄直连。
+- 每请求（含重定向的每一跳）各建一条隧道，与本项目「不复用连接」一致；`timeout` 覆盖与代理握手的这一段。
+- **http 目标也走 CONNECT 隧道**：代理服务器必须支持 `CONNECT` 方法，只做 GET/POST 转发的简易代理不行。
+- 只支持 http/https 代理（不做 SOCKS）。**不读** `http_proxy` / `https_proxy` / `no_proxy` 环境变量，也不提供 axios 那样「按请求关掉代理」的 `proxy: false`——配置即事实，需要绕开实例默认代理时另建一个不带该默认值的实例。
+
+代理拒绝建立隧道（最常见的是 `407` 需要认证）时报 `ERR_NETWORK`，`message` 形如 `网络请求失败：代理拒绝建立隧道：HTTP 407 ProxyAuthenticationRequired`。完整契约与差异见 [`docs/09-proxy.md`](docs/09-proxy.md)。
+
 ## 错误处理
 
 `request` 失败时抛出 `HttpError`，它携带分类、已合并的配置、以及**已经收到的响应**（没有收到就是 `None`）：
@@ -293,9 +315,9 @@ try {
 |---|---|---|
 | `BadRequest` | `ERR_BAD_REQUEST` | 状态码 4xx 且未通过校验 |
 | `BadResponse` | `ERR_BAD_RESPONSE` | 状态码 5xx（或其它非 2xx） |
-| `Network` | `ERR_NETWORK` | 连接失败、DNS 解析失败、TLS 握手失败；读响应体中途连接被重置 |
-| `Timeout` | `ECONNABORTED` | 超过 `timeout`（axios 默认也用 `ECONNABORTED`），含读响应体中途的等待超时 |
-| `InvalidUrl` | `ERR_INVALID_URL` | 既没有 `url` 也没有可用的 `base_url` |
+| `Network` | `ERR_NETWORK` | 连接失败、DNS 解析失败、TLS 握手失败；读响应体中途连接被重置；代理拒绝建立隧道（`message` 里带 CONNECT 的状态码） |
+| `Timeout` | `ECONNABORTED` | 超过 `timeout`（axios 默认也用 `ECONNABORTED`），含读响应体中途的等待超时与与代理的 CONNECT 握手 |
+| `InvalidUrl` | `ERR_INVALID_URL` | 既没有 `url` 也没有可用的 `base_url`；配了 `proxy` 却没给 `host` |
 | `NotSupported` | `ERR_NOT_SUPPORT` | 传输层无法完成该请求（例如重定向到非 http(s) 协议）；`sse` 拿到的响应不是事件流 |
 | `TooManyRedirects` | `ERR_FR_TOO_MANY_REDIRECTS` | 重定向次数超过 `max_redirects`（默认 5）；错误里带着最后那个 3xx 响应 |
 
@@ -308,7 +330,7 @@ moonhttp/
 └── src/                     业务代码全部在 src/ 下（根目录只放模块元数据与文档）
     ├── (根包)               门面 + 编排：Client / create / request / stream / sse
     │                        / Response / StreamResponse / SseStream / HttpError
-    ├── config/              配置形状、Method、内置默认值、with_* 构建器、合并契约、请求体序列化、重定向的下一跳规则
+    ├── config/              配置形状、Method、内置默认值、with_* 构建器、合并契约、请求体序列化、重定向的下一跳规则、代理配置
     ├── headers/             大小写不敏感的 Headers
     ├── sse/                 SSE 事件解析（纯逻辑：吃字节、吐事件）
     ├── url/                 绝对地址判定、拼接、params 序列化、Location 的相对解析
@@ -333,7 +355,7 @@ moonhttp/
 
 - `get` / `post` / `put` / `delete` / `head` / `options` / `patch` 等快捷方法（都是 `request` 的薄封装，见「后续扩展」）
 - 拦截器（`interceptors`）、取消（`CancelToken` / `signal`）
-- 代理（`proxy`）
+- 代理的 SOCKS 支持、`http_proxy` / `no_proxy` 环境变量与按请求关闭代理的开关（显式 `proxy` 配置已支持，见「代理」）
 - 重定向的 `beforeRedirect` 回调与自定义敏感头名单（`sensitiveHeaders`）：跟随规则固定，见 [`docs/08-redirects.md`](docs/08-redirects.md)
 - 上传进度（`onUploadProgress`）：请求体是一次性字节，不支持流式上传（表单含文件时整块驻留内存）
 - 下载进度回调（`onDownloadProgress`）：没有回调字段，但流式路径下按 `read_some` 每块大小累加即可自己统计
@@ -353,6 +375,7 @@ moonhttp/
 - 响应体没有默认解码的字段：`Response` 只保存原始字节，`text()`（按 `response_encoding` 解码）、`bytes()`（精确字节）、`json()`（解码后 `@json.parse`）由你显式选。axios 的 `res.data` 是 `any`，靠 `responseType` / `transformResponse` / `forcedJSONParsing` 自动解析；本项目不做那一套，`json()` 不看 `Content-Type`、失败抛 `@json.ParseError`。二进制内容用 `bytes()`（或改走 `Client::stream`）。
 - 没有可变的全局默认值。axios 的全局 `axios.defaults` 在本项目里对应 `@config.defaults()`（固定的内置默认值）；要定制请用 `create(...)` 或 `client.create(...)` 派生。
 - 重定向（`maxRedirects`）默认 5 跳（axios 请求配置文档的默认值；它底层 follow-redirects 自己兜底是 21，文档与实现并不一致，本项目取文档口径）。四处与 axios 不同：超限错误的 `code` 同名但**带最后那个 3xx 响应**（axios 的错误里没有响应）；`response.config` 是**最后一跳**的配置（axios 是最初的配置，最终地址只在 `response.request` 上）；`timeout` 是**每一跳各算一份**（axios 是整条链一个计时器）；负数上限按「不跟随」处理。完整规则与差异表见 [`docs/08-redirects.md`](docs/08-redirects.md)。
+- 代理有五处与 axios 不同：**不读** `http_proxy` / `https_proxy` / `no_proxy` 环境变量；没有 `proxy: false` 这类「按请求关掉」的写法；http 目标也走 CONNECT 隧道（axios 对 http 目标用「请求行里放完整地址」的经典写法）；用户在 `headers` 里自定义的 `Proxy-Authorization` 在有代理时只发给代理、不会随请求穿过隧道发给源站；`protocol` 是枚举 `ProxyProtocol` 而不是字符串。差异表见 [`docs/09-proxy.md`](docs/09-proxy.md)。
 
 ### 后续扩展
 

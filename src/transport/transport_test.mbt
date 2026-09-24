@@ -23,6 +23,7 @@ async test "mock transport records requests and serves queued responses" {
     headers: @transport.Headers::new(),
     body: None,
     timeout: None,
+    proxy: None,
   }
   let first = transport.send(request)
   assert_eq(first.body.read_all(), b"first")
@@ -48,6 +49,7 @@ async test "mock transport without responses fails loudly" {
     headers: @transport.Headers::new(),
     body: None,
     timeout: None,
+    proxy: None,
   }
   let error = try {
     ignore(transport.send(request))
@@ -72,6 +74,7 @@ async test "mock transport propagates configured failure" {
     headers: @transport.Headers::new(),
     body: Some(b"payload"),
     timeout: Some(1000),
+    proxy: None,
   }
   let error = try {
     ignore(transport.send(request))
@@ -95,6 +98,7 @@ async test "async transport classifies unsupported protocols" {
     headers: @transport.Headers::new(),
     body: None,
     timeout: Some(1000),
+    proxy: None,
   }
   let error = try {
     ignore(transport.send(request))
@@ -125,6 +129,7 @@ async test "async transport classifies connection failures" {
     body: None,
     // 给一个上限，避免万一卡在重试上导致测试挂住
     timeout: Some(3000),
+    proxy: None,
   }
   let error = try {
     ignore(transport.send(request))
@@ -156,6 +161,7 @@ async test "mock transport accessors" {
       headers: @transport.Headers::new(),
       body: None,
       timeout: None,
+      proxy: None,
     }),
   )
   assert_eq(mock.received().length(), 1)

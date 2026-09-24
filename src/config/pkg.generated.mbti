@@ -39,6 +39,7 @@ pub(all) struct Config {
   response_encoding : ResponseEncoding?
   params : Json?
   auth : Auth?
+  proxy : Proxy?
   headers : @headers.Headers?
   common_headers : @headers.Headers?
   method_headers : Map[Method, @headers.Headers]?
@@ -67,6 +68,7 @@ pub fn Config::with_max_redirects(Self, Int) -> Self
 pub fn Config::with_method(Self, Method) -> Self
 pub fn Config::with_method_header(Self, Method, StringView, String) -> Self
 pub fn Config::with_params(Self, Json) -> Self
+pub fn Config::with_proxy(Self, String, port? : Int, protocol? : ProxyProtocol, username? : String, password? : String) -> Self
 pub fn Config::with_response_encoding(Self, ResponseEncoding) -> Self
 pub fn Config::with_timeout(Self, Int) -> Self
 pub fn Config::with_url(Self, String) -> Self
@@ -118,6 +120,28 @@ pub fn Method::not_equal(Self, Self) -> Bool
 pub fn Method::parse(StringView) -> Self?
 pub fn Method::to_repr(Self) -> @debug.Repr
 pub fn Method::to_string(Self) -> String
+
+pub(all) struct Proxy {
+  protocol : ProxyProtocol?
+  host : String?
+  port : Int?
+  auth : Auth?
+} derive(Default, Eq, @debug.Debug)
+pub fn Proxy::default() -> Self
+pub fn Proxy::equal(Self, Self) -> Bool
+pub fn Proxy::is_usable(Self) -> Bool
+pub fn Proxy::not_equal(Self, Self) -> Bool
+pub fn Proxy::to_repr(Self) -> @debug.Repr
+pub fn Proxy::to_string(Self) -> String
+
+pub(all) enum ProxyProtocol {
+  Http
+  Https
+} derive(Eq, @debug.Debug)
+pub fn ProxyProtocol::equal(Self, Self) -> Bool
+pub fn ProxyProtocol::not_equal(Self, Self) -> Bool
+pub fn ProxyProtocol::to_repr(Self) -> @debug.Repr
+pub fn ProxyProtocol::to_string(Self) -> String
 
 pub(all) enum ResponseEncoding {
   Utf8
