@@ -1,0 +1,17 @@
+// 示例：不同请求方式（GET / HEAD / POST / PUT / PATCH / DELETE / OPTIONS /
+// TRACE）、请求体四种形态（raw / json / urlencoded / multipart）与不同响应内容
+// （JSON / 纯文本 / 二进制 / 201 / 204 / chunked / 非法 JSON）。
+// 用 `moon run src/main/methods` 执行。
+//
+// 靶子是本程序自己起的 echo server：它把「实际收到了什么」回吐给客户端，
+// 所以每行输出都是服务端视角的证据，而不是客户端的自我声明。
+// 本包不随模块发布（根目录的 `.moonignore` 排除了 src/main/）。
+import {
+  "moonbitlang/async",
+  "moonbitlang/async/http",
+  "moonbitlang/async/socket",
+  "moonbitlang/core/encoding/utf8",
+  "q2316367743/moonhttp",
+}
+
+pkgtype(kind: "executable")

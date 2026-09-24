@@ -1,0 +1,15 @@
+// 示例：上传 / 下载进度回调，以及「进度到 5% 时中途取消」。
+// 用 `moon run src/main/progress` 执行（真实下载那一段需要联网）。
+//
+// 下载用两种靶子：本机 drip server（分块 + 间隔，跑到 100%）与华为云的
+// openjdk tar.gz（真实大文件，5% 时取消）；上传用本机 server（快读跑到 100%，
+// 慢读制造背压后 5% 取消），载荷由代码生成，不依赖磁盘文件。
+// 本包不随模块发布（根目录的 `.moonignore` 排除了 src/main/）。
+import {
+  "moonbitlang/async",
+  "moonbitlang/async/http",
+  "moonbitlang/async/socket",
+  "q2316367743/moonhttp",
+}
+
+pkgtype(kind: "executable")

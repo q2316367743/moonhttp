@@ -1,0 +1,12 @@
+// 示例：代理（CONNECT 隧道）。打的是真实站点，需要一个本机 HTTP 代理
+// （默认 `http://127.0.0.1:7890`）与联网。
+// 用 `moon run src/main/proxy` 执行。
+// 本包不随模块发布（根目录的 `.moonignore` 排除了 src/main/）。
+import {
+  "moonbitlang/async",
+  // `String::parse_int`（把代理 URL 里的端口文本转成 Int）在这个包里
+  "moonbitlang/core/string",
+  "q2316367743/moonhttp",
+}
+
+pkgtype(kind: "executable")

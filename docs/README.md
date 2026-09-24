@@ -18,6 +18,7 @@
 | 10 | [上传 / 下载进度](10-progress.md) | `onUploadProgress` / `onDownloadProgress` 的落点、`ProgressEvent`（`loaded` / `total` / `progress()`）与 `noraise` 回调、上传的 64 KiB 分块与「分块不改变线上格式」（本来就是 chunked）、下载只由「库读全量」触发、`total` 为什么会不准（chunked / 压缩）、重定向每跳重置、Mock 不触发上传进度 | 要改进度回调、排查进度不准，或动 `ResponseBody` / `PreparedRequest` 的字段时 |
 | 11 | [拦截器](11-interceptors.md) | 两段式（请求侧 `Config -> Config`、响应侧 `Response -> Response` / 错误处理器）与它对齐 axios 的顺序（请求 LIFO、响应 FIFO）、错误在链上的流转、一次请求只跑一遍（不在重定向循环里）、三种入口的覆盖范围、响应五个改写入口 `Response::with_*`（含 `with_json` 的结构化写回与读 / 写编码对称）与它的三条边界（不同步响应头、不能凭空造、不改读法）、「解析 → 处理 → 写回」三条后处理配方、`transformRequest` / `transformResponse` 在本项目的对应关系（两段拦截器是它们的超集）、重试与「缓存命中」配方、为什么挂在 `Client` 而不是 `Config`、为什么不做洋葱中间件、与 axios 的差异 | 要加拦截器行为、改链的顺序 / 落点，或要给 `Response` 加改写入口时 |
 | 12 | [取消请求](12-cancellation.md) | `CancelToken` 的对外契约（一次性 / 可共享 / 取消晚一步也算数）、为什么机制是**协程级取消**而不是查标志位（与 `with_timeout` 同一套）、检查与中断的五个落点（预检查 / 每跳发送 / 两次 I/O 之间 / 每次读取 / 取消后释放连接）、`ERR_CANCELED` 与「错误里带部分响应」、与 `timeout` / 拦截器重试 / 进度回调的关系、Mock 不模拟取消中断、与 axios 的差异 | 要改取消行为、要动传输层的挂起路径，或排查「取消没生效」时 |
+| 13 | [可运行示例](13-runnable-examples.md) | `src/main/` 下七个方向的可运行示例怎么组织、每个示例为什么选那个靶子（本机 server vs 真实站点）、加一个新示例的清单、打印节流与 `allow_failure` 这些约定，以及示例跑出来的两个已知问题（HTTPS 上「从进度回调里取消」会让原生进程崩溃、取消的错误分类会抖成 `ERR_NETWORK`）与修法方向 | 要加 / 改 `src/main/` 下的示例，或要修取消链路上这两条 HTTPS 专有问题时 |
 
 ## 改动时的同步清单
 

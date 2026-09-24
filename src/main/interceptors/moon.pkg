@@ -1,0 +1,15 @@
+// 示例：请求 / 响应拦截器（axios 式两段链）。
+// 用 `moon run src/main/interceptors` 执行。
+//
+// 靶子是本程序自己起的 echo server：它把收到的头回吐出来，
+// 所以「拦截器补的 token 真的发出去了」这类结论有服务端证据。
+// 本包不随模块发布（根目录的 `.moonignore` 排除了 src/main/）。
+import {
+  "moonbitlang/async",
+  "moonbitlang/async/http",
+  "moonbitlang/async/socket",
+  "moonbitlang/core/encoding/utf8",
+  "q2316367743/moonhttp",
+}
+
+pkgtype(kind: "executable")

@@ -1,0 +1,13 @@
+// 示例：SSE 事件流的解析（`Client::sse` + `SseStream`）。
+// 用 `moon run src/main/sse` 执行。
+//
+// 靶子是本机的 OpenAI 兼容服务（默认 http://127.0.0.1:8910/v1）：
+// POST /v1/chat/completions 带 `stream: true`，逐事件读模型吐出来的分片。
+// 本包不随模块发布（根目录的 `.moonignore` 排除了 src/main/）。
+import {
+  "moonbitlang/async",
+  "moonbitlang/core/json",
+  "q2316367743/moonhttp",
+}
+
+pkgtype(kind: "executable")

@@ -1,0 +1,15 @@
+// 示例：请求 → 响应链上几个不同方向（状态码 / 响应头 / 查询参数 / 二进制 /
+// 读法编码 / 状态校验 / 错误分类 / 超时）。
+// 用 `moon run src/main/basics` 执行。
+//
+// 除最后一段真实站点外，其余用例都打本程序自己起的本机 server：
+// 状态码、头、超时这些行为不随外网波动。
+// 本包不随模块发布（根目录的 `.moonignore` 排除了 src/main/）。
+import {
+  "moonbitlang/async",
+  "moonbitlang/async/http",
+  "moonbitlang/async/socket",
+  "q2316367743/moonhttp",
+}
+
+pkgtype(kind: "executable")

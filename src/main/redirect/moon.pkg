@@ -1,0 +1,15 @@
+// 示例：自动重定向（跳转的跟随判定、下一跳的改写规则、上限、关掉跟随）。
+// 用 `moon run src/main/redirect` 执行。
+//
+// 本机 server 负责「确定的跳转」（301/302/303/307/308、成环、跨 host），
+// 最后两条打真实站点（国内直连可达），所有外网请求都收在 try / catch 里。
+// 本包不随模块发布（根目录的 `.moonignore` 排除了 src/main/）。
+import {
+  "moonbitlang/async",
+  "moonbitlang/async/http",
+  "moonbitlang/async/socket",
+  "moonbitlang/core/string",
+  "q2316367743/moonhttp",
+}
+
+pkgtype(kind: "executable")

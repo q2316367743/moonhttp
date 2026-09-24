@@ -45,9 +45,11 @@ async fn main {
 }
 ```
 
-覆盖更多场景的完整示例（文本响应、JSON、查询参数、实例派生、错误处理、拦截器）在
-[`src/main/main.mbt`](https://github.com/q2316367743/moonhttp/blob/master/src/main/main.mbt)，
-用 `moon run src/main` 执行（需要联网）。
+覆盖更多场景的示例在 [`src/main/`](https://github.com/q2316367743/moonhttp/blob/master/src/main/README.md)：
+快速上手那段（文本响应、JSON、查询参数、实例派生、错误处理、拦截器）用 `moon run src/main` 执行（需要联网），
+另有七个方向各一个可单独运行的包——`basics`（状态码 / 头 / 查询参数 / 编码 / 错误 / 超时）、
+`methods`（请求方式 × 请求体形态 × 响应内容）、`proxy`、`progress`（上传下载进度与 5% 取消）、
+`redirect`、`interceptors`、`sse`，跑法都是 `moon run src/main/<方向>`。
 
 ## 功能与用法
 
@@ -276,15 +278,21 @@ println(mock.last_request().unwrap().url) // 已经拼好 base_url 与 query 的
 
 ## 参与开发
 
-代码在 `src/` 下（七个功能包 + 一个可运行示例），实现思路、契约与改动清单在
+代码在 `src/` 下（七个功能包 + 一组可运行示例），实现思路、契约与改动清单在
 [`docs/`](https://github.com/q2316367743/moonhttp/blob/master/docs/README.md)。
 
 ```bash
 moon check              # 类型检查
 moon test               # 全部测试（不需要外网）
-moon run src/main        # 真实网络的示例（本地手动测试用，不随包发布）
+moon run src/main        # 快速上手示例（真实网络，本地手动测试用，不随包发布）
+moon run src/main/proxy  # 其余七个方向同理：把 <方向> 换成 basics/methods/proxy/
+                         # progress/redirect/interceptors/sse 之一
 moon info && moon fmt   # 更新 .mbti 接口并格式化，提交前跑一次
 ```
+
+示例的索引（每个演示什么、前置条件是什么）在
+[`src/main/README.md`](https://github.com/q2316367743/moonhttp/blob/master/src/main/README.md)，
+维护者视角的取舍与「加一个新示例要做什么」在 [`docs/13`](https://github.com/q2316367743/moonhttp/blob/master/docs/13-runnable-examples.md)。
 
 提交前建议把钩子装上，每次 commit 会自动跑一遍 `moon check`：
 
