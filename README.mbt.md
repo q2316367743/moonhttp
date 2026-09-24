@@ -31,14 +31,14 @@ async fn main {
 ## 安装
 
 ```bash
-moon add q2316368843/moonhttp
+moon add q2316367743/moonhttp
 ```
 
 `moon.mod` 里会记录：
 
 ```toml
 import {
-  "q2316368843/moonhttp@0.1.0",
+  "q2316367743/moonhttp@0.1.0",
 }
 ```
 
@@ -372,7 +372,7 @@ pub async fn Client::get(
 ```bash
 moon check              # 类型检查（pre-commit 钩子跑的就是它）
 moon test               # 全部测试
-moon test -p q2316368843/moonhttp/merge   # 只跑某个包
+moon test -p q2316367743/moonhttp/merge   # 只跑某个包
 moon run src/cmd/main   # 真实网络示例
 moon info && moon fmt   # 更新 .mbti 接口文件并格式化
 moon coverage analyze   # 覆盖率

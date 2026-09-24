@@ -33,7 +33,7 @@ SSE 规范允许行尾是 **CRLF / LF / CR** 三种。CRLF 流上事件边界（
 ## 公开 API
 
 ```moonbit
-// 解析器（包 q2316368843/moonhttp/sse，根包用 pub using 再导出）
+// 解析器（包 q2316367743/moonhttp/sse，根包用 pub using 再导出）
 pub(all) struct SseEvent {
   event : String   // 事件类型，缺省 "message"
   data : String    // 多条 data: 行用 "\n" 连接

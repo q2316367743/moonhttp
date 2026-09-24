@@ -9,7 +9,7 @@
 //   "moonbitlang/x@0.4.6",
 // }
 
-name = "q2316368843/moonhttp"
+name = "q2316367743/moonhttp"
 
 version = "0.1.0"
 

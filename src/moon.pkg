@@ -11,11 +11,11 @@
 import {
   "moonbitlang/core/debug",
   "moonbitlang/core/json",
-  "q2316368843/moonhttp/config",
-  "q2316368843/moonhttp/headers",
-  "q2316368843/moonhttp/sse",
-  "q2316368843/moonhttp/transport",
-  "q2316368843/moonhttp/util",
+  "q2316367743/moonhttp/config",
+  "q2316367743/moonhttp/headers",
+  "q2316367743/moonhttp/sse",
+  "q2316367743/moonhttp/transport",
+  "q2316367743/moonhttp/util",
 }
 
 // 白盒测试被编进本包，看见的是**生产** import 那份清单，所以要单独声明
@@ -38,5 +38,5 @@ import {
   "moonbitlang/async/http",
   "moonbitlang/async/socket",
   "moonbitlang/core/encoding/utf8",
-  "q2316368843/moonhttp/transport",
+  "q2316367743/moonhttp/transport",
 } for "test"

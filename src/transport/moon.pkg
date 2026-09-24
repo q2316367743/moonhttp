@@ -10,8 +10,8 @@ import {
   "moonbitlang/core/buffer",
   "moonbitlang/core/debug",
   "moonbitlang/core/encoding/utf8",
-  "q2316368843/moonhttp/config",
-  "q2316368843/moonhttp/headers",
+  "q2316367743/moonhttp/config",
+  "q2316367743/moonhttp/headers",
 }
 
 // socket 只给测试用：起一个本机 server 验证真实连接的流式读取。

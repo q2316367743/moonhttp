@@ -1,9 +1,9 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "q2316368843/moonhttp/config"
+package "q2316367743/moonhttp/config"
 
 import {
   "moonbitlang/core/debug",
-  "q2316368843/moonhttp/headers",
+  "q2316367743/moonhttp/headers",
 }
 
 // Values

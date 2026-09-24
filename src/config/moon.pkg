@@ -9,8 +9,8 @@ import {
   "moonbitlang/core/debug",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/random",
-  "q2316368843/moonhttp/headers",
-  "q2316368843/moonhttp/url",
+  "q2316367743/moonhttp/headers",
+  "q2316367743/moonhttp/url",
 }
 
 // 黑盒测试要自己声明依赖（它们是按「外部使用者」编译的）。

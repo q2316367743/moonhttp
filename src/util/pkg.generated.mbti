@@ -1,10 +1,10 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "q2316368843/moonhttp/util"
+package "q2316367743/moonhttp/util"
 
 import {
-  "q2316368843/moonhttp/config",
-  "q2316368843/moonhttp/headers",
-  "q2316368843/moonhttp/transport",
+  "q2316367743/moonhttp/config",
+  "q2316367743/moonhttp/headers",
+  "q2316367743/moonhttp/transport",
 }
 
 // Values

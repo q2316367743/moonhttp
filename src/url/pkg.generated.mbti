@@ -1,5 +1,5 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "q2316368843/moonhttp/url"
+package "q2316367743/moonhttp/url"
 
 // Values
 pub fn build_full_path(String?, String?, Bool?) -> String?

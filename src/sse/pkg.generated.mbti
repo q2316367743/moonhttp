@@ -1,5 +1,5 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "q2316368843/moonhttp/sse"
+package "q2316367743/moonhttp/sse"
 
 import {
   "moonbitlang/core/debug",

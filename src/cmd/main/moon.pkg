@@ -5,7 +5,7 @@
 // （`Json` 是内建类型，模式匹配直接可用）。
 import {
   "moonbitlang/async",
-  "q2316368843/moonhttp",
+  "q2316367743/moonhttp",
 }
 
 pkgtype(kind: "executable")
