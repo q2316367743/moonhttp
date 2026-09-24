@@ -62,21 +62,25 @@ pub using @sse {type SseEvent, type SseParser}
 pub using @transport {trait Transport}
 
 // ---------------------------------------------------------------------------
-// 2. Response —— 做完解码的响应对象
+// 2. Response —— 读完的响应：字节在手，读法由调用方选
 // ---------------------------------------------------------------------------
 
 ///|
 /// 对外的响应对象，对应 axios 的 `AxiosResponse`。
+///
+/// **响应体只保留原始字节**（私有字段 `raw`），怎么读由三个方法决定：
+/// - `bytes()`：原始字节，二进制内容或「想用别的编码自己解」走这里；
+/// - `text()`：按 `config.response_encoding` 解码成文本（lossy）；
+/// - `json()`：先按同一编码解成文本，再交给 `@json.parse`。
+///
+/// 这是与 axios 的一处刻意差异：axios 的 `res.data` 是 `any`，由 `responseType` /
+/// `transformResponse` / `forcedJSONParsing` 猜出来；本项目不猜——没有「默认解码」
+/// 这一说，读法摆在方法上。猜内容类型在静态类型下只会把错误推迟
+/// （`text/plain` 的 `123` 被解成数字那类静默错误），多一次显式调用反而是更便宜的。
+///
+/// 字段私有是为了让「怎么读」只有一个落点：`raw` 一旦公开，调用方就会各自
+/// 按自己的编码解一遍，`response_encoding` 这个配置项也就名存实亡了。
 pub(all) struct Response {
-  /// 响应体文本：原始字节按 `response_encoding` 解码后的**原文**。
-  ///
-  /// 这里**不做 JSON 解析**（这是与 axios 的一处刻意差异）：要对象请自己
-  /// `@json.parse(response.data)`，解析失败也由调用方按自己的语境处理。
-  /// 自动猜内容类型在静态类型下只会把错误推迟——`text/plain` 的 `123`
-  /// 被解成数字那类静默错误，比多写一行 `@json.parse` 贵得多。
-  ///
-  /// 该编码下非法的字节会解成替换字符 `U+FFFD`（lossy）；需要精确字节时读 `raw`。
-  data : String
   /// HTTP 状态码
   status : Int
   /// 状态码对应的原因短语，例如 `OK`
@@ -85,12 +89,52 @@ pub(all) struct Response {
   headers : Headers
   /// 触发这次响应的配置（**已完成合并**），与 axios 的 `response.config` 一致
   config : Config
-  /// 未经解码的原始响应体字节
-  raw : Bytes
+  /// 未经解码的原始响应体字节。读取入口是本类型的 `bytes` / `text` / `json`。
+  priv raw : Bytes
 } derive(Debug)
 
 ///|
 pub extend Response with @debug.Debug::{to_repr}
+
+///|
+/// 原始响应字节，不做任何解码。
+///
+/// 需要精确字节、二进制内容（图片、压缩包），或想按另一种编码自己解时用它；
+/// `content_length()` 数的也是这份字节。文本请用 `text()`。
+pub fn Response::bytes(self : Response) -> Bytes {
+  self.raw
+}
+
+///|
+/// 按 `config.response_encoding` 把响应体解成文本（编码未设置时按 UTF-8，
+/// 与 `defaults()` 里显式设的默认值一致）。
+///
+/// 解码一律 lossy：该编码下非法的字节解成替换字符 `U+FFFD`，**不抛错**
+/// ——响应正文由服务端说了算，为了几个坏字节把整个响应判成失败得不偿失。
+/// 需要精确字节读 `bytes()`。
+///
+/// 解码是按需做的：`Response` 里只有字节、不缓存文本，调几次就解几次。
+/// 同一份响应要反复读文本时（例如在循环里），自己解一次存起来更划算。
+pub fn Response::text(self : Response) -> String {
+  @util.decode_body(self.raw, self.config.response_encoding.unwrap_or(Utf8))
+}
+
+///|
+/// 把响应体当 JSON 解析：先按 `text()` 那套规则（`config.response_encoding`）
+/// 解成文本，再交给 `@json.parse`（`Json` 是内建类型，不必 import 额外的东西）。
+///
+/// 解析失败抛的是 `@json.ParseError`（带出错位置），**不是 `HttpError`**——
+/// 「HTTP 这一层出没出问题」与「正文是不是合法 JSON」是两类事：状态码不合规
+/// 早在 `request` 里就抛过了，能拿到 `Response` 说明这一层已经成功；
+/// 把解析错误混进 `HttpError` 只会让两边的分类都变模糊。不想处理解析错误的
+/// 调用方用 `try! response.json()`，与手写 `try! @json.parse(response.text())` 等价。
+///
+/// 与 axios 的差别同样在这里：**只有显式调用才解析**，且不看 `Content-Type`
+/// 猜——`123`、`true`、`"x"` 这些纯文本本身就是合法 JSON 文本，猜错的后果是
+/// 静默的（文本被解成数字）。判断「这到底是不是 JSON」交给知道上下文的那一层。
+pub fn Response::json(self : Response) -> Json raise @json.ParseError {
+  @json.parse(self.text())
+}
 
 ///|
 /// 状态码是否落在 2xx。
@@ -103,7 +147,7 @@ pub fn Response::is_success(self : Response) -> Bool {
 }
 
 ///|
-/// 响应体的字节长度。
+/// 响应体的字节长度，等价于 `bytes().length()`。
 pub fn Response::content_length(self : Response) -> Int {
   self.raw.length()
 }
@@ -120,8 +164,9 @@ pub fn Response::content_length(self : Response) -> Int {
 /// 把二进制数据解成一堆无意义的事件。
 ///
 /// 与 `Response` 的差别都由「响应体还没读」这一条派生出来：
-/// - 没有 `data`：响应体可能无限长，读全量不现实；
-/// - 没有 `raw`：字节还没读出来，需要时用 `read_all()` 取；
+/// - 没有 `text()` / `bytes()` / `json()`：字节还没读出来，读多少由调用方
+///   经 `read_some` / `read_until` / `read_all` 决定（`Response` 是已经读完的那份）；
+/// - 响应体可能无限长，`Response` 那条「读全量再交出去」的路在这里不成立；
 /// - 读取随时可能失败：统一抛 `HttpError`，错误里带着**已经收到的响应**
 ///   （状态行与响应头一定在；`read_all` 读到一半失败时还有已读到的字节），
 ///   调用方不必认识传输层错误。
@@ -238,7 +283,7 @@ pub async fn StreamResponse::read_until(
 /// 用于「先拿流判断状态码、再一次性取内容」的场景（例如下载）。
 ///
 /// 中途失败时抛 `HttpError`，并且**已经读到的字节不会丢**：它们与状态行、
-/// 响应头一起挂在错误的响应上（`HttpError::response()` 的 `raw` / `data`）
+/// 响应头一起挂在错误的响应上（`HttpError::response()` 的 `bytes()` / `text()`）
 /// ——下载断在 90% 时，这 90% 就是现场。
 pub async fn StreamResponse::read_all(
   self : StreamResponse,

@@ -24,18 +24,19 @@ pub extend Auth with @debug.Debug::{to_repr}
 ///|
 /// 响应体字节怎么解码成文本，对应 axios 的 `responseEncoding`（默认 `utf-8`）。
 ///
-/// 它只描述「字节 → 文本」这一步：`Response::data` 就是按它解码出来的字符串。
-/// 本项目**不做 JSON 解析**（axios 的 `responseType` / `transformResponse`
-/// 没有对应物），要对象请自己对 `response.data` 调用 `@json.parse`。
+/// 它只描述「字节 → 文本」这一步：`Response::text()` 就是按它解码出来的字符串，
+/// `Response::json()` 也先走这一步、再交给 `@json.parse`。
+/// 本项目**不做自动解析**（axios 的 `responseType` / `transformResponse`
+/// 没有对应物）：`json()` 必须显式调用，且不拿 `Content-Type` 做判断。
 ///
 /// **这里只描述怎么解码，不描述读不读。** 「读全量还是流」由入口决定：
-/// `Client::request` 读全并解码、`Client::stream` 交原始字节、
+/// `Client::request` 读全量并交出响应、`Client::stream` 交原始字节流、
 /// `Client::sse` 按规范固定 UTF-8 解析事件。所以这个字段只在 `request`
-/// 路径上生效——流式入口连 `data` 都没有，解码不是它们的事。
+/// 那条路上有落点——流式入口连 `Response` 都没有，解码不是它们的事。
 ///
 /// 解码一律是 lossy 的：遇到该编码下非法的字节用替换字符 `U+FFFD`，
 /// 不抛错。响应正文由服务端说了算，为了几个坏字节把整个响应判成失败
-/// 得不偿失；要精确字节请读 `Response::raw`。
+/// 得不偿失；要精确字节请读 `Response::bytes()`。
 pub(all) enum ResponseEncoding {
   /// 默认：UTF-8
   Utf8

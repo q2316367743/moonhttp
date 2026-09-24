@@ -1,9 +1,12 @@
-// 响应体解码的用例：`response_encoding` 怎么把字节解成 `Response::data`。
+// 响应体解码的用例：`response_encoding` 怎么把字节解成 `Response::text()`。
 //
 // 默认是 UTF-8（对齐 axios 的 `responseEncoding` 默认值），可选 latin1 /
 // ascii / utf-16le。这里逐条钉住边界，重点是那条 lossy 约定：
 // 该编码下非法的字节解成替换字符，**不抛错**——响应正文由服务端说了算，
 // 为了几个坏字节把整个响应判成失败得不偿失。
+//
+// 解码发生在**读文本的时候**（`text()` / `json()`），所以每条用例都是先在
+// 配置里指定编码、再调读法；`bytes()` 那条路完全不经过编码。
 
 ///|
 /// 造一份带精确字节的原始响应；`content_type` 为 `None` 表示不带这个头。
@@ -27,21 +30,21 @@ fn byte_response(
 }
 
 ///|
-/// 默认按 UTF-8 解码：中文原样解出，`data` 就是解码后的原文。
+/// 默认按 UTF-8 解码：中文原样解出，`text()` 就是解码后的原文。
 async test "the default encoding decodes utf-8" {
   let (client, _) = client_with(
     byte_response(Some("text/plain"), @utf8.encode("中文")),
   )
-  assert_eq(client.request(@moonhttp.Config::new("/x")).data, "中文")
+  assert_eq(client.request(@moonhttp.Config::new("/x")).text(), "中文")
 }
 
 ///|
-/// UTF-8 遇到非法字节解成替换字符，不抛错；精确字节仍在 `raw` 上。
+/// UTF-8 遇到非法字节解成替换字符，不抛错；精确字节仍在 `bytes()` 上。
 async test "invalid utf-8 bytes become replacement characters" {
   let (client, _) = client_with(byte_response(None, b"a\xffb"))
   let response = client.request(@moonhttp.Config::new("/x"))
-  assert_eq(response.data, "a\u{FFFD}b")
-  assert_eq(response.raw.length(), 3)
+  assert_eq(response.text(), "a\u{FFFD}b")
+  assert_eq(response.bytes(), b"a\xffb")
 }
 
 ///|
@@ -53,7 +56,7 @@ async test "latin1 maps byte values to code points" {
       @moonhttp.ResponseEncoding::Latin1,
     ),
   )
-  assert_eq(response.data, "café")
+  assert_eq(response.text(), "café")
 }
 
 ///|
@@ -65,7 +68,7 @@ async test "ascii replaces bytes above 0x7f" {
       @moonhttp.ResponseEncoding::Ascii,
     ),
   )
-  assert_eq(response.data, "ok\u{FFFD}")
+  assert_eq(response.text(), "ok\u{FFFD}")
 }
 
 ///|
@@ -77,7 +80,7 @@ async test "utf-16le decodes two byte code units" {
       @moonhttp.ResponseEncoding::Utf16le,
     ),
   )
-  assert_eq(response.data, "中文")
+  assert_eq(response.text(), "中文")
 }
 
 ///|
@@ -90,13 +93,29 @@ async test "instance default encoding is overridden by the request" {
       @moonhttp.ResponseEncoding::Latin1,
     ),
   )
-  assert_eq(api.request(@moonhttp.Config::new("/x")).data, "café")
+  assert_eq(api.request(@moonhttp.Config::new("/x")).text(), "café")
   assert_eq(
-    api.request(
+    api
+    .request(
       @moonhttp.Config::new("/x").with_response_encoding(
         @moonhttp.ResponseEncoding::Utf8,
       ),
-    ).data,
+    )
+    .text(),
     "caf\u{FFFD}",
   )
+}
+
+///|
+/// `json()` 走的是 `text()` 同一套解码：字节先按 `response_encoding` 解成文本，
+/// 再交给 `@json.parse`，所以 latin1 的 `0xE9` 在解析之前就已经是 `é` 了
+/// （若跳过解码直接解析，这份正文根本解不出来）。
+async test "json decodes with the configured encoding first" {
+  let (client, _) = client_with(byte_response(None, b"{\"name\": \"caf\xe9\"}"))
+  let response = client.request(
+    @moonhttp.Config::new("/x").with_response_encoding(
+      @moonhttp.ResponseEncoding::Latin1,
+    ),
+  )
+  assert_eq(response.json(), { "name": "café" })
 }

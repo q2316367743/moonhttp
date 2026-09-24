@@ -22,10 +22,10 @@ async test "request merges defaults builds url and reads body" {
       "tags": ["a", "b"],
     }),
   )
-  // 响应体是解码后的原文，不解析
+  // 响应体读法与请求侧无关：这里是原文
   assert_eq(response.status, 200)
   assert_eq(response.status_text, "OK")
-  assert_eq(response.data, "{\"id\": 1, \"name\": \"moon\"}")
+  assert_eq(response.text(), "{\"id\": 1, \"name\": \"moon\"}")
   assert_true(response.is_success())
   // 请求侧：base_url 拼接 + query 序列化（数组用编码后的 [] ）
   let sent = mock.last_request().unwrap()
@@ -217,21 +217,32 @@ async test "auth produces basic authorization header" {
 }
 
 ///|
-/// `data` 是响应体原文：这一层**不做 JSON 解析**，要对象由调用方自己解。
-async test "response data is the raw text" {
+/// 响应体的三种读法摆在方法上：`text()` 是原文、`bytes()` 是精确字节、
+/// `json()` 才解析——读法由调用方选，库不猜内容类型。
+async test "response body is read through explicit methods" {
   let (client, _) = client_with(raw_response(200, "OK", "{\"a\": 1}"))
   let response = client.request(@moonhttp.Config::new("/x"))
-  assert_eq(response.data, "{\"a\": 1}")
-  // 解析是调用方的事：库不猜内容类型，`text/plain` 的 `123` 也不会变成数字
-  assert_eq(@json.parse(response.data), { "a": 1 })
+  assert_eq(response.text(), "{\"a\": 1}")
+  assert_eq(response.bytes(), b"{\"a\": 1}")
+  // 要对象就调 json()：它内部走的就是 text()，再交给 @json.parse
+  assert_eq(response.json(), { "a": 1 })
 }
 
 ///|
-/// 不是合法 JSON 的正文照样原样交给调用方,既不解码也不报错。
+/// 不是合法 JSON 的正文照样原样交给调用方：`text()` 不解码也不报错，
+/// `json()` 才抛 `@json.ParseError`——解析失败由调用方按自己的语境处理。
 async test "a non json body is handed over as is" {
   let (client, _) = client_with(raw_response(200, "OK", "not json at all"))
   let response = client.request(@moonhttp.Config::new("/x"))
-  assert_eq(response.data, "not json at all")
+  assert_eq(response.text(), "not json at all")
+  let raised = try {
+    ignore(response.json())
+    false
+  } catch {
+    // 抛的是 @json 的解析错误（带出错位置），不是 HttpError
+    _ => true
+  }
+  assert_true(raised)
 }
 
 ///|
@@ -262,5 +273,6 @@ async test "response content length counts bytes" {
   let (client, _) = client_with(raw_response(200, "OK", "中文"))
   let response = client.request(@moonhttp.Config::new("/x"))
   assert_eq(response.content_length(), 6)
-  assert_eq(response.data, "中文")
+  assert_eq(response.bytes().length(), 6)
+  assert_eq(response.text(), "中文")
 }

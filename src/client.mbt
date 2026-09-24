@@ -83,13 +83,14 @@ pub fn Client::defaults(self : Client) -> Config {
 /// 2. 确定请求方法；
 /// 3. 拼接完整地址并追加 query、拍平头、序列化 body；
 /// 4. 交给传输层发送；
-/// 5. 把响应体读到 EOF（读全量才有完整的 `data`）；
-/// 6. 按 `response_encoding` 解码响应体、校验状态码。
+/// 5. 把响应体读到 EOF（读全量才有完整的响应体）；
+/// 6. 校验状态码。
 ///
-/// 与 axios 的一处刻意差异：这里**不解析 JSON**。`Response::data` 是解码后的
-/// 原文，要对象请自己对它调用 `@json.parse`——「猜内容类型」在静态类型下
-/// 只会把错误推迟到调用方，而 `text/plain` 的 `123` 被解成数字那类静默错误
-/// 比多写一行 `@json.parse` 贵得多。
+/// 与 axios 的一处刻意差异：这里**不解析 JSON、也不预先解码**。响应体以原始
+/// 字节交出去，读法由调用方选：`Response::text()`（按 `response_encoding` 解码）、
+/// `Response::bytes()`（精确字节）、`Response::json()`（解码后 `@json.parse`）。
+/// 「猜内容类型」在静态类型下只会把错误推迟到调用方，而 `text/plain` 的 `123`
+/// 被解成数字那类静默错误比多写一行 `@json.parse` 贵得多。
 ///
 /// 传输层的错误在这里被翻译成对外的 `ErrorCode`，
 /// 所以调用方不需要认识 `moonbitlang/async` 的错误类型。
@@ -118,7 +119,7 @@ pub async fn Client::request(
   let raw = self.transport.send(prepared) catch {
     error => raise transport_error(error, merged, None)
   }
-  // 5. 把响应体读到 EOF——读全量才能解出完整的 `data`。读取阶段失败
+  // 5. 把响应体读到 EOF——读全量才有完整的响应体。读取阶段失败
   //    （超时、断连）时响应头早已到手，把状态行、响应头与**读到的部分**
   //    一起挂到错误上，失败现场才不会只剩一个错误码。
   let (body, failure) = raw.body.read_all_partial()
@@ -133,7 +134,7 @@ pub async fn Client::request(
       )
     None => ()
   }
-  // 6. 按 response_encoding 解码响应体，再校验状态码
+  // 6. 校验状态码（解码不在这里：响应体以原始字节交出去，读法由调用方选）
   let response = build_response(
     raw.status,
     raw.status_text,
@@ -184,7 +185,8 @@ async fn Client::open_stream(
       Some(error) => raise transport_error(error, merged, Some(response))
       None => ()
     }
-    // 错误体不做额外处理：按配置的编码解码成原文就交出去，不猜它「应该是什么格式」
+    // 错误体不做额外处理：响应体以原始字节交出，`HttpError::response()` 上
+    // 拿到的 `Response` 自己按配置的编码解（`text()`），不猜它「应该是什么格式」
     // ——错误体格式不可预期，强行解释只会把「状态码失败」这个更准确的原因盖掉。
     raise status_error(response.status, merged, response)
   }
@@ -306,8 +308,8 @@ fn prepare_request(
 }
 
 ///|
-/// 把响应拼成对外的 `Response`：`data` 是按 `response_encoding` 解码的原文、
-/// `raw` 是原始字节。
+/// 把响应拼成对外的 `Response`：只放**原始字节**进去，解码不在这里
+/// ——读法由调用方经 `Response::text` / `bytes` / `json` 选（见 `facade.mbt`）。
 ///
 /// 三处共用它：
 /// - `Client::request` 读全量后的正常路径；
@@ -326,12 +328,5 @@ fn build_response(
   body : Bytes,
   config : Config,
 ) -> Response {
-  {
-    data: @util.decode_body(body, config.response_encoding.unwrap_or(Utf8)),
-    status,
-    status_text,
-    headers,
-    config,
-    raw: body,
-  }
+  { status, status_text, headers, config, raw: body, }
 }

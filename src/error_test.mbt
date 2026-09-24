@@ -16,7 +16,7 @@ async test "status validation maps 4xx and 5xx to distinct codes" {
   }
   let error = error.unwrap()
   assert_eq(error.code(), @moonhttp.ErrorCode::BadRequest)
-  assert_eq(error.response().unwrap().data, "{\"error\": \"nope\"}")
+  assert_eq(error.response().unwrap().text(), "{\"error\": \"nope\"}")
   // 5xx 归到另一档
   let (client, _) = client_with(
     raw_response(500, "Internal Server Error", "{}"),
@@ -213,7 +213,7 @@ async test "request keeps the partial response when the body read fails" {
     let received = error.response().unwrap()
     assert_eq(received.status, 500)
     assert_eq(received.status_text, "Internal Server Error")
-    assert_eq(received.data, "{\"error\": \"too ")
+    assert_eq(received.text(), "{\"error\": \"too ")
   }
 }
 
@@ -243,7 +243,7 @@ async test "stream keeps the partial error body when reading it fails" {
     assert_eq(error.code(), @moonhttp.ErrorCode::Timeout)
     let received = error.response().unwrap()
     assert_eq(received.status, 500)
-    assert_eq(received.data, "{\"error\": \"too ")
+    assert_eq(received.text(), "{\"error\": \"too ")
   }
 }
 
@@ -269,6 +269,7 @@ async test "stream read_all keeps the bytes received before the failure" {
     // 状态码与已读到的字节都在错误里：不用再发一次请求就知道断在哪
     let received = error.response().unwrap()
     assert_eq(received.status, 200)
-    assert_eq(received.data, "0123456789")
+    assert_eq(received.text(), "0123456789")
+    assert_eq(received.bytes(), b"0123456789")
   }
 }

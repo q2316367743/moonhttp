@@ -3,6 +3,7 @@ package "q2316368843/moonhttp"
 
 import {
   "moonbitlang/core/debug",
+  "moonbitlang/core/json",
   "q2316368843/moonhttp/config",
   "q2316368843/moonhttp/headers",
   "q2316368843/moonhttp/sse",
@@ -61,15 +62,17 @@ pub(all) struct ErrorInfo {
 }
 
 pub(all) struct Response {
-  data : String
   status : Int
   status_text : String
   headers : @headers.Headers
   config : @config.Config
-  raw : Bytes
+  // private fields
 } derive(@debug.Debug)
+pub fn Response::bytes(Self) -> Bytes
 pub fn Response::content_length(Self) -> Int
 pub fn Response::is_success(Self) -> Bool
+pub fn Response::json(Self) -> Json raise @json.ParseError
+pub fn Response::text(Self) -> String
 pub fn Response::to_repr(Self) -> @debug.Repr
 
 pub(all) struct SseStream {

@@ -5,8 +5,12 @@
 //   其中纯逻辑那半在 util 包里，这里只留与门面类型接壤的部分。
 // 这里不直接依赖 async 传输实现，只通过 transport 包的 trait 交互，
 // 因此管线本身可以用 Mock 传输层做同步/异步测试。
+//
+// core/json 是生产依赖（不是只为测试）：`Response::json` 是门面上的解析入口，
+// 它抛 `@json.ParseError`，不参与本项目的错误体系（见 facade.mbt）。
 import {
   "moonbitlang/core/debug",
+  "moonbitlang/core/json",
   "q2316368843/moonhttp/config",
   "q2316368843/moonhttp/headers",
   "q2316368843/moonhttp/sse",
@@ -27,11 +31,12 @@ import {
 // server，用真实连接证明「事件能在服务端停顿期间就到达」。**生产代码不碰
 // 这两个包**——对底层库的依赖仍然只出现在 src/transport/ 里，
 // 这正是 docs/README.md 那条分层约束要的效果。
+// core/json 不在测试清单里：`Response::json()` 已经把它包在生产代码里，
+// 用例断言的是门面的返回值，不需要再直接调 `@json`。
 import {
   "moonbitlang/async",
   "moonbitlang/async/http",
   "moonbitlang/async/socket",
   "moonbitlang/core/encoding/utf8",
-  "moonbitlang/core/json",
   "q2316368843/moonhttp/transport",
 } for "test"

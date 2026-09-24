@@ -23,8 +23,8 @@ async fn main {
 
   println(res.status) // 200
   println(res.headers.get("content-type")) // application/json; charset=utf-8
-  println(res.data) // 响应体原文；默认按 UTF-8 解码，不做 JSON 解析
-  println((try! @json.parse(res.data)).stringify()) // 要 JSON 就自己解
+  println(res.text()) // 响应体原文：按 response_encoding 解码（默认 UTF-8）
+  println((try! res.json()).stringify()) // 要对象就 json()，它就是「解码 + 解析」
 }
 ```
 
@@ -80,10 +80,9 @@ import {
 4. 三层头拍平成一份（`common` < 按方法 < 请求级平铺）
 5. 取请求体：`Config::serialize_body()` 给出字节与**建议**的 `Content-Type`（三种形态见下文「请求体」）；有 `auth` 则补 `Authorization`
 6. 交给传输层发送（`timeout > 0` 时套超时），并把响应体读到 EOF
-7. 按 `response_encoding` 把响应体字节解码成 `data`（**不做 JSON 解析**）
-8. 用 `validate_status` 校验状态码，失败则抛 `HttpError`
+7. 用 `validate_status` 校验状态码，失败则抛 `HttpError`
 
-第 3～8 步的实现分别在 [`src/url/`](src/url/)、[`src/util/`](src/util/) 与 [`src/client.mbt`](src/client.mbt) 里：拼地址/头/body 与解码、判定是纯函数（`util`），把它们拼成 `Response`、翻译错误是根包与门面类型接壤的那一层。纯函数那部分可以脱离网络单独测试。第 6 步里「读全量」是 `request` 的选择，不需要完整响应体时改用 [`Client::stream`](#流式响应与-sse) 或 [`Client::sse`](#流式响应与-sse)。
+第 3～7 步的实现分别在 [`src/url/`](src/url/)、[`src/util/`](src/util/) 与 [`src/client.mbt`](src/client.mbt) 里：拼地址/头/body 与判定是纯函数（`util`），把它们拼成 `Response`、翻译错误是根包与门面类型接壤的那一层。纯函数那部分可以脱离网络单独测试。第 6 步里「读全量」是 `request` 的选择，不需要完整响应体时改用 [`Client::stream`](#流式响应与-sse) 或 [`Client::sse`](#流式响应与-sse)；响应体到手之后怎么读，由你在 `Response` 上选 `text()` / `bytes()` / `json()`（见下文「响应体怎么读」）。
 
 失败时抛出的 `HttpError` 会带上**已经收到的响应**：响应头到手之后才可能开始读响应体，所以读取阶段的任何失败（超时、断连）都不等于「什么都没收到」——状态行、响应头与失败前读到的部分正文都会挂在错误上，见[错误处理](#错误处理)。
 
@@ -127,9 +126,17 @@ api.request(@moonhttp.Config::new("/login")
 代价是头与正文可能对不上（例如你钉死了 boundary）。表单的逐字节布局、
 `name` / `filename` 的 WHATWG 转义、boundary 的生成规则见 [`docs/07-request-body.md`](docs/07-request-body.md)。
 
-### `data` 是解码后的原文
+### 响应体怎么读：`text()` / `bytes()` / `json()`
 
-`request` 把响应体完整读出来，按 `response_encoding` 解码成 `Response::data`（`String`）：
+`request` 把响应体完整读出来，交出去的是**原始字节**；怎么读由你在 `Response` 上选一个方法：
+
+| 方法 | 做什么 | 什么时候用 |
+|---|---|---|
+| `text()` | 按 `response_encoding` 解码成文本 | 文本响应正文（这是最常用的一步） |
+| `bytes()` | 原样取出字节，不经过任何解码 | 二进制内容、要精确字节 |
+| `json()` | 先按同一编码解码，再 `@json.parse` | 确定对面是 JSON，要对象 |
+
+`response_encoding` 决定的是解码那一步（`json()` 复用同一套规则）：
 
 | `response_encoding` | 解码方式 |
 |---|---|
@@ -138,13 +145,15 @@ api.request(@moonhttp.Config::new("/login")
 | `Ascii` | 只认 `0x00`–`0x7F`，更高的字节 → 替换字符 |
 | `Utf16le` | UTF-16 小端 |
 
-四种都是 lossy 的：该编码下非法的字节解成替换字符，**不抛错**。精确字节始终在 `Response::raw`（`content_length()` 也基于它），二进制内容或大文件请改用 `Client::stream`。
+四种都是 lossy 的：该编码下非法的字节解成替换字符，**不抛错**。精确字节始终能用 `bytes()` 拿到（`content_length()` 也基于它），二进制内容或大文件请改用 `Client::stream`。
 
-**这里不做 JSON 解析**——这是与 axios 最重要的一处差异。axios 的 `res.data` 是 `any`，由 `transformResponse` + `forcedJSONParsing` 去猜内容类型；在静态类型下，那条路的终点只能是「让每个调用点自己 match 一个变体」，而猜错时（`text/plain` 的 `123` 被解成数字）还是静默的。所以 `data` 一律是字符串，**要对象请自己 `@json.parse(res.data)`**，解析失败也由你按自己的语境处理。
+**没有默认解码的字段**——读法摆在方法上，这是与 axios 的一处刻意差异。响应体是二进制，`Response` 里只保存这一份真相：预先解好文本就等于替你选了读法（二进制被无声地解成一堆替换字符、大响应体被白白解码一次）。解码按需发生（`text()` 调几次就解几次），要反复读同一份文本时自己存一下更划算。
 
-这个字段只在 `request` 上生效：`stream` 交的是原始字节，`sse` 按规范固定 UTF-8 解析事件。
+**`json()` 必须显式调用，它也不看 `Content-Type`**。axios 的 `res.data` 是 `any`，由 `transformResponse` + `forcedJSONParsing` 去猜内容类型；在静态类型下，那条路的终点只能是「让每个调用点自己 match 一个变体」，而猜错时（`text/plain` 的 `123` 被解成数字）还是静默的。`json()` 的失败抛 `@json.ParseError`（带出错位置）而**不是 `HttpError`**：能拿到 `Response` 说明 HTTP 这一层已经成功，两类问题分开表达更清楚。不想要对象就别调它——`text()` 拿到原文，要自己 `@json.parse` 也可以。
 
-三种读法各有入口，读法由**调哪个方法**决定：`request` 读全量返回 `Response`，`stream` 不读返回 `StreamResponse`，`sse` 按事件读返回 `SseStream`。调错是编译错误，不需要运行时守卫。
+这些方法只在 `request` 上生效：`stream` 交的是原始字节流，`sse` 按规范固定 UTF-8 解析事件。
+
+三种入口，读法由**调哪个方法**决定：`request` 读全量返回 `Response`，`stream` 不读返回 `StreamResponse`，`sse` 按事件读返回 `SseStream`。调错是编译错误，不需要运行时守卫。
 
 ### URL 与 query 的边界行为
 
@@ -262,7 +271,7 @@ try {
 `response` 有三种取值，区别只在「响应收到多少」：
 
 - **完整响应**：状态码没通过 `validate_status` 时；
-- **已经收到的部分**：失败发生在响应头到手之后（读响应体时超时、断连）——状态行与响应头一定在，`raw` / `data` 是失败前读到的部分，可能只有半截。服务端的错误正文常常已经到了一部分，这半截正是排查时最想看的东西；
+- **已经收到的部分**：失败发生在响应头到手之后（读响应体时超时、断连）——状态行与响应头一定在，响应体字节是失败前读到的部分（`bytes()` / `text()` 拿到的可能只有半截）。服务端的错误正文常常已经到了一部分，这半截正是排查时最想看的东西；
 - **`None`**：连响应头都没收到就失败了（连不上、DNS 失败、缺 `url`）。
 
 错误码只说「失败是什么」（超时 / 断连 / 状态码不合规），`response` 说「已经收到什么」，两件事不混在一起。
@@ -314,7 +323,7 @@ moonhttp/
 - 上传进度（`onUploadProgress`）：请求体是一次性字节，不支持流式上传（表单含文件时整块驻留内存）
 - 下载进度回调（`onDownloadProgress`）：没有回调字段，但流式路径下按 `read_some` 每块大小累加即可自己统计
 - SSE 自动重连：事件里带了 `id` / `retry`（重连所需的全部状态），但没有按 `retry` 间隔自动重订阅、也不自动带 `Last-Event-ID`——重连策略交给上层
-- 请求/响应转换器（`transformRequest` / `transformResponse`）：请求体固定为三种形态（`with_data_from_str` / `with_data_from_json` / `with_data_from_form`，见「请求体」），响应体固定为原文
+- 请求/响应转换器（`transformRequest` / `transformResponse`）：请求体固定为三种形态（`with_data_from_str` / `with_data_from_json` / `with_data_from_form`，见「请求体」），响应体交出去的是原始字节，要文本/对象分别用 `text()` / `json()`（见「响应体怎么读」）
 - `application/x-www-form-urlencoded` 的自动编码（axios 传 `URLSearchParams` 即可）：自己拼字符串 + `with_data_from_str` + 自己设 `Content-Type`，一样一行
 - `withCredentials` / `xsrfCookieName` / `xsrfHeaderName`（本项目不管理 cookie）
 - 响应 cookie：底层的响应 cookie 单独存放，没有并入 `headers`，所以读不到 `Set-Cookie`
@@ -326,7 +335,7 @@ moonhttp/
 - `Config` 的 `method` 字段在本项目里叫 `http_method`（保留字原因，见上文）。
 - `Config` 的请求体是**私有字段**（构造配置只能用构建器，见「请求体」）；`multipart/form-data` 的 `name` / `filename` 按 WHATWG 规则转义（`"` → `%22`、CR / LF → `%0D` / `%0A`），axios 依赖的 node `form-data` 不做转义。
 - `Headers` 内部以小写保存头名（写入时的原始拼写会被记住并用于输出），但不支持 axios 用 `false` 表示「禁止被同名默认值覆盖」的哨兵值。
-- `Response::data` 是 `String`（响应体按 `response_encoding` 解码后的原文），不是 axios 的 `any`：本项目不做 `responseType` / `transformResponse` / `forcedJSONParsing` 那一套自动解析，要 JSON 请自己 `@json.parse(response.data)`。二进制内容读 `Response::raw`（或改走 `Client::stream`）。
+- 响应体没有默认解码的字段：`Response` 只保存原始字节，`text()`（按 `response_encoding` 解码）、`bytes()`（精确字节）、`json()`（解码后 `@json.parse`）由你显式选。axios 的 `res.data` 是 `any`，靠 `responseType` / `transformResponse` / `forcedJSONParsing` 自动解析；本项目不做那一套，`json()` 不看 `Content-Type`、失败抛 `@json.ParseError`。二进制内容用 `bytes()`（或改走 `Client::stream`）。
 - 没有可变的全局默认值。axios 的全局 `axios.defaults` 在本项目里对应 `@config.defaults()`（固定的内置默认值）；要定制请用 `create(...)` 或 `client.create(...)` 派生。
 
 ### 后续扩展

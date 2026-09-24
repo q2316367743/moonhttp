@@ -101,7 +101,7 @@ async test "sse refuses responses that are not event streams" {
   let received = error.response().unwrap()
   assert_eq(received.status, 200)
   assert_eq(received.headers.get("content-type"), Some("application/json"))
-  assert_eq(received.data, "")
+  assert_eq(received.text(), "")
   assert_eq(mock.request_count(), 1)
 }
 
@@ -134,7 +134,7 @@ async test "sse raises with the error body when status is rejected" {
   }
   let error = error.unwrap()
   assert_eq(error.code(), @moonhttp.ErrorCode::BadResponse)
-  assert_eq(error.response().unwrap().data, "{\"msg\": \"boom\"}")
+  assert_eq(error.response().unwrap().text(), "{\"msg\": \"boom\"}")
 }
 
 ///|

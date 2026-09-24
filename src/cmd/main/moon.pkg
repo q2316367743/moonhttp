@@ -1,9 +1,10 @@
 // 可运行示例：真实发一次 HTTP 请求，演示实例创建、配置合并、request 与响应读取。
 // 用 `moon run src/cmd/main` 执行（需要联网）。
+//
+// 解析 JSON 走的是门面上的 `Response::json()`，所以这里不必再 import core/json
+// （`Json` 是内建类型，模式匹配直接可用）。
 import {
   "moonbitlang/async",
-  // 响应体是原文（String），解析 JSON 是示例里调用方自己的事。
-  "moonbitlang/core/json",
   "q2316368843/moonhttp",
 }
 

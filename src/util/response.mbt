@@ -2,17 +2,18 @@
 // 同样不碰网络与门面类型——「拼成 `Response`」「抛 `HttpError`」都在根包。
 
 ///|
-/// 按配置的编码把响应体字节解成文本。
+/// 按给定的编码把响应体字节解成文本。
 ///
 /// 解码一律是 lossy 的（core 的 `decode_lossy` 系列）：该编码下非法的字节
 /// 解成替换字符 `U+FFFD` 而不是抛错。响应正文由服务端说了算，为了几个坏字节
-/// 把整个响应判成失败得不偿失；要精确字节读 `Response::raw`。
+/// 把整个响应判成失败得不偿失；要精确字节读 `Response::bytes()`。
 ///
 /// 只有 `latin1` 是自己写的（core 没有）：ISO-8859-1 的码点就是字节值，
 /// 一个循环就够。其余三种都直接调 core。
 ///
-/// `response_encoding` 为 `None`（手写的 `Config` 没过内置默认值）时按 UTF-8
-/// 处理，与 `defaults()` 里显式设的默认值一致。
+/// 「配置里没写编码时用哪个」不在这里：那是调用方（`Response::text`）的事，
+/// 它传 `config.response_encoding.unwrap_or(Utf8)`——与 `defaults()` 里显式
+/// 设的默认值一致。本函数只认拿到手的那个编码。
 pub fn decode_body(body : Bytes, encoding : ResponseEncoding) -> String {
   match encoding {
     Utf8 => @utf8.decode_lossy(body)

@@ -173,7 +173,7 @@ pub impl Transport for MyTransport with fn send(self, request) {
 | 一个目录一个包，包间不能循环依赖 | 分层方向见上文 |
 | 可选参数是**具名**的，不能按位置传 | 用 `Trait::method(self, start=0, end=n)` 这类具名实参（写成 `method(self, 0, n)` 会报「只接受 1 个位置参数」）。本项目统一用具名实参调用可选参数：`Client::new(transport=transport)`、`body.read_some(max_len=2)` |
 | 顶层 `enum` / `struct` 不加 `priv` 会出现在 `.mbti` 里 | 纯内部类型（`BodyInner`、`MemoryBody`）必须标 `priv`，否则会污染公开接口——`moon info` 后能从 `.mbti` 的 diff 里看出来 |
-| `pub(all) struct` 里允许个别字段标 `priv` | `StreamResponse` 就靠这条：状态行与响应头公开，响应体流私有，读取必须走本类型的方法，错误才能统一成 `HttpError`；`Config.data` 同理（请求体只能经三个构建器设置） |
+| `pub(all) struct` 里允许个别字段标 `priv` | 三个门面类型都靠这条：`StreamResponse` / `SseStream` 的响应体流私有（读取必须走本类型的方法，错误才能统一成 `HttpError`）、`Response` 的 `raw` 私有（读法收敛到 `bytes()` / `text()` / `json()` 三个入口，解码规则只有一个落点）；`Config.data` 同理（请求体只能经三个构建器设置） |
 | **私有字段会让跨包的记录字面量 / 记录展开失效**：`{ ..config, x: ... }` 报 `Cannot use struct update syntax on struct Config because it has private fields` | 一旦某个字段私有，别的包就既不能按名字段构造、也不能用记录展开，构造只能走构建器。两个落地后果：`merge_config` 必须与 `Config` 同包（`config/merge.mbt`）；根包回填方法只能写 `merged.with_method(...)` 而不是 `{ ..merged, http_method: ... }`。包内不受影响（`Config::new`、`with_*` 都是包内记录展开），要测包内写法得用白盒测试（`config/config_wbtest.mbt`） |
 | `errdefer` 在 async 函数里同样有效，适合「失败就关连接」这类清理 | 传输层用它保证建连之后的任何失败都关闭连接；比 `try ... catch { cleanup; raise }` 更短，也不会触发 `fragile_catch_all` 告警 |
 | 含 `mut` 字段的结构体，其内部变异**能穿过值类型字段可见**——把这种类型放进另一个结构体当普通字段（不标 `mut`）也照样生效 | `StreamResponse` 里的 `priv parser : SseParser` 就没标 `mut`：`next_event` 反复调 `parser.push` 能累积状态（`facade.mbt` 里的 `StreamResponse`）。给字段标 `mut` 反而会收到 `unused_mut` 告警——编译器认定这个 `mut` 没被用到，因为根本没有对该字段的整体赋值 |
