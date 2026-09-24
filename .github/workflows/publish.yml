@@ -38,6 +38,10 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # 同 ci.yml：下面的 moon test 会编译依赖包的 C stub，用包装脚本闭掉
+    # Linux/GCC 专有的 warn_unused_result 告警。理由见 .github/cc-quiet.sh 头部注释。
+    env:
+      MOON_CC: ${{ github.workspace }}/.github/cc-quiet.sh
     steps:
       - name: Checkout
         uses: actions/checkout@v4
