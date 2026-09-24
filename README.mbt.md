@@ -81,6 +81,24 @@ let search = api.create(@moonhttp.Config::default().with_timeout(15_000))
 
 三者的配置合并与状态码校验完全一致，区别只在响应体怎么读。
 
+### 快捷方法
+
+`get` / `post` / `put` / `delete` / `patch` / `head` / `options` 七个方法，都是 `request` 的薄封装：签名统一是 `(url : String, config? : Config)`，动词与方法名一致。
+
+```moonbit nocheck
+// 只要 url
+let repos = api.get("/repos")
+
+// 其余配置照旧走 config：query、超时、实例默认值（base_url、公共头）都在
+let page = api.get("/repos", config=@moonhttp.Config::default().with_params({ "page": 1 }))
+
+// 请求体也走 config：形态由 with_data_from_* 决定（json / str / form / urlencoded）
+api.post("/users", config=@moonhttp.Config::default().with_data_from_json({ "name": "moon" }))
+api.delete("/users/1")
+```
+
+两条优先级：**`url` 位置参数赢过 `config.url`**；**动词赢过 `config` 里的 `with_method(...)` 与实例默认方法**——`api.get(...)` 一定是 GET。除此之外与 `client.request(...)` 完全一致：实例默认值、三层头、拦截器、重定向、进度回调、取消、状态码校验一个不少。请求体不进参数列表，因为四种形态各有构建器，挑一种当参数只会让另外三种绕远路。
+
 ### 请求体：四种形态
 
 | 构建器 | 发出去的内容 | 自动补的 `Content-Type` |
@@ -264,7 +282,6 @@ println(mock.last_request().unwrap().url) // 已经拼好 base_url 与 query 的
 
 以下能力本版没有实现，配置里也不会出现对应字段（避免「配置了但完全不生效」）：
 
-- **快捷方法** `get` / `post` / `put` / `delete` / `head` / `options` / `patch`：都是 `request` 的薄封装，计划中。
 - **请求体流式上传**：请求体目前是一次性字节，表单含文件时整块驻留内存；计划下一期做可写流，让调用方一段段喂数据。
 - **连接复用**：每次请求新建连接，计划做连接池以省掉重复握手。
 - **cookie**：不管理 cookie（没有 `withCredentials` / `xsrf*`，响应里的 `Set-Cookie` 也读不到）；计划做跨请求复用。

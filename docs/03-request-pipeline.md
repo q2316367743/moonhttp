@@ -6,6 +6,7 @@
 |---|---|
 | `src/client.mbt` | `Client::request` / `Client::stream` / `Client::sse` 的编排：合并 → 定方法 → 取消预检查 → 请求拦截器 → 发送 →（读全量 / 交还流）→ 校验 → 响应拦截器 |
 | `src/interceptors.mbt` | 拦截器链：`Interceptors`（注册）、`run_request` / `run_response`（顺序与错误流转，详见 `11-interceptors.md`） |
+| `src/shortcuts.mbt` | 七个动词的快捷方法（`get` / `post` / …）：补 `url` 与动词后转调 `Client::request`，没有自己的管线（详见 `14-shortcut-methods.md`） |
 | `src/config/merge.mbt` | 合并契约：四种策略、`merge_config`、`flatten_headers`（为什么在 `config` 包见 `02-config-merge.md`） |
 | `src/config/body.mbt` | 请求体的四种形态与序列化：`serialize_body`（字节 + 建议的 `Content-Type`） |
 | `src/config/form.mbt` | 表单的 `multipart/form-data` 编码（详见 `07-request-body.md`） |
@@ -20,6 +21,8 @@
 | `src/facade.mbt` | 门面层：`Response`（读全量）/ `StreamResponse`（原始流）/ `SseStream`（事件流）/ `HttpError` 与各子包类型的再导出 |
 
 `util/` 与 `url/` 里的管线函数都是**纯函数**（没有 IO、不涉及异步），可以脱离网络单独测试，`url/url_test.mbt` 就是逐条钉住边界行为的。两者的差别只在依赖：`url/` 连 `Config` 都不认识，`util/` 认识配置与传输层的数据形状（`PreparedRequest`），但不认识任何门面类型。
+
+**七个快捷方法没有第二条管线**：`Client::get` / `post` / `put` / `delete` / `head` / `options` / `patch` 只做上面八步里第 1 步之前的两件小事——把 `url` 与动词补进配置，然后转调 `Client::request`。所以八步、两段拦截器、重定向、进度、取消、状态码校验在这里的落点对它们同样成立，本文后面不必再区分「快捷方法」与 `request`。契约（`url` 位置参数赢过 `config.url`、动词赢过配置与实例默认方法）见 `14-shortcut-methods.md`。
 
 ## 八个步骤
 

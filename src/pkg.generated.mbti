@@ -36,7 +36,14 @@ pub struct Client {
 }
 pub fn Client::create(Self, @config.Config) -> Self
 pub fn Client::defaults(Self) -> @config.Config
+pub async fn Client::delete(Self, String, config? : @config.Config) -> Response raise HttpError
+pub async fn Client::get(Self, String, config? : @config.Config) -> Response raise HttpError
+pub async fn Client::head(Self, String, config? : @config.Config) -> Response raise HttpError
 pub fn Client::new(config? : @config.Config, transport? : &@transport.Transport, interceptors? : Interceptors) -> Self
+pub async fn Client::options(Self, String, config? : @config.Config) -> Response raise HttpError
+pub async fn Client::patch(Self, String, config? : @config.Config) -> Response raise HttpError
+pub async fn Client::post(Self, String, config? : @config.Config) -> Response raise HttpError
+pub async fn Client::put(Self, String, config? : @config.Config) -> Response raise HttpError
 pub async fn Client::request(Self, @config.Config) -> Response raise HttpError
 pub async fn Client::sse(Self, @config.Config) -> SseStream raise HttpError
 pub async fn Client::stream(Self, @config.Config) -> StreamResponse raise HttpError

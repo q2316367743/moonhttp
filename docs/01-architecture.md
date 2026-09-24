@@ -15,6 +15,7 @@ moonhttp/
     ├── facade.mbt               门面层：Response / StreamResponse / SseStream 等
     │                            对外响应类型 + pub using 再导出
     ├── interceptors.mbt         拦截器链：Interceptors + 请求侧 / 响应侧两条链的驱动
+    ├── shortcuts.mbt            快捷方法：七个动词对 request 的薄封装（见 14-shortcut-methods.md）
     ├── *_test.mbt               根包黑盒测试（用 MockTransport 跑整条管线）
     ├── *_wbtest.mbt             根包白盒测试（覆盖只能从包内部触达的分支）
     ├── config/                  配置的形状、合并契约、默认值、构建器、请求体序列化、重定向的下一跳规则与代理配置
@@ -53,7 +54,7 @@ moonhttp/
 
 `build_prepared_request` 是这条判据下唯一需要改造才搬得动的：它原来用 `raise HttpError` 报「地址不可用」，搬进 `util` 后改成返回 `Option`（`None` = 地址不可用），由根包的 `prepare_request` 翻译成 `InvalidUrl` 错误——错误码与文案属于对外契约，留在根包。这与 `@url.build_full_path` 返回 `Option`、根包负责报错的分工完全一致。
 
-**根包有四个源文件**：`client.mbt`（`Client` + 三个入口 + 接壤层）、`http_error.mbt`（错误类型与所有抛错点）、`facade.mbt`（对外响应类型与再导出）、`interceptors.mbt`（拦截器链，`client.mbt` 在管线两端调它）。四者都用上了 RL-04 为根包文件开出的例外（≤ 1000 行，需在文件头声明）。
+**根包有五个源文件**：`client.mbt`（`Client` + 三个入口 + 接壤层）、`http_error.mbt`（错误类型与所有抛错点）、`facade.mbt`（对外响应类型与再导出）、`interceptors.mbt`（拦截器链，`client.mbt` 在管线两端调它）、`shortcuts.mbt`（七个动词的快捷方法，转调 `Client::request`，见 `14-shortcut-methods.md`）。前四个都用上了 RL-04 为根包文件开出的例外（≤ 1000 行，需在文件头声明）；`shortcuts.mbt` 不足 300 行，用不上例外。
 
 **同包拆文件是免费的**：同目录 = 同包，拆文件既不成环、也不影响 `pub` / `priv` 的可见性，`.mbti` 一个字都不会变——所以「文件太长」永远可以靠拆文件解决，不必动包结构。跨包才有代价（`HttpError` 就是被这一条钉在根包里的，理由见上）。**例外只给根包**：子包仍守 300 行（`util/` 两个文件各不足 300 行，`config` / `sse` / `transport` 里的文件超了就必须拆）。
 
@@ -128,22 +129,19 @@ MoonBit 的 import 是包级的：`Config` 的字段类型 `Headers` 定义在�
 
 ### 新增一个快捷方法（如 `get` / `post`）
 
-不要复制管线逻辑，只在 `Client` 上加薄封装后转调 `request`：
+七个动词（`get` / `post` / `put` / `delete` / `head` / `options` / `patch`）已经落地在 `src/shortcuts.mbt`，契约与「为什么是七个独立函数」见 `14-shortcut-methods.md`。要再加一个动词，不要复制管线逻辑，往那里的包私有出口 `Client::send_verb` 上挂一行转调即可：
 
 ```moonbit
-pub async fn Client::get(
+pub async fn Client::trace(
   self : Client,
   url : String,
   config? : Config,
 ) -> Response raise HttpError {
-  let config = match config {
-    Some(config) => config
-    None => Config::new(url)
-  }
-  // with_url 已经由 Config::new 完成；这里只需补上方法
-  self.request(config.with_method(Method::Get))
+  self.send_verb(url, @config.Method::Trace, config?)
 }
 ```
+
+两件必须一致的事——**`url` 位置参数赢过 `config.url`、动词赢过 `config.http_method` 与实例默认方法**——都由 `send_verb` 统一负责，所以新增一个动词不必再想一遍优先级（`config?` 用 `config?` 透传，不是 `config~`：可选参数的 `f(x?)` 形式才是原样转发 `Config?`）。
 
 ### 自定义传输实现（例如给测试用的假响应）
 
