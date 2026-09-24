@@ -1,0 +1,19 @@
+# 控制「哪些文件会被打进包里、发布到 mooncakes」。
+#
+# moon 的规则：某个目录一旦存在 `.moonignore`，它就会**取代**同目录的 `.gitignore`
+# 参与打包筛选（moon 的提示原文：`include` and `exclude` are deprecated; use
+# `.gitignore` or `.moonignore` to control which files are packaged instead.
+# `.moonignore` overrides `.gitignore` in the same directory.）。
+# 所以下面先重复 `.gitignore` 里那几条，再追加不发布的内容。
+
+.DS_Store
+_build/
+target/
+target
+.mooncakes/
+.moonagent/
+uncovered.log
+.zcode
+
+# 可运行示例：只在本地 `moon run src/main` 用，不作为包内容发布
+src/main/

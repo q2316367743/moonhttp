@@ -1,0 +1,15 @@
+// 可运行示例（本地手动测试用）：真实发一次 HTTP 请求，
+// 演示实例创建、配置合并、request 与响应读取。
+// 用 `moon run src/main` 执行（需要联网）。
+//
+// 本包不随模块发布：根目录的 `.moonignore` 把它排除在打包之外，
+// 所以它只是仓库里的示例，不会成为包内容的一部分。
+//
+// 解析 JSON 走的是门面上的 `Response::json()`，所以这里不必再 import core/json
+// （`Json` 是内建类型，模式匹配直接可用）。
+import {
+  "moonbitlang/async",
+  "q2316367743/moonhttp",
+}
+
+pkgtype(kind: "executable")

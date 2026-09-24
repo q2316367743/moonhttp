@@ -23,8 +23,10 @@ moonhttp/
     ├── url/                     绝对地址判定、拼接、params 序列化、Location 的相对解析
     ├── util/                    纯函数层：拼请求、编解码、Content-Type 与状态码判定
     ├── transport/               传输层：trait + 真实实现 + Mock + 响应体流
-    └── cmd/main/                可运行示例（真实网络）
+    └── main/                    可运行示例（本地手动测试，不随包发布）
 ```
+
+每个包目录下都带一份 `README.mbt.md`（该包的职责、公开 API 清单与用法），并配一个指向它的 `README.md` 软链接——MoonBit 只认 `.mbt.md` 作为包级文档，两份都要在。`main/` 是例外：它是 executable 包（`.mbt.md` 在 main 包里会被当成 doctest 输入并告警），所以只有普通的 `README.md`，而且被 `.moonignore` 排除在发布之外。
 
 **为什么根目录的文件多，而测试文件不能挪到 `tests/` 之类的子目录**：MoonBit 的约定是「一个目录 = 一个包」，测试文件按**所在目录的包**归属——`src/foo_test.mbt` 是 `src` 这个包的黑盒测试，`src/foo_wbtest.mbt` 是它的白盒测试（白盒测试会被编进包里才能看见 `priv`，物理上不可能在别处）。把它们移进子目录，它们就变成了「一个新包的测试」，与被测的包再无关系。
 

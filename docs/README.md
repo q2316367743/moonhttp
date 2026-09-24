@@ -2,7 +2,7 @@
 
 本目录记录 `moonhttp` 的实现思路、关键文件、数据结构 / API 契约与注意事项，供后续开发（含 AI 协作）快速接管。
 
-面向使用者的入门文档在仓库根目录的 [README.mbt.md](../README.mbt.md)；本目录面向维护者，重点回答「为什么这样设计」和「改动时要同步什么」。
+面向使用者的入门文档在仓库根目录的 [README.mbt.md](../README.mbt.md)（`README.md` 是指向它的符号链接）；每个包目录下还有一份包级 `README.mbt.md`，写该包的职责、公开 API 清单与用法。本目录面向维护者，重点回答「为什么这样设计」和「改动时要同步什么」。
 
 | 编号 | 文档 | 内容 | 什么时候读 |
 |---|---|---|---|
@@ -24,8 +24,8 @@
 改代码时容易被漏掉的联动项，集中写在这里：
 
 1. **新增配置字段**：`Config` 加字段 → 在 `src/config/merge.mbt` 的 `merge_config` 里显式选一档合并策略（漏了是编译错误）→ 需要的话加 `with_*` 构建器与 `Config::to_string` 渲染 → 若参与请求，接到 `src/util/request.mbt` 的 `build_prepared_request` 或 `src/client.mbt` 的 `build_response` → 补测试（`src/config/merge_test.mbt` 测合并、根包测端到端）→ 更新 `02-config-merge.md` 的字段归属表。
-2. **新增包**：确认依赖方向仍是 DAG（见 `01-architecture.md`）→ 新包若暴露新类型，用 `pub using` 再导出 → 根包 `moon.pkg` 加 import → 更新 README 与 `01-architecture.md` 的目录树。**注意**：新包不能依赖根包的门面类型（`Response` / `StreamResponse` / `SseStream` / `HttpError` / `ErrorCode`），否则与根包成环；也不能构造 `Config`（它有私有字段，跨包的记录字面量 / 记录展开都被编译器拒绝），要造配置只能用构建器。`util` 包的准入条件写在 `src/util/moon.pkg` 里。
-3. **改公开 API**：跑 `moon info` 后检查 `pkg.generated.mbti` 的 diff，确认只包含预期的变化。
+2. **新增包**：确认依赖方向仍是 DAG（见 `01-architecture.md`）→ 新包若暴露新类型，用 `pub using` 再导出 → 根包 `moon.pkg` 加 import → 更新 `README.mbt.md` 与 `01-architecture.md` 的目录树 → 给新包写 `README.mbt.md`（职责 + 公开 API + 用法）与指向它的 `README.md` 软链接。**注意**：新包不能依赖根包的门面类型（`Response` / `StreamResponse` / `SseStream` / `HttpError` / `ErrorCode`），否则与根包成环；也不能构造 `Config`（它有私有字段，跨包的记录字面量 / 记录展开都被编译器拒绝），要造配置只能用构建器。`util` 包的准入条件写在 `src/util/moon.pkg` 里。
+3. **改公开 API**：跑 `moon info` 后检查 `pkg.generated.mbti` 的 diff，确认只包含预期的变化 → 同步该包的 `README.mbt.md`（包级 API 清单）。
 4. **对接底层库（`moonbitlang/async`）的改动**：只允许出现在 `src/transport/` 这个包里（`async_http.mbt` 是主要落点，`cancel.mbt` 是取消作用域，`stream.mbt` / `stream_lifecycle.mbt` / `stream_all.mbt` 负责响应体流的读写与生命周期）；如果发现必须让上层认识底层类型，说明抽象漏了，应当先补 `Transport` / `ResponseBody` 契约。
 5. **改 `RawResponse` 或 `ResponseBody` 的结构 / 语义**：它们出现在公开签名里，要同步 `05-transport.md`、`03-request-pipeline.md`，并检查根包三个入口（`request` 读全量、`stream` 不读、`sse` 按事件读）是否都还成立；`MockTransport` 的响应体必须仍能用 `ResponseBody::from_bytes` 造出来。
 6. **改超时相关的行为**：超时在两处生效（响应头阶段整体、响应体读取），且响应体读取里 `read_all` / `read_all_partial`（整段读完一个时限）与 `read_some` / `read_until`（每次等待一个时限）口径不同，见 `05-transport.md` 的「超时语义」。改任何一处都要同时看另一处与非流式路径的既有行为。SSE 依赖「不限时」这个前提，见 `06-sse.md`。
@@ -39,3 +39,12 @@
 14. **改进度回调（字段 / 粒度 / 触发入口）**：类型与构建器在 `src/config/progress.mbt`，合并走策略 2（`src/config/merge.mbt`），上传的分块写在 `src/transport/async_http.mbt`（`write_body`，粒度常量 `UPLOAD_CHUNK_SIZE`），下载的报告在读全量那一段（`src/transport/stream_all.mbt`，内存体粒度 `PROGRESS_CHUNK_SIZE`），接线在 `src/util/request.mbt`（上传）与 `src/client.mbt` / `src/facade.mbt`（下载）。**别动的前提**：`ProgressCallback` 是 `noraise`（与 `read_all_partial` 的 `noraise` 配套）、`ResponseBody::total` 在构造时定下且不随读取变化、上传分块不能改成非 chunked 之外的线上行为（底层本来就是 chunked，改的只是块边界）、下载只在「库读全量」两条路触发（`read_some` / `read_until` / SSE 不介入）。同步 `10-progress.md`、`05-transport.md` 的字段表与 `02-config-merge.md` 的字段归属表。
 15. **加 / 改拦截器**：类型、注册与两条链的驱动都在 `src/interceptors.mbt`，接线在 `src/client.mbt`（`Client::request` 串两段、`Client::open_stream` 只串请求侧），响应改写入口在 `src/facade.mbt`（新加入口要保持读 / 写编码对称，见第 7 条），包外造错误的口子在 `src/http_error.mbt`（`HttpError::new`）。**别动的前提**：请求侧 LIFO / 响应侧 FIFO（两条相反的顺序）、两段链都必须在 `send_following_redirects` **之外**（否则每跳重跑）、请求拦截器的错误要先流入响应侧错误处理器而不是直接抛、`Interceptors` 的注册保持值语义（拷贝后 push）、拦截器闭包只能抛 `HttpError`（别想在闭包里写 `assert_eq`，也别想直接抛 `@json.ParseError`——`json()` 要用 `try ... catch` 收掉）。用例在 `src/interceptor_test.mbt`；同步 `11-interceptors.md`、`03-request-pipeline.md` 的步骤表与 `README.mbt.md`。
 16. **改取消（token 语义 / 中断范围 / 检查点）**：句柄与构建器在 `src/config/cancel.mbt`，合并走策略 2（`src/config/merge.mbt`），机制（协程级取消与读取前检查）**只在** `src/transport/cancel.mbt`，接线在 `src/transport/async_http.mbt`（每跳发送）、`src/transport/stream.mbt` / `stream_lifecycle.mbt` / `stream_all.mbt`（每次读取、取消即关闭连接、读全量）、`src/client.mbt`（三个入口的预检查）与 `src/http_error.mbt`（`cancelled_error` 的文案与 `response`）。**别动的前提**：取消是协程信号、`catch` 抓不住它（翻译必须由 `with_cancel_scope` 的 `task.wait()` 做）、`attach` 到已取消的 token 必须立刻触发（重定向两跳之间的兜底）、token 一次性不可重置、流式读取遇到取消必须报取消而不是退化成 EOF、取消的清理依赖既有 `errdefer` / `close` 路径。新增会挂起的 I/O 时记得包进取消作用域；用例在 `src/config/cancel_test.mbt`（同步）、`src/cancel_test.mbt` 与 `src/cancel_stream_test.mbt`（真机）；同步 `12-cancellation.md`、`04-errors.md` 的错误码表、`05-transport.md` 与 `03-request-pipeline.md` 的步骤表。
+
+## 包级 README 的两条硬约束
+
+每个包目录下的 `README.mbt.md`（配一个指向它的 `README.md` 软链接，MoonBit 只认 `.mbt.md`）不是普通文档：
+
+1. **它会被 `moon` 当作该包的 doctest 来源**，所以里面的 MoonBit 代码块一律标 `moonbit nocheck`；否则 `moon test` 会把这些片段当用例去编译。
+2. **`moon fmt` 会格式化这些代码块**（补 `///|` 块分隔符、把 `x=x` 规范成 `x~`），改完 README 要跑一次 `moon fmt` 并保留它的改动，否则 CI 的 fmt 门禁（`moon fmt` 后 `git diff --exit-code`）会失败。
+
+`main/` 包是例外：`.mbt.md` 出现在 executable 包目录里会触发 moon 的告警（还会影响未来版本），所以它只有普通的 `README.md`，上面两条都不适用。

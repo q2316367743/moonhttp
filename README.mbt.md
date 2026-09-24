@@ -1,32 +1,8 @@
 # moonhttp
 
-axios 风格的 MoonBit HTTP 客户端。当前实现聚焦三件事：**创建实例**、**通用 `request`**、**配置合并**；并在此基础上提供**自动跟随重定向**（`max_redirects`，默认 5 跳）、**流式响应 / SSE**（`Client::stream` 交原始字节流，`Client::sse` 交解析好的事件流）与**请求 / 响应拦截器**（`Interceptors`，顺序与语义对齐 axios）。
+MoonBit 上的 HTTP 客户端。网络 I/O 交给官方异步库 `moonbitlang/async`，上层这套 API 负责配置、发请求与读响应：调第三方 REST API、上传文件、消费 SSE 流，一次配置就能发请求，不必先读懂底层传输的类型。
 
-设计上刻意留出扩展点（可替换的传输层、`instance.create` 派生、两段式拦截器），并提供 **取消请求**（`CancelToken`，能打断挂起中的连接动作，见「取消请求」）。其余暂不实现的 axios 高级特性见文末「暂不支持」。
-
-```moonbit nocheck
-///|
-async fn main {
-  // 创建实例：base_url 与公共头写在实例默认配置里，后续请求不必重复设置
-  let api = @moonhttp.create(
-    @moonhttp.Config::default()
-      .with_base_url("https://api.github.com")
-      .with_timeout(5_000)
-      .with_common_header("Accept", "application/vnd.github+json"),
-  )
-
-  // 发请求：配置在「内置默认值 → 实例默认值 → 本次请求」之间按 axios 的规则合并
-  let res = api.request(
-    @moonhttp.Config::new("/repos/moonbitlang/core")
-    .with_params({ "per_page": 3 }),
-  )
-
-  println(res.status) // 200
-  println(res.headers.get("content-type")) // application/json; charset=utf-8
-  println(res.text()) // 响应体原文：按 response_encoding 解码（默认 UTF-8）
-  println((try! res.json()).stringify()) // 要对象就 json()，它就是「解码 + 解析」
-}
-```
+它提供实例化配置与合并、`request` / `stream` / `sse` 三个入口、四种请求体形态、自动重定向、代理隧道、上传下载进度回调、请求与响应拦截器、取消请求、SSE 事件解析，以及一组按失败原因分类的错误码。API 语义参考 axios，代码为原创实现，未移植其源码。
 
 ## 安装
 
@@ -42,82 +18,81 @@ import {
 }
 ```
 
-本项目默认构建目标是 `native`。网络能力来自官方异步库 `moonbitlang/async`（当前版本 `0.22.2`），它在 native 后端最成熟。
+默认构建目标是 `native`。
 
 ## 快速开始
 
-完整可运行示例见 [`src/cmd/main/main.mbt`](src/cmd/main/main.mbt)，用 `moon run src/cmd/main` 执行（需要联网）。它演示了文本响应、JSON 响应、查询参数、实例派生与错误处理。
+```moonbit nocheck
+///|
+async fn main {
+  // 实例上一次性配好 base_url 与公共头，之后的请求只写路径
+  let api = @moonhttp.create(
+    @moonhttp.Config::default()
+      .with_base_url("https://api.github.com")
+      .with_timeout(5_000)
+      .with_common_header("Accept", "application/vnd.github+json"),
+  )
 
-## 配置合并语义
+  let res = api.request(
+    @moonhttp.Config::new("/repos/moonbitlang/core").with_params({
+      "per_page": 3,
+    }),
+  )
 
-这是本项目的重点。行为严格对齐 axios `lib/core/mergeConfig.js`，但 MoonBit 没有运行时反射，因此不采用「字段 → 合并函数」查表，而是**每个字段显式写出它用哪一档策略**——打开 [`src/config/merge.mbt`](src/config/merge.mbt) 就能一眼看到每个字段的归属。
+  println(res.status) // 200
+  println(res.text()) // 响应体原文，按 response_encoding 解码（默认 UTF-8）
+  println((try! res.json()).stringify()) // 要对象就 json()
+}
+```
 
-| 字段 | axios 策略 | 本项目行为 |
+覆盖更多场景的完整示例（文本响应、JSON、查询参数、实例派生、错误处理、拦截器）在
+[`src/main/main.mbt`](https://github.com/q2316367743/moonhttp/blob/master/src/main/main.mbt)，
+用 `moon run src/main` 执行（需要联网）。
+
+## 功能与用法
+
+### 实例与配置合并
+
+配置分三层：内置默认值、实例默认值（`create` / `Client::new` 传入的）、本次请求。合并不是简单覆盖，`None` 表示「未提供」，一律回退：
+
+| 字段 | 合并方式 |
+|---|---|
+| `url` / 请求方法 / 请求体 | 只取请求级，实例默认值里的同名字段丢弃 |
+| `base_url` / `timeout` / `max_redirects` / `response_encoding` / 进度回调 / `cancel_token` | 请求级优先，缺省回退实例默认值 |
+| `params` / `headers` / `auth` / `proxy` | 逐层合并（头名大小写不敏感） |
+| `validate_status` / `params_serializer` | 请求级提供即整体接管 |
+
+```moonbit nocheck
+// 从既有实例派生：继承默认值与拦截器，再叠加本次的配置
+let search = api.create(@moonhttp.Config::default().with_timeout(15_000))
+```
+
+请求方法缺省时按「实例默认值 → `GET`」回退，`api.defaults()` 可以看实例当前的默认配置；状态码默认只认 2xx，想关掉校验就传一个恒真函数（`with_validate_status(fn(_) { true })`）。
+
+### 三个入口
+
+| 入口 | 拿到什么 | 什么时候用 |
 |---|---|---|
-| `url` / `http_method` / `data` | `valueFromConfig2` | **只取请求级**。默认值里的同名字段被丢弃，即使请求没提供也不回退 |
-| `base_url` / `timeout` / `response_encoding` | `defaultToConfig2` | 请求级优先，缺省则回退默认值 |
-| `max_redirects` | `defaultToConfig2`（axios 没登记，走默认的深合并） | 请求级优先，缺省则回退默认值（内置 **5**）；`0` 表示不跟随 |
-| `params` | `mergeDeepProperties` | 按 JSON 对象逐键递归合并；数组**整体替换而非拼接** |
-| `params_serializer` | `defaultToConfig2` | 自定义 query 序列化器；请求级提供即**整体替换**实例默认值（函数没法「合并」） |
-| `auth` | `mergeDeepProperties` | 逐字段合并：默认值给 `username`、请求给 `password`，两者都在 |
-| `proxy` | `mergeDeepProperties` | 逐字段合并（内层 `auth` 同样逐字段）：默认值给代理地址、请求级补凭据，两者都在 |
-| `headers` | caseless 深合并 | 头名大小写不敏感；请求级同名头覆盖默认值，默认值独有的头保留 |
-| `common_headers` / `method_headers` | 深合并 + 拍平 | 优先级 `common` < 按方法 < 请求级平铺，逐层覆盖 |
-| `allow_absolute_urls` | `mergeDeepProperties` | 标量上的深合并退化为「请求级有就用请求级」 |
-| `validate_status` | `mergeDirectKeys` | 请求级提供即整体接管；缺省沿用默认的 2xx 规则 |
-| 任何字段的 `None` | `undefined` | 一律表示「未提供」→ 回退，而不是覆盖 |
+| `client.request(config)` | `Response`，响应体已读全 | 常规请求 |
+| `client.stream(config)` | `StreamResponse`，原始字节流 | 下载、自己按块处理 |
+| `client.sse(config)` | `SseStream`，解析好的事件流 | 消费 SSE |
 
-几个刻意的细节：
-
-- **`http_method` 而不是 `method`**：`method` 是 MoonBit 的保留字，用作字段名会告警，也会影响使用者写记录字面量。构建器仍是 `with_method`（参数类型 `Method` 已说明语境），`Config::to_string()` 的标签也沿用 `method`，便于和 axios 文档逐项对照。
-- **想关掉状态码校验**：axios 靠给 `validateStatus` 传 `null`（`mergeDirectKeys` 连 `undefined` 都算「存在」）。本项目传一个恒真函数即可：`with_validate_status(fn(_) { true })`。删掉这个字段只会退回默认的 2xx 规则。
-- **方法缺省时的回退顺序**：`合并结果 → 实例默认值 → GET`。合并阶段 `http_method` 走「只取请求级」策略，所以 axios 也在 `_request` 里单独从 `this.defaults.method` 回退一次，本项目复刻了这个行为。
-
-## 请求管线
-
-`Client::request` 内部顺序与 axios 一致：
-
-1. `merge_config(实例默认值, 请求配置)`
-2. 确定请求方法（缺省回退到实例默认值，再回退到 `GET`）
-3. `base_url` + `url` 拼成完整地址，再追加序列化后的 query（序列化规则可用 `with_params_serializer` 换掉，见下文「URL 与 query 的边界行为」）
-4. 三层头拍平成一份（`common` < 按方法 < 请求级平铺）
-5. 取请求体：`Config::serialize_body()` 给出字节与**建议**的 `Content-Type`（四种形态见下文「请求体」）；有 `auth` 则补 `Authorization`；有代理则把 `Proxy-Authorization` 改成落在 CONNECT 上（见「代理」）
-6. 交给传输层发送（`timeout > 0` 时套超时，含与代理的 CONNECT 握手）；3xx 且带 `Location` 时**自动跟随重定向**，最多 `max_redirects` 跳
-7. 把响应体读到 EOF
-8. 用 `validate_status` 校验状态码，失败则抛 `HttpError`
-
-第 3～8 步的实现分别在 [`src/url/`](src/url/)、[`src/util/`](src/util/) 与 [`src/client.mbt`](src/client.mbt) 里：拼地址/头/body 与判定是纯函数（`util`），把它们拼成 `Response`、翻译错误是根包与门面类型接壤的那一层。纯函数那部分可以脱离网络单独测试。第 6 步的重定向跟随规则（哪些状态码跟、下一跳的方法 / body / 凭据怎么变）见 [`docs/08-redirects.md`](docs/08-redirects.md)；第 7 步里「读全量」是 `request` 的选择，不需要完整响应体时改用 [`Client::stream`](#流式响应与-sse) 或 [`Client::sse`](#流式响应与-sse)；响应体到手之后怎么读，由你在 `Response` 上选 `text()` / `bytes()` / `json()`（见下文「响应体怎么读」）。
-
-**重定向默认跟随**：`max_redirects` 缺省是 5（axios 请求配置文档里的默认值，每实例 / 每请求都能改），`Client::request`、`Client::stream`、`Client::sse` 三个入口都跟。跟到超限抛 `TooManyRedirects`（错误里带着最后那个 3xx 响应）；把上限设成 `0` 就完全不跟随，3xx 原样落到状态码校验手里（默认规则判失败，响应在错误上可读）。跨 host 跟随时会丢掉 `Authorization` / `Cookie` 之类的凭据。
-
-失败时抛出的 `HttpError` 会带上**已经收到的响应**：响应头到手之后才可能开始读响应体，所以读取阶段的任何失败（超时、断连）都不等于「什么都没收到」——状态行、响应头与失败前读到的部分正文都会挂在错误上，见[错误处理](#错误处理)。
+三者的配置合并与状态码校验完全一致，区别只在响应体怎么读。
 
 ### 请求体：四种形态
-
-请求体只能经四个构建器设置，`data` 字段本身是私有的——**包外也写不了 `Config` 的记录字面量 /
-记录展开**（编译器直接拒绝），构造配置请一律走 `Config::new(url)` / `Config::default()` + `with_*`：
 
 | 构建器 | 发出去的内容 | 自动补的 `Content-Type` |
 |---|---|---|
 | `with_data_from_str(s)` | `s` 的 UTF-8 字节，一个字节不改 | 不补 |
-| `with_data_from_json(j)` | `j.stringify()` 后的 JSON 文本 | `application/json` |
+| `with_data_from_json(j)` | `j.stringify()` 之后的 JSON 文本 | `application/json` |
 | `with_data_from_form(form)` | `multipart/form-data` 正文 | `multipart/form-data; boundary=...` |
-| `with_data_from_urlencoded(j)` | `a=1&b=2` 形式（与 `params` 默认规则的同一套编码） | `application/x-www-form-urlencoded` |
-
-字符串那一路最容易踩：**「是不是 JSON」由你选的方法决定，不由值的类型决定**——
-`with_data_from_json("hi")` 发出去的是带引号的 `"hi"`（合法 JSON 字面量并补头），
-`with_data_from_str("hi")` 发出去的是裸 `hi`（不补头）。
+| `with_data_from_urlencoded(j)` | `a=1&b=2` 形式 | `application/x-www-form-urlencoded` |
 
 ```moonbit nocheck
-// JSON：对象、数组、字符串都行
+// JSON 请求体
 api.request(@moonhttp.Config::new("/users")
   .with_method(@moonhttp.Method::Post)
   .with_data_from_json({ "name": "moon" }))
-
-// 普通表单（a=1&b=2）：与 params 用的是同一个**内置**序列化器（不随 with_params_serializer 变）
-api.request(@moonhttp.Config::new("/login")
-  .with_method(@moonhttp.Method::Post)
-  .with_data_from_urlencoded({ "user": "alice", "password": "s3cret" }))
 
 // 带文件的表单：文件按「字节 + 文件名」传入，库不读盘
 let form = @moonhttp.FormData::new()
@@ -126,280 +101,70 @@ let form = @moonhttp.FormData::new()
 api.request(@moonhttp.Config::new("/upload")
   .with_method(@moonhttp.Method::Post)
   .with_data_from_form(form))
-
-// 内置规则不合用时（例如 protobuf，或后端要 tags=a&tags=b 这种重复平键）：自己拼 + 自己设头
-api.request(@moonhttp.Config::new("/other")
-  .with_method(@moonhttp.Method::Post)
-  .with_data_from_str("tags=a&tags=b")
-  .with_header("Content-Type", "application/x-www-form-urlencoded"))
 ```
 
-`with_data_from_urlencoded` 的数组/嵌套对象走 query 那套括号约定（`tags%5B%5D=a&tags%5B%5D=b`），
-`null` 键跳过、空格写成 `+`；顶层不是对象时等于一份空正文。
+两点容易踩：**「是不是 JSON」由你选的方法决定，不由值的类型决定**——`with_data_from_json("hi")` 发出去的是带引号的 `"hi"`，`with_data_from_str("hi")` 发出去的是裸 `hi`；自动补的 `Content-Type` 是「补默认值」，你自己设了就一个字节都不改。
 
-自动补的 `Content-Type` 是**补默认值**（`set_if_absent`）：你自己设了就一个字节都不改，
-代价是头与正文可能对不上（例如你钉死了 boundary）。表单的逐字节布局、
-`name` / `filename` 的 WHATWG 转义、boundary 的生成规则见 [`docs/07-request-body.md`](docs/07-request-body.md)。
-
-### 响应体怎么读：`text()` / `bytes()` / `json()`
-
-`request` 把响应体完整读出来，交出去的是**原始字节**；怎么读由你在 `Response` 上选一个方法：
-
-| 方法 | 做什么 | 什么时候用 |
-|---|---|---|
-| `text()` | 按 `response_encoding` 解码成文本 | 文本响应正文（这是最常用的一步） |
-| `bytes()` | 原样取出字节，不经过任何解码 | 二进制内容、要精确字节 |
-| `json()` | 先按同一编码解码，再 `@json.parse` | 确定对面是 JSON，要对象 |
-
-`response_encoding` 决定的是解码那一步（`json()` 复用同一套规则）：
-
-| `response_encoding` | 解码方式 |
-|---|---|
-| `Utf8`（默认） | UTF-8；非法字节 → 替换字符 `U+FFFD` |
-| `Latin1` | 字节值即码点（`0xE9` → `é`） |
-| `Ascii` | 只认 `0x00`–`0x7F`，更高的字节 → 替换字符 |
-| `Utf16le` | UTF-16 小端 |
-
-四种都是 lossy 的：该编码下非法的字节解成替换字符，**不抛错**。精确字节始终能用 `bytes()` 拿到（`content_length()` 也基于它），二进制内容或大文件请改用 `Client::stream`。
-
-**没有默认解码的字段**——读法摆在方法上，这是与 axios 的一处刻意差异。响应体是二进制，`Response` 里只保存这一份真相：预先解好文本就等于替你选了读法（二进制被无声地解成一堆替换字符、大响应体被白白解码一次）。解码按需发生（`text()` 调几次就解几次），要反复读同一份文本时自己存一下更划算。
-
-**`json()` 必须显式调用，它也不看 `Content-Type`**。axios 的 `res.data` 是 `any`，由 `transformResponse` + `forcedJSONParsing` 去猜内容类型；在静态类型下，那条路的终点只能是「让每个调用点自己 match 一个变体」，而猜错时（`text/plain` 的 `123` 被解成数字）还是静默的。`json()` 的失败抛 `@json.ParseError`（带出错位置）而**不是 `HttpError`**：能拿到 `Response` 说明 HTTP 这一层已经成功，两类问题分开表达更清楚。不想要对象就别调它——`text()` 拿到原文，要自己 `@json.parse` 也可以。
-
-这些方法只在 `request` 上生效：`stream` 交的是原始字节流，`sse` 按规范固定 UTF-8 解析事件。
-
-三种入口，读法由**调哪个方法**决定：`request` 读全量返回 `Response`，`stream` 不读返回 `StreamResponse`，`sse` 按事件读返回 `SseStream`。调错是编译错误，不需要运行时守卫。
-
-### 上传与下载进度
-
-两个回调字段，对应 axios 的 `onUploadProgress` / `onDownloadProgress`：
+### 读响应
 
 ```moonbit nocheck
-let client = @moonhttp.default_client()
-let response = client.request(
-  @moonhttp.Config::new("/upload")
-  .with_method(@moonhttp.Method::Post)
-  .with_data_from_form(form)
-  .with_on_upload_progress(fn(event) {
-    match event.progress() {
-      Some(ratio) => println("上传 \{event.loaded}/\{event.total.unwrap_or(0)} (\{(ratio * 100).to_int()}%)")
-      None => println("上传 \{event.loaded} 字节（总长度未知）")
-    }
-  })
-  .with_on_download_progress(fn(event) { println("收到 \{event.loaded} 字节") }),
-)
+res.text()           // 按 response_encoding（默认 UTF-8）解码成文本
+res.bytes()          // 原样取出字节，不经过任何解码
+try! res.json()      // 先按同一编码解码，再 @json.parse（失败抛 @json.ParseError）
+res.content_length() // 响应体字节数
+res.is_success()     // 状态码是不是 2xx
 ```
 
-事件只有两个字段：`loaded`（已传输字节）与 `total`（总字节，`None` 表示长度未知），
-外加一个算比例的 `progress()`（`total` 未知或为 0 时给 `None`）。方向由「哪个回调被调用」表达。
+状态行与响应头在 `res.status` / `res.status_text` / `res.headers` 上。库不做自动解析：`json()` 必须显式调用，它也不看 `Content-Type`——能拿到 `Response` 说明 HTTP 这一层已经成功，文本要自己解析就不调它。
 
-四条要点：
+### 拦截器
 
-- **上传按 64 KiB 分块写、每块之后报告**，`loaded` 是「已写入连接」的字节——已经交给内核，不代表对端已经收到。`total` 恒等于请求体字节数。
-- **下载只在「库读全量」时报告**：`request` 与 `StreamResponse::read_all` 会逐块回调；按块读的 `read_some` / `read_until` 与 SSE 不介入，那条路由你自己累加。
-- **`total` 可能不准或没有**：chunked 响应没有 `Content-Length`，`total` 就是 `None`；响应被 gzip 压缩时 `total` 是压缩后的长度，`loaded` 可能超过它（`progress()` 不截断）。
-- 回调是**同步执行且不允许抛错**（类型上就是 `noraise`），占用这次请求自己的时间预算——别在回调里做耗时的事。
-
-详细契约（含重定向每跳重置、Mock 为什么不触发上传进度、读失败时进度停在哪）见 [`docs/10-progress.md`](docs/10-progress.md)。
-
-### URL 与 query 的边界行为
-
-- 绝对地址判定等价于 axios 的 `/^([a-z][a-z\d+\-.]*:)?\/\//i`：`//cdn.example.com/x` 算绝对地址，而 `localhost:8080/x` **不**算（冒号后不是 `//`），会正常和 `base_url` 拼接。
-- `combine_urls` 去掉 base 的尾斜杠与相对路径的首斜杠，中间补恰好一个 `/`。
-- query 序列化按 axios 默认的 `paramsSerializer`：
-  - 数组 → `tags%5B%5D=a&tags%5B%5D=b`（**方括号会被百分号编码**，这是 axios 的真实输出）
-  - 嵌套对象 → `filter%5Bstatus%5D=1`；数组里套对象 → `items%5B0%5D%5Bid%5D=1`
-  - `null` 一律跳过，既不写 `key=` 也不写 `key=null`
-  - 空格写成 `+`；保留下来的字符集是 `A-Za-z0-9-_.*`，`~` 反而要转义成 `%7E`（对齐 `encodeURIComponent` + axios 的额外转义表）
-  - URL 里已有 `?` 时用 `&` 续接；`#fragment` 会被丢弃（axios 也是先截断再拼 query）
-- 数字参数优先使用 `Json::Number` 里保存的原始字面量（`repr`）：`@json.parse` 对超出 `Double` 精度的大整数会填上它，从而避免 `123456789012345678901234567890` 被写成 `1.2345678901234568e+29`；没有 `repr` 时退回 `Double` 的最短表示（`1.0` 写成 `1`）。
-- **自定义序列化器**：内置约定不合用时（例如后端要 `tags=a&tags=b` 这种重复平键），用 `with_params_serializer(fn(_params) { ... })` 整体替换序列化那一步——拿到的就是 `params` 本身，返回值就是 query 文本。`?` / `&` 续接、丢弃 `#fragment`、返回空串时不留下空 `?` 这些拼接规则不变，且它**只管 URL 的 query**（`with_data_from_urlencoded` 的请求体仍走内置规则）。
+请求侧在发送前改配置，响应侧在拿到响应后改响应、或在失败时救错与重试。拦截器挂在**实例**上：
 
 ```moonbit nocheck
-// 实例级设置一次，该实例的所有请求都按这个约定拼 query
-let api = @moonhttp.create(
-  @moonhttp.Config::default()
-    .with_base_url("https://api.example.com")
-    .with_params_serializer(fn(_params) { "tags=a&tags=b" }),
-)
-api.request(@moonhttp.Config::new("/search").with_params({ "tags": ["a", "b"] }))
-// → GET https://api.example.com/search?tags=a&tags=b
-```
-
-## 拦截器
-
-对应 axios 的 `interceptors.request` / `interceptors.response`：请求侧在发送前改配置，响应侧在拿到响应后改响应、或在失败时救错 / 重试。拦截器挂在**实例**上（不是请求级配置——axios 的 `interceptors` 本来就是实例级）：
-
-```moonbit nocheck
-let plain = @moonhttp.Client::new()   // 给重试用的裸实例：不带这层拦截器，天然不会无限递归
+let plain = @moonhttp.Client::new() // 给重试用的裸实例：不带这层拦截器，天然不会无限递归
 let client = @moonhttp.Client::new(
   interceptors~ = @moonhttp.Interceptors::new()
-    // 请求侧：发送前改配置（加认证头 / 改地址 / 给所有请求注入公共 body 字段）
-    .use_request(config => config.with_header("X-Token", token))
-    // 响应侧：拿到响应后做点什么，原样返回就只是观察。
-    // 要改就用 with_status / with_headers / with_body / with_text / with_json（都返回新响应）
-    .use_response(response => {
-      println("响应状态：\{response.status}")
-      response
-    })
+    // 请求侧：发送前改配置（加认证头、改地址、给所有请求注入公共 body 字段）
+    .use_request(config => config.with_header("X-Token", "secret"))
+    // 响应侧：原样返回就只是观察；要改就用 with_status / with_headers / with_body / with_text / with_json
+    .use_response(response => response)
     // 响应侧的错误路径：非 2xx、超时、断连都会走到这里——统一错误处理与重试写在这
-    .use_response(
-      response => response,
-      on_rejected=error => plain.request(error.config()),
-    ),
+    .use_response(response => response, on_rejected=error => plain.request(error.config())),
 )
 ```
 
-- **顺序与 axios 一致**：请求侧**后注册先跑**（LIFO）、响应侧**先注册先跑**（FIFO）——两个方向**相反**，这是它最容易被记错的地方。
-- **拦截器拿到的配置是合并后的**（内置默认值 → 实例默认值 → 本次请求），改地址、加头、换请求体、换方法都直接生效。请求拦截器也正好补上「给所有请求注入公共 body 字段」这个缺口：`data` 只取请求级、不能靠默认值继承，而 axios 官方文档给出的出路正是请求拦截器。
-- **非 2xx 走响应侧的错误处理器**（`use_response` 的第二个参数，`error.response()` 上有完整响应），`response()` 是 `None` 的传输失败也会走到那里。处理器返回一个响应＝这个错误已处理；`raise error`＝不处理，继续往外传（等价 axios 的 `Promise.reject(error)`）。
-- **请求拦截器抛错 = 这次请求不发出**（用 `HttpError::new(message, code, config)` 造错误），错误按 axios 的语义先流进响应侧错误处理器，而不是直接抛给调用方。
-- **一次 `request` 只跑一遍**：跟 5 跳重定向也只跑一次（拦截器在重定向循环之外），认证头不会被重复注入、重试也不会被放大成「跳数 × 重试次数」。
-- **覆盖范围**：三个入口（`request` / `stream` / `sse`）都过请求拦截器；响应拦截器只作用于 `Client::request`——两个流式入口的「响应」是还没读的字节流，改写与重试都没有明确语义。
-- **响应体后处理**（axios 里写在 `transformResponse` 的那类事，本项目由响应拦截器承担）：`json()` 解析 → 处理 → `with_json` 写回，比如「规范正文」或「去掉 `token` 字段」。`json()` 抛的是 `@json.ParseError`，而拦截器只允许抛 `HttpError`，所以解析要用 `try ... catch` 收掉；三条可编译的配方在 [`docs/11-interceptors.md`](docs/11-interceptors.md)。
-- **两条边界**：改响应体不会同步 `Content-Length` 头（响应头是服务端写下的原文）；**不能凭空造一个响应**，只能改写手上已有的响应、重发请求、或返回之前存下来的响应（做缓存正好够用）。写 `with_text` / `with_json` 时按 `response_encoding` 编码，与 `text()` / `json()` 的读方向对称（`with_text(response.text())` 恒等）。
-- **闭包要写箭头形式**（`config => ...`）或显式标注 `async fn`：MoonBit 的效果推断只认箭头语法，**具名同步函数不能直接传**（`(Config) -> Config` 与 `async (Config) -> Config raise HttpError` 是两个类型）。
-- 拦截器链用**值语义**构建（`use_*` 返回新值，别丢掉返回值），传给 `Client::new` 之后视作冻结；`client.create(...)` 派生的实例**继承**这份链（axios 的 `axios.create()` 不继承）。
+- 顺序：请求侧**后注册先跑**（LIFO）、响应侧**先注册先跑**（FIFO），两个方向相反。
+- 拦截器拿到的配置是合并后的；`client.create(...)` 派生的实例会继承这份链。
+- 一次请求只跑一遍：跟 5 跳重定向也只跑一次。响应侧只作用于 `Client::request`，两个流式入口不过响应链。
+- 闭包要写箭头形式（`config => ...`）或显式标 `async fn`——效果推断只认箭头语法，具名同步函数传不进去。
 
-重试配方、有界重试与「缓存命中不发请求」的写法、与 axios 的逐条差异表、以及「为什么不做成传输层中间件」见 [`docs/11-interceptors.md`](docs/11-interceptors.md)。
+### 取消请求
 
-## 流式响应与 SSE
-
-`request` 会把响应体读全再解码，SSE 这类一直不结束的响应永远等不到头。两种「不读全」的读法各有一个入口，配置合并与状态码校验都和 `request` 完全一样，区别是拿到响应头就把控制权交给调用方。
-
-**下载 / 自己按块处理**用 `Client::stream`，拿到的是原始字节流：
+一个 `CancelToken` 可以传给任意多次请求，从任何地方喊停（另一条协程、进度回调、看门狗）：
 
 ```moonbit nocheck
-///|
-async fn download(
-  api : @moonhttp.Client,
-) -> Unit raise @moonhttp.HttpError {
-  let res = api.stream(@moonhttp.Config::new("/big-file"))
-  println(res.status)                       // 响应头已到手，body 还没读
-  println(res.headers.get("content-type"))
-  // 边到边读，每块自己处理（这条路上进度自己累加；
-  // 要库替你报进度就用 with_on_download_progress + read_all，见「上传与下载进度」）
-  while res.read_some() is Some(chunk) {
-    println(chunk.length())
-  }
-}
-```
+let stop = @moonhttp.CancelToken::new()
 
-**SSE** 用 `Client::sse`，拿到的是解析好的事件流，不需要自己切事件：
-
-```moonbit nocheck
-///|
-async fn watch_events(
-  api : @moonhttp.Client,
-) -> Unit raise @moonhttp.HttpError {
-  let events = api.sse(
-    @moonhttp.Config::new("/events").with_common_header(
-      "Accept", "text/event-stream",
-    ),
-  )
-  println(events.status)                    // 响应头已到手，body 还没读
-  while events.next_event() is Some(event) {
-    println(event.event + ": " + event.data) // message: {...}
-  }
-}
-```
-
-`SseEvent` 有四个字段：`event`（缺省 `"message"`）、`data`（同一事件的多条 `data:` 行用 `\n` 连接）、`id` 与 `retry`（解析器的**持久状态快照**——一旦流里出现过就跟着后面每个事件出来，断线重连要用它们；本项目不自动重连，重连逻辑写在上层）。
-
-`Client::sse` 会检查响应头是否声明了 `text/event-stream`，不是就报 `NotSupported`——把 JSON 或二进制按事件读只会得到一堆莫名其妙的东西，宁可响亮失败。服务端不声明类型却确实是 SSE 时，用 `Client::stream` 拿原始流 + 公开的 `SseParser` 自己驱动。
-
-要点：
-
-- 两个流式类型各自只有一种读法：`StreamResponse` 是 `read_some` / `read_until` / `read_all`，`SseStream` 是 `next_event`。它们都可能抛 `HttpError`；`StreamResponse::is_event_stream()` 可以自查对面是不是 SSE（想按事件读请改用 `Client::sse`）；
-- 读到 EOF 会自动关闭连接；**没读完就结束时必须调用 `close()`**——本项目没有连接复用也没有析构器，忘记关闭会漏一条连接。`close()` 是「到此为止」：之后 `read_some` / `next_event` 一律只返回 `None`，包括那一次读取里已经解析好、还排队等着的事件；
-- 状态码校验与 `request` 一致：非 2xx 会先把错误体读完，再抛带完整响应的 `HttpError`，长连场景下能立刻看到「为什么没连上」；
-- 读取失败（超时、断连）时错误里带着**已经收到的响应**：`read_all` 中途失败会把已读到的字节一起交出来（下载断在半路时，那半截就是现场），`read_some` / `read_until` / `next_event` 失败时至少还有状态行与响应头；
-- `timeout` 在流式路径下，`read_some` / `read_until` 是**每次读取的等待上限**，`read_all` 是**整段读完的时限**（不是整条请求的总时限），SSE 用默认的不限时即可；
-- **不要用 `read_until("\n\n")` 切 SSE 事件**：SSE 允许 CRLF / LF / CR 三种行尾，而 CRLF 流上事件边界的字节 `0D 0A 0D 0A` 里没有连续两个 LF，这个分隔符永远匹配不到（内存体上表现为整段原样返回，真实连接上会一直等到连接关闭）。细节与全部解析规则见 [docs/06-sse.md](docs/06-sse.md)。
-
-## 取消请求
-
-`CancelToken` 对应 axios 的 `cancelToken`：一个句柄可以传给任意多次请求，从**任何地方**喊停
-（另一条协程、某个进度回调、看门狗），被取消的请求拿到 `ERR_CANCELED` 错误。
-
-```moonbit nocheck
-///|
-async fn main {
-  let api = @moonhttp.create(
-    @moonhttp.Config::default().with_base_url("https://api.example.com"),
-  )
-  let stop = @moonhttp.CancelToken::new()
-
-  @async.with_task_group(group => {
-    // 请求放进子任务；喊停来自别处（UI 的停止按钮、超时看门狗、用户按 Ctrl-C……）
-    let running = group.spawn(() => {
-      api.request(
-        @moonhttp.Config::new("/reports/big.csv").with_cancel_token(stop),
-      ) catch {
-        error if error.is_cancelled() => println("已取消：" + error.message())
-        error => println(error.to_string())
-      }
-    })
-    @async.sleep(2000)
-    stop.cancel(message="Operation canceled by the user.")
-    running.wait()
+@async.with_task_group(group => {
+  let running = group.spawn(() => {
+    api.request(@moonhttp.Config::new("/reports/big.csv").with_cancel_token(stop)) catch {
+      error if error.is_cancelled() => println("已取消：" + error.message())
+    }
   })
-}
+  @async.sleep(2_000)
+  stop.cancel(message="Operation canceled by the user.")
+  running.wait()
+})
 ```
 
-几条口径：
+取消能打断挂起中的连接动作（等首字节、建连、传大 body、读响应体），流式入口在消费过程中取消也生效（下一次读取抛 `Cancelled`，而不是退化成流结束）。token 是一次性的，`cancel` 给的 message 就是错误文案；取消发生在响应头到手之后时，错误里带着已经收到的部分响应。
 
-- **能打断挂起中的连接动作**：取消落在协程的挂起点上——卡在「等首字节」「建连中」「传大 body」
-  时立刻断，不需要等到下一个检查点。机制是协程级取消（与 `timeout` 同一套），细节见
-  [docs/12-cancellation.md](docs/12-cancellation.md)。
-- **覆盖三个入口**：`request`（含重定向链与读全量）、`stream`、`sse`。流式入口在**消费过程中**
-  取消也生效：下一次 `read_some` / `next_event` 抛 `ERR_CANCELED`（不是返回 `None`，免得被当成
-  「对端正常结束」），同时连接立刻释放。
-- **取消晚一步也算数**：已经取消的 token 让后续请求（包括拦截器里的重试）**立刻失败、不发 I/O**；
-  token 是一次性的（与 axios 一致），要多次取消就每次 `CancelToken::new()`。
-- **取消理由就是错误文案**：`stop.cancel(message="…")` 的 message 原样成为 `HttpError::message()`；
-  没给就是默认的「请求已取消」。
-- **失败现场不丢**：取消发生在响应头到手之后时，错误里带着状态行、响应头与已读到的半截正文
-  （与超时、断连一致，这点比 axios 多给一点信息）。
-- **顺手能取消一个实例的全部请求**：把 token 放进实例默认值即可
-  （`Client::create(Config::default().with_cancel_token(stop))`）。
+### 自动重定向
 
-## 可替换的传输层
+`max_redirects` 默认 5 跳，设成 `0` 就是不跟随（3xx 原样交给状态码校验），三个入口都跟。跨 host 跟随时会丢掉 `Authorization` / `Cookie` 这类凭据；跟到超限抛 `TooManyRedirects`，错误里带着最后那个 3xx 响应。
 
-真正「把字节发出去」这一步被抽象成 `Transport` trait，整个 `moonbitlang/async` 依赖只存在于 [`src/transport/`](src/transport/) 这个包里（真实实现是 `async_http.mbt`，取消作用域是 `cancel.mbt`，响应体流是 `stream.mbt` + `stream_lifecycle.mbt`）。带来的好处：
-
-- `config` / `headers` / `merge` / `url` 四个包不依赖网络与异步，可以用普通同步测试覆盖；
-- 使用方可以注入自己的实现，测试时不必真的联网。
-
-```moonbit nocheck
-// 测试里替换掉真实网络：Mock 会记录收到的请求，并返回预置响应
-let mock = @transport.MockTransport::new(response)
-let transport : &@transport.Transport = mock
-let client = @moonhttp.Client::new(transport=transport)
-
-ignore(client.request(@moonhttp.Config::new("/users")))
-let sent = mock.last_request().unwrap()
-println(sent.url)                  // 已经拼好 base_url 与 query 的完整地址
-println(sent.headers.to_string())  // 已经拍平的头
-```
-
-自定义传输只需要实现一个方法：
-
-```moonbit nocheck
-///|
-pub impl Transport for MyTransport with fn send(self, request) {
-  // request : PreparedRequest（方法、完整 URL、已拍平的头、body、超时）
-  // 返回 RawResponse（状态码、状态短语、响应头、响应体**流**）
-  // 手里已经有完整响应体时用 ResponseBody::from_bytes 包一层
-  ...
-}
-```
-
-拦截器**不在这一层**：它挂在传输层之上（整条请求只跑一遍，不会被重定向的每一跳重复触发），理由见 [`docs/11-interceptors.md`](docs/11-interceptors.md)。
-
-## 代理
-
-`Config.proxy` 让请求经代理服务器转发（对应 axios 的 `proxy`）：
+### 代理
 
 ```moonbit nocheck
 let client = @moonhttp.create(
@@ -409,141 +174,126 @@ let client = @moonhttp.create(
 )
 ```
 
-- `host` 必填；`port` 缺省由协议决定（http 80 / https 443）；`protocol` 缺省 `ProxyProtocol::Http`，选 `Https` 表示**到代理本身**走 TLS。
-- `username` / `password` 是代理的 HTTP Basic 凭据，落在建立隧道时的 `CONNECT` 请求上（`Proxy-Authorization`），**不会发给目标服务器**。你在头里自定义的 `Proxy-Authorization` 同样只发给代理；`with_proxy` 给了凭据时以凭据为准（axios 的覆写规则）。
-- 代理设置走「逐字段深合并」：实例默认值里配了地址、请求级只补凭据也能拼出完整配置（与 `auth` 同档）。给了 `proxy` 却没给 `host` 会报 `ERR_INVALID_URL`，而不是悄悄直连。
-- 每请求（含重定向的每一跳）各建一条隧道，与本项目「不复用连接」一致；`timeout` 覆盖与代理握手的这一段。
-- **http 目标也走 CONNECT 隧道**：代理服务器必须支持 `CONNECT` 方法，只做 GET/POST 转发的简易代理不行。
-- 只支持 http/https 代理（不做 SOCKS）。**不读** `http_proxy` / `https_proxy` / `no_proxy` 环境变量，也不提供 axios 那样「按请求关掉代理」的 `proxy: false`——配置即事实，需要绕开实例默认代理时另建一个不带该默认值的实例。
+http 与 https 目标都经 `CONNECT` 隧道转发（代理服务器得支持 `CONNECT`）。`username` / `password` 只落在建隧道的那个请求上，不会发给目标服务器。只支持 http / https 代理，不读 `http_proxy` 之类的环境变量；配了代理却没给 host 会直接报错，不会悄悄直连。
 
-代理拒绝建立隧道（最常见的是 `407` 需要认证）时报 `ERR_NETWORK`，`message` 形如 `网络请求失败：代理拒绝建立隧道：HTTP 407 ProxyAuthenticationRequired`。完整契约与差异见 [`docs/09-proxy.md`](docs/09-proxy.md)。
+### 上传与下载进度
 
-## 错误处理
+```moonbit nocheck
+client.request(
+  @moonhttp.Config::new("/upload")
+  .with_method(@moonhttp.Method::Post)
+  .with_data_from_json({ "name": "moon" })
+  .with_on_upload_progress(fn(event) { println("已上传 \{event.loaded} 字节") })
+  .with_on_download_progress(fn(event) { println("已下载 \{event.loaded} 字节") }),
+)
+```
 
-`request` 失败时抛出 `HttpError`，它携带分类、已合并的配置、以及**已经收到的响应**（没有收到就是 `None`）：
+`ProgressEvent` 只有 `loaded`（已传输字节）与 `total`（总字节，`None` 表示长度未知，chunked 响应与压缩响应都可能不准），外加算比例的 `progress()`；方向由哪个回调被调用表达。下载进度由「库读全量」的两条路（`request` 与 `read_all`）触发，自己按块读时自行累加。回调是同步执行且不允许抛错的，别在里面做耗时的事。
+
+### 流式响应与 SSE
+
+`request` 会把响应体读全，SSE 这类一直不结束的响应要用另外两个入口。
+
+```moonbit nocheck
+///|
+async fn download(api : @moonhttp.Client) -> Unit raise @moonhttp.HttpError {
+  let res = api.stream(@moonhttp.Config::new("/big-file"))
+  println(res.status) // 响应头已到手，body 还没读
+  while res.read_some() is Some(chunk) {
+    println(chunk.length())
+  }
+}
+```
+
+```moonbit nocheck
+///|
+async fn watch(api : @moonhttp.Client) -> Unit raise @moonhttp.HttpError {
+  let events = api.sse(@moonhttp.Config::new("/events"))
+  while events.next_event() is Some(event) {
+    println(event.event + ": " + event.data) // message: {...}
+  }
+}
+```
+
+`StreamResponse` 还有 `read_all()` 与 `read_until(分隔符)`；`SseEvent` 带 `event`（缺省 `"message"`）、`data`、`id` 与 `retry`（后两者是持久状态，断线重连要用）。读到 EOF 会自动关连接，**中途结束时记得自己 `close()`**——本项目没有连接复用，忘记关就漏一条连接。`Client::sse` 要求响应头声明 `text/event-stream`，拿到的不是事件流会报 `NotSupported`；服务端不声明却是 SSE 的场合，用 `Client::stream` 配公开的 `SseParser` 自己驱动。
+
+### 错误处理
+
+失败抛 `HttpError`，它带着错误分类、出错时的配置，以及**已经收到的响应**（`None` 表示连响应头都没收到）：
 
 ```moonbit nocheck
 try {
   ignore(api.request(config))
 } catch {
   @moonhttp.HttpError(info) => {
-    println(info.code)                          // ERR_BAD_REQUEST
-    println(info.message)                       // 请求失败，状态码 404
-    println(info.response.unwrap().status)      // 404
-    println(info.config.url)                    // 出错时的配置，便于定位
+    println(info.code) // BadRequest
+    println(info.message) // 请求失败，状态码 404
+    println(info.response.unwrap().status) // 404
+    println(info.config.url) // 出错时的配置，便于定位
   }
 }
 ```
 
-`response` 有三种取值，区别只在「响应收到多少」：
+| `ErrorCode` | 触发时机 |
+|---|---|
+| `BadRequest` | 状态码 4xx 且未通过校验 |
+| `BadResponse` | 状态码 5xx（或其它非 2xx） |
+| `Network` | 连接 / DNS / TLS 失败、读响应体中途断连、代理拒绝建隧道 |
+| `Timeout` | 超过 `timeout` |
+| `Cancelled` | 被 `CancelToken` 取消（`error.is_cancelled()`） |
+| `InvalidUrl` | 既没有 `url` 也没有可用的 `base_url` |
+| `NotSupported` | 传输层无法完成该请求（例如重定向到非 http(s) 协议） |
+| `TooManyRedirects` | 重定向次数超过 `max_redirects` |
 
-- **完整响应**：状态码没通过 `validate_status` 时；
-- **已经收到的部分**：失败发生在响应头到手之后（读响应体时超时、断连）——状态行与响应头一定在，响应体字节是失败前读到的部分（`bytes()` / `text()` 拿到的可能只有半截）。服务端的错误正文常常已经到了一部分，这半截正是排查时最想看的东西；
-- **`None`**：连响应头都没收到就失败了（连不上、DNS 失败、缺 `url`）。
+### 用 Mock 传输层测试
 
-错误码只说「失败是什么」（超时 / 断连 / 状态码不合规），`response` 说「已经收到什么」，两件事不混在一起。
-
-| `ErrorCode` | axios 对应错误码 | 触发时机 |
-|---|---|---|
-| `BadRequest` | `ERR_BAD_REQUEST` | 状态码 4xx 且未通过校验 |
-| `BadResponse` | `ERR_BAD_RESPONSE` | 状态码 5xx（或其它非 2xx） |
-| `Network` | `ERR_NETWORK` | 连接失败、DNS 解析失败、TLS 握手失败；读响应体中途连接被重置；代理拒绝建立隧道（`message` 里带 CONNECT 的状态码） |
-| `Timeout` | `ECONNABORTED` | 超过 `timeout`（axios 默认也用 `ECONNABORTED`），含读响应体中途的等待超时与与代理的 CONNECT 握手 |
-| `InvalidUrl` | `ERR_INVALID_URL` | 既没有 `url` 也没有可用的 `base_url`；配了 `proxy` 却没给 `host` |
-| `NotSupported` | `ERR_NOT_SUPPORT` | 传输层无法完成该请求（例如重定向到非 http(s) 协议）；`sse` 拿到的响应不是事件流 |
-| `TooManyRedirects` | `ERR_FR_TOO_MANY_REDIRECTS` | 重定向次数超过 `max_redirects`（默认 5）；错误里带着最后那个 3xx 响应 |
-
-## 包结构
-
-七个包构成无环依赖，每个包只依赖它真正需要的下层：
-
-```
-moonhttp/
-└── src/                     业务代码全部在 src/ 下（根目录只放模块元数据与文档）
-    ├── (根包)               门面 + 编排：Client / create / request / stream / sse
-    │                        / Response / StreamResponse / SseStream / HttpError
-    ├── config/              配置形状、Method、内置默认值、with_* 构建器、合并契约、请求体序列化、重定向的下一跳规则、代理配置
-    ├── headers/             大小写不敏感的 Headers
-    ├── sse/                 SSE 事件解析（纯逻辑：吃字节、吐事件）
-    ├── url/                 绝对地址判定、拼接、params 序列化、Location 的相对解析
-    ├── util/                纯函数层：拼请求、解码、Content-Type 与状态码判定
-    ├── transport/           Transport trait + AsyncHttpTransport + MockTransport
-    └── cmd/main/            可运行示例
-```
-
-约定：凡是出现在公开签名里的类型，都在**用到它**的包里**再导出一次**（`pub using`），根包也再导出一份。所以日常使用只需要 `@moonhttp` 一个 import。
-
-拆包的依据是「签名里能不能不出现门面类型」：`config` / `headers` / `url` / `sse` / `util` 都不依赖 `Response` / `StreamResponse` / `SseStream` / `HttpError`，所以能独立成包、能用同步测试覆盖、能脱离网络跑。反过来，这几个门面类型互相引用（`HttpError` 要带 `Response`，流式类型要抛 `HttpError`，`Client` 抛 `HttpError` 又返回这三个响应类型），必须同属根包——而且**只能**在根包：`pub using` 再导出不了错误构造子，`HttpError` 一离开根包，`catch { @moonhttp.HttpError(info) }` 就写不出来了（实验证据见 `docs/01-architecture.md`）。
-
-配置合并跟着 `config` 走（它原来是一个独立的 `merge` 包）：`Config` 有私有字段（请求体）之后，别的包连 `{ ..config, x: ... }` 这种记录展开都写不出来，而合并必须逐字段构造新配置——顺带得到一条更强的保证，往 `Config` 加字段忘了配合并策略是**编译错误**（理由见 `docs/02-config-merge.md`）。
-
-**根包因此拆成四个源文件**（同一个包，只是为了别写成一个超长文件）：`client.mbt`（`Client` + 三个入口 + 接壤层）、`http_error.mbt`（错误类型与所有抛错点）、`facade.mbt`（对外响应类型与再导出）、`interceptors.mbt`（拦截器链）。AGENTS.md 的 RL-04 为根包文件放宽到 1000 行，超限的文件在文件头声明例外；子包仍守 300 行（`util/` 两个文件各不足 100 行）。拦截器同样只能待在根包——它的签名要提到 `Response` 与 `HttpError`，进 `config` 包会成环。
-
-测试文件不能挪到 `tests/` 之类的子目录：MoonBit 按「文件所在目录的包」归属测试，挪出去就变成了别的包的测试（白盒测试还得编进包里才能看见 `priv`，物理上不可能在别处）。
-
-## 暂不支持
-
-以下 axios 能力本版本**没有**实现，配置里也不会出现对应字段（避免「配置了但完全不生效」）：
-
-- `get` / `post` / `put` / `delete` / `head` / `options` / `patch` 等快捷方法（都是 `request` 的薄封装，见「后续扩展」）
-- 拦截器的 `eject` / `clear` / `runWhen`：拦截器本身已支持（见「拦截器」），但这三个 axios 的注册期辅助能力不做——撤下一个拦截器就重新构建一份 `Interceptors` 值
-- 代理的 SOCKS 支持、`http_proxy` / `no_proxy` 环境变量与按请求关闭代理的开关（显式 `proxy` 配置已支持，见「代理」）
-- 重定向的 `beforeRedirect` 回调与自定义敏感头名单（`sensitiveHeaders`）：跟随规则固定，见 [`docs/08-redirects.md`](docs/08-redirects.md)
-- **请求体流式上传（`data` 是 Reader / 生成器）**：请求体仍是一次性字节——表单含文件时整块驻留内存，库也不读盘（文件按「字节 + 文件名」传入）。**计划下一期实现**：需要一个挂在连接上的可写流，让调用方一段段喂数据。进度回调不依赖它，已经可用（见「上传与下载进度」）
-- SSE 自动重连：事件里带了 `id` / `retry`（重连所需的全部状态），但没有按 `retry` 间隔自动重订阅、也不自动带 `Last-Event-ID`——重连策略交给上层
-- 请求/响应转换器（`transformRequest` / `transformResponse`）**不做成独立配置项**：请求体固定为四种形态（`with_data_from_str` / `with_data_from_json` / `with_data_from_form` / `with_data_from_urlencoded`，见「请求体」），响应体交出去的是原始字节，要文本/对象分别用 `text()` / `json()`（见「响应体怎么读」）。要「发请求前换 body」「拿到响应后改正文」就在两段拦截器里做——它们是这两个 hook 的超集（还能改 URL / 方法 / 头 / 状态码），配方见 [`docs/11-interceptors.md`](docs/11-interceptors.md)
-- `withCredentials` / `xsrfCookieName` / `xsrfHeaderName`（本项目不管理 cookie）
-- 响应 cookie：底层的响应 cookie 单独存放，没有并入 `headers`，所以读不到 `Set-Cookie`
-- 连接复用：每次请求新建连接
-- 单条头的多值：一个头名只能对应一个字符串值（axios 允许数组）
-
-### 与 axios 的其它差异
-
-- `Config` 的 `method` 字段在本项目里叫 `http_method`（保留字原因，见上文）。
-- `Config` 的请求体是**私有字段**（构造配置只能用构建器，见「请求体」）；`multipart/form-data` 的 `name` / `filename` 按 WHATWG 规则转义（`"` → `%22`、CR / LF → `%0D` / `%0A`），axios 依赖的 node `form-data` 不做转义。
-- `application/x-www-form-urlencoded` 只提供一种约定（与 `params` 共用的那套：数组/嵌套走 `tags%5B%5D=a` 括号形式、空格写成 `+`）。axios 会按 `URLSearchParams` / 对象 / `formSerializer` 选项给出多种输出；本项目要换约定就自己拼字符串 + 自己设头。
-- `paramsSerializer` 只接受**函数**形式（axios 还有 `{ serialize, encode, indexes }` 对象形式与逐组件的编码器），且只作用于 URL 的 query：请求体（`with_data_from_urlencoded`）仍走内置序列化器——axios 里请求体走的是另一个内部选项 `formSerializer`，两者本就分开。
-- `Headers` 内部以小写保存头名（写入时的原始拼写会被记住并用于输出），但不支持 axios 用 `false` 表示「禁止被同名默认值覆盖」的哨兵值。
-- 响应体没有默认解码的字段：`Response` 只保存原始字节，`text()`（按 `response_encoding` 解码）、`bytes()`（精确字节）、`json()`（解码后 `@json.parse`）由你显式选。axios 的 `res.data` 是 `any`，靠 `responseType` / `transformResponse` / `forcedJSONParsing` 自动解析；本项目不做那一套，`json()` 不看 `Content-Type`、失败抛 `@json.ParseError`。二进制内容用 `bytes()`（或改走 `Client::stream`）。
-- 没有可变的全局默认值。axios 的全局 `axios.defaults` 在本项目里对应 `@config.defaults()`（固定的内置默认值）；要定制请用 `create(...)` 或 `client.create(...)` 派生。
-- 重定向（`maxRedirects`）默认 5 跳（axios 请求配置文档的默认值；它底层 follow-redirects 自己兜底是 21，文档与实现并不一致，本项目取文档口径）。四处与 axios 不同：超限错误的 `code` 同名但**带最后那个 3xx 响应**（axios 的错误里没有响应）；`response.config` 是**最后一跳**的配置（axios 是最初的配置，最终地址只在 `response.request` 上）；`timeout` 是**每一跳各算一份**（axios 是整条链一个计时器）；负数上限按「不跟随」处理。完整规则与差异表见 [`docs/08-redirects.md`](docs/08-redirects.md)。
-- 代理有五处与 axios 不同：**不读** `http_proxy` / `https_proxy` / `no_proxy` 环境变量；没有 `proxy: false` 这类「按请求关掉」的写法；http 目标也走 CONNECT 隧道（axios 对 http 目标用「请求行里放完整地址」的经典写法）；用户在 `headers` 里自定义的 `Proxy-Authorization` 在有代理时只发给代理、不会随请求穿过隧道发给源站；`protocol` 是枚举 `ProxyProtocol` 而不是字符串。差异表见 [`docs/09-proxy.md`](docs/09-proxy.md)。
-- 取消有五处与 axios 不同：**只有一个对象**（`CancelToken`，不做 `CancelToken.source()` 那层 token/source 二分，也没有 `AbortController` / `signal` 的对应物）；判定取消用 `HttpError::is_cancelled()`（看错误码）而不是 `axios.isCancel` 的 `__CANCEL__` 标记；取消错误里**带有已经收到的响应**（半截正文也在），axios 的 `CanceledError` 不带 `response`；默认文案是「请求已取消」（axios 是 `"canceled"`）；中断范围是建连、写请求、等响应头、读响应体、SSE 事件读取全都能断。差异表与机制见 [`docs/12-cancellation.md`](docs/12-cancellation.md)。
-- 拦截器有七处与 axios 不同：没有 `eject` / `clear` / `runWhen`；请求拦截器不提供「错误处理器」那一半（`use_request` 只有一个处理器，因为请求侧还没来得及产生 I/O 错误）；响应拦截器只作用于 `Client::request`（两个流式入口不过响应链）；`Response` 只能改写、不能凭空合成（axios 里返回普通对象即可）；`client.create(...)` 派生的实例**继承**拦截器（axios 的 `axios.create()` 造出的是没有拦截器的新实例）；拦截器与「重定向的每一跳」无关——整条链只跑一次（axios 也是，因为它跟随重定向发生在适配器内部）；axios 的 `transformRequest` / `transformResponse` 不做成独立 hook，由两段拦截器承担（它们是超集，但改写要落回字节——`Response` 里只有字节，没有 `data` 那样的任意值）。差异表见 [`docs/11-interceptors.md`](docs/11-interceptors.md)。
-
-### 后续扩展
-
-`request` 已经是完整的通用入口，各快捷方法只是在它之上固定方法名与 body 的位置，例如：
+传输层是可替换的 `Transport` trait，测试时换掉真实网络（记得在自己的 `moon.pkg` 里加上 `"q2316367743/moonhttp/transport"`）：
 
 ```moonbit nocheck
-///|
-pub async fn Client::get(
-  self : Client,
-  url : String,
-  config? : Config,
-) -> Response raise HttpError {
-  let config = match config {
-    Some(config) => config
-    None => Config::new(url)
-  }
-  // with_url 已经由 Config::new 完成；这里只需补上方法
-  self.request(config.with_method(Method::Get))
-}
+let mock = @transport.MockTransport::new(response)
+let transport : &@transport.Transport = mock
+ignore(@moonhttp.Client::new(transport=transport).request(@moonhttp.Config::new("/users")))
+println(mock.last_request().unwrap().url) // 已经拼好 base_url 与 query 的完整地址
 ```
 
-## 开发
+`MockTransport` 会记下收到的每个请求，也能预置一串响应或固定失败（`from_responses` / `failing`）；自定义传输只需实现一个 `send` 方法。
+
+## 暂不支持与后续计划
+
+以下能力本版没有实现，配置里也不会出现对应字段（避免「配置了但完全不生效」）：
+
+- **快捷方法** `get` / `post` / `put` / `delete` / `head` / `options` / `patch`：都是 `request` 的薄封装，计划中。
+- **请求体流式上传**：请求体目前是一次性字节，表单含文件时整块驻留内存；计划下一期做可写流，让调用方一段段喂数据。
+- **连接复用**：每次请求新建连接，计划做连接池以省掉重复握手。
+- **cookie**：不管理 cookie（没有 `withCredentials` / `xsrf*`，响应里的 `Set-Cookie` 也读不到）；计划做跨请求复用。
+- **SSE 自动重连**：`id` / `retry` 已经作为持久状态带出来了，按 `retry` 间隔重订阅留给上层；计划内置。
+- **响应体自动解析**：读法由你在 `text()` / `bytes()` / `json()` 里显式选；静态类型下「猜内容类型」需要先重新设计响应类型的形态。
+- **`transformRequest` / `transformResponse`**：不做成独立配置项——请求体固定为四种形态，响应体读法在 `Response` 上，要「发请求前换 body」「拿到响应后改正文」就在两段拦截器里做。
+- **拦截器的** `eject` / `clear` / `runWhen`：撤下一个拦截器就重新构建一份 `Interceptors` 值。
+- **重定向的** `beforeRedirect` 回调与自定义敏感头名单。
+- **代理的** SOCKS 支持、`http_proxy` / `no_proxy` 环境变量，以及按请求关掉代理的开关（显式 `with_proxy` 已支持）。
+- **单条头的多值**：一个头名只能对应一个字符串值。
+
+## 参与开发
+
+代码在 `src/` 下（七个功能包 + 一个可运行示例），实现思路、契约与改动清单在
+[`docs/`](https://github.com/q2316367743/moonhttp/blob/master/docs/README.md)。
 
 ```bash
-moon check              # 类型检查（pre-commit 钩子跑的就是它）
-moon test               # 全部测试
-moon test -p q2316367743/moonhttp/merge   # 只跑某个包
-moon run src/cmd/main   # 真实网络示例
-moon info && moon fmt   # 更新 .mbti 接口文件并格式化
-moon coverage analyze   # 覆盖率
+moon check              # 类型检查
+moon test               # 全部测试（不需要外网）
+moon run src/main        # 真实网络的示例（本地手动测试用，不随包发布）
+moon info && moon fmt   # 更新 .mbti 接口并格式化，提交前跑一次
 ```
 
-测试分层：`config` / `headers` / `merge` / `url` / `sse` 五个包是纯逻辑，用同步测试逐条钉住合并语义与 SSE 解析规则；根包与 `transport` 用 `async test` 配合 `MockTransport` 跑完整管线。`src/sse_stream_test.mbt`、`transport/stream_test.mbt`、`src/error_test.mbt`、`src/progress_test.mbt`、`src/cancel_test.mbt` 与 `src/cancel_stream_test.mbt` 会各起一个本机 server（`127.0.0.1` 随机端口）——分别验证 CRLF 的 SSE 事件能在服务端停顿期间就到达、真实连接的流式读取与单次读取超时、「读响应体中途失败时错误里带着已经收到的部分」（内存体读得完，只有真实连接能造出「读到一半」），上传进度按块回调与 chunked 响应的 `total` 未知（内存体的长度总是已知，只有真实连接能造出「长度未知」），以及取消真的打断了挂起中的连接动作（Mock 同步返回，没有挂起点可中断）。同样不需要外网，只有 `src/cmd/main` 会访问真实网络。
+提交前建议把钩子装上，每次 commit 会自动跑一遍 `moon check`：
 
-`util` 没有自己的 `_test.mbt`：里面的函数都被根包的黑盒测试从端到端一路覆盖（`src/encoding_test.mbt` 钉四种编码、`src/request_test.mbt` 钉拼请求与错误分档、`src/moonhttp_test.mbt` 钉方法回退），再补一份单元测试只是重复覆盖。
+```bash
+chmod +x .githooks/pre-commit && git config core.hooksPath .githooks
+```
 
-维护者文档（实现思路、API 契约、改动清单、MoonBit 语言坑位）见 [`docs/`](docs/README.md)。
+CI 会跑 `moon check --deny-warn`、`moon build`、`moon test`，并要求 `.mbti` 接口文件与 `moon fmt` 的结果没有 diff。动手改代码前先看 `docs/README.md` 末尾的「改动时的同步清单」。
+
+## 许可证
+
+Apache-2.0，见 [LICENSE](https://github.com/q2316367743/moonhttp/blob/master/LICENSE)。
