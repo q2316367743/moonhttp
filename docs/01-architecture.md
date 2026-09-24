@@ -14,6 +14,7 @@ moonhttp/
     ├── http_error.mbt           错误契约：ErrorCode / ErrorInfo / HttpError 与**所有**抛错点
     ├── facade.mbt               门面层：Response / StreamResponse / SseStream 等
     │                            对外响应类型 + pub using 再导出
+    ├── interceptors.mbt         拦截器链：Interceptors + 请求侧 / 响应侧两条链的驱动
     ├── *_test.mbt               根包黑盒测试（用 MockTransport 跑整条管线）
     ├── *_wbtest.mbt             根包白盒测试（覆盖只能从包内部触达的分支）
     ├── config/                  配置的形状、合并契约、默认值、构建器、请求体序列化、重定向的下一跳规则与代理配置
@@ -46,9 +47,11 @@ moonhttp/
 
 判据落在**签名**上，不是「感觉像工具函数」：只要返回 `Response` 或抛 `HttpError`，就必须留在根包——`util` 一旦反过来依赖根包就成环。所以 `prepare_request` / `build_response` 留在 `client.mbt`，`transport_error` / `status_error` / `status_error_code` / `validate_response` 与错误类型一起待在 `http_error.mbt`，它们正是「与门面类型接壤」的那一层；`util` 的准入条件写在 `src/util/moon.pkg` 里，往里加东西前先看那一条。
 
+同一条判据也解释了拦截器为什么挂在根包的 `Client` 上而不是像 `params_serializer` 那样进 `Config`：响应侧签名要提到 `Response` 与 `HttpError`，字段一进 `config` 包就成环（顺带这也是 axios 的语义——`interceptors` 本来就是实例级）。详见 `11-interceptors.md`。
+
 `build_prepared_request` 是这条判据下唯一需要改造才搬得动的：它原来用 `raise HttpError` 报「地址不可用」，搬进 `util` 后改成返回 `Option`（`None` = 地址不可用），由根包的 `prepare_request` 翻译成 `InvalidUrl` 错误——错误码与文案属于对外契约，留在根包。这与 `@url.build_full_path` 返回 `Option`、根包负责报错的分工完全一致。
 
-**根包有三个源文件**：`client.mbt`（`Client` + 三个入口 + 接壤层）、`http_error.mbt`（错误类型与所有抛错点）、`facade.mbt`（对外响应类型与再导出）。三者都用上了 RL-04 为根包文件开出的例外（≤ 1000 行，需在文件头声明）。
+**根包有四个源文件**：`client.mbt`（`Client` + 三个入口 + 接壤层）、`http_error.mbt`（错误类型与所有抛错点）、`facade.mbt`（对外响应类型与再导出）、`interceptors.mbt`（拦截器链，`client.mbt` 在管线两端调它）。四者都用上了 RL-04 为根包文件开出的例外（≤ 1000 行，需在文件头声明）。
 
 **同包拆文件是免费的**：同目录 = 同包，拆文件既不成环、也不影响 `pub` / `priv` 的可见性，`.mbti` 一个字都不会变——所以「文件太长」永远可以靠拆文件解决，不必动包结构。跨包才有代价（`HttpError` 就是被这一条钉在根包里的，理由见上）。**例外只给根包**：子包仍守 300 行（`util/` 两个文件各不足 100 行，`config` / `sse` / `transport` 里的文件超了就必须拆）。
 
@@ -180,3 +183,7 @@ pub impl Transport for MyTransport with fn send(self, request) {
 | **私有字段会让跨包的记录字面量 / 记录展开失效**：`{ ..config, x: ... }` 报 `Cannot use struct update syntax on struct Config because it has private fields` | 一旦某个字段私有，别的包就既不能按名字段构造、也不能用记录展开，构造只能走构建器。两个落地后果：`merge_config` 必须与 `Config` 同包（`config/merge.mbt`）；根包回填方法只能写 `merged.with_method(...)` 而不是 `{ ..merged, http_method: ... }`。包内不受影响（`Config::new`、`with_*` 都是包内记录展开），要测包内写法得用白盒测试（`config/config_wbtest.mbt`） |
 | `errdefer` 在 async 函数里同样有效，适合「失败就关连接」这类清理 | 传输层用它保证建连之后的任何失败都关闭连接；比 `try ... catch { cleanup; raise }` 更短，也不会触发 `fragile_catch_all` 告警 |
 | 含 `mut` 字段的结构体，其内部变异**能穿过值类型字段可见**——把这种类型放进另一个结构体当普通字段（不标 `mut`）也照样生效 | `StreamResponse` 里的 `priv parser : SseParser` 就没标 `mut`：`next_event` 反复调 `parser.push` 能累积状态（`facade.mbt` 里的 `StreamResponse`）。给字段标 `mut` 反而会收到 `unused_mut` 告警——编译器认定这个 `mut` 没被用到，因为根本没有对该字段的整体赋值 |
+| **结构体字段里的函数值要先绑到局部变量再调**：`pair.on_fulfilled(x)` 会被当成「在 `ResponsePair` 上找一个叫 `on_fulfilled` 的方法」，报 `Type ResponsePair has no method on_fulfilled` | 写成 `let f = pair.on_fulfilled` 再 `f(x)`（编译器给的另一种写法是 `(pair.on_fulfilled)(x)`）。数组元素不受影响（`arr[i](x)` 正常） |
+| **`async fn` 默认隐式可抛错**：不写 `noraise` 的 async 函数，其错误类型是泛化的 `Error` | 在 `raise HttpError` 的函数里调用它报 `The error type is mismatched: wanted: HttpError, has: Error`。把「错误全部收进 `Result`、自己不抛」的 async 函数显式标 `noraise`（`async fn f(...) -> Result[..] noraise`），如 `Interceptors::run_request` |
+| **async 函数值是一等公民，但「同步函数」不能顶替它**：`async (A) -> B raise E` 可以存进结构体字段 / 数组，用普通 `f(x)` 调用（**没有 `await` 关键字**）；反过来 `(A) -> B` 不是它的子类型（报 `Expr Type Mismatch`），且效果推断只支持箭头闭包 | 存进 `Array[async (Config) -> Config raise HttpError]` 的闭包写箭头形式 `config => { ... }`；块式 `fn(config) { ... }` 字面量不会被推断成 async / raise，要写成 `async fn(config) -> Config raise HttpError { ... }`。已有的具名同步函数要包一层 `config => f(config)`。拦截器与传输层都建立在这条上 |
+| **闭包的声明错误类型决定了它体内能调用什么**：`assert_eq` 抛的不是 `HttpError`，在 `raise HttpError` 的闭包里写它会报错误类型不匹配 | 断言写在闭包外面：把要观察的值记进闭包外的变量，调用完之后再断言（`src/interceptor_test.mbt` 里那些拦截器用例就是这么写的） |

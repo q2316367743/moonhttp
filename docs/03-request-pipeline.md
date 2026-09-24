@@ -4,7 +4,8 @@
 
 | 文件 | 职责 |
 |---|---|
-| `src/client.mbt` | `Client::request` / `Client::stream` / `Client::sse` 的编排：合并 → 定方法 → 发送 →（读全量 / 交还流）→ 解码 → 校验 |
+| `src/client.mbt` | `Client::request` / `Client::stream` / `Client::sse` 的编排：合并 → 定方法 → 请求拦截器 → 发送 →（读全量 / 交还流）→ 校验 → 响应拦截器 |
+| `src/interceptors.mbt` | 拦截器链：`Interceptors`（注册）、`run_request` / `run_response`（顺序与错误流转，详见 `11-interceptors.md`） |
 | `src/config/merge.mbt` | 合并契约：四种策略、`merge_config`、`flatten_headers`（为什么在 `config` 包见 `02-config-merge.md`） |
 | `src/config/body.mbt` | 请求体的四种形态与序列化：`serialize_body`（字节 + 建议的 `Content-Type`） |
 | `src/config/form.mbt` | 表单的 `multipart/form-data` 编码（详见 `07-request-body.md`） |
@@ -33,6 +34,18 @@
 7. **读出响应体**：把响应体读到 EOF，字节原样放进 `Response`（解码不在这里，见下）。
 8. **校验状态码**：`validate_status` 不通过则抛 `HttpError`。
 
+### 两段拦截器夹在管线两端
+
+上面八步是管线**主体**，拦截器不改这八步的分工，只夹在它两端（细节见 `11-interceptors.md`）：
+
+- **请求侧**：夹在第 2 步与第 3 步之间。它在拼地址之前，所以拿到的配置里 `url` 与 `base_url` 还没拼在一起；
+  它抛错就表示这次请求不发出，错误按 axios 的 promise 链语义流进响应侧错误处理器。
+- **响应侧**：夹在第 8 步之后。正常处理器拿到通过校验的 `Response`，错误处理器拿到 `HttpError`
+  （非 2xx、传输失败、被请求侧拦下的三种都在内）。
+
+两段都在 `Client::send_following_redirects` **之外**，所以整条重定向链只跑一遍拦截器。
+三个入口都过请求侧链；响应侧链只作用于 `Client::request`（`stream` / `sse` 的「响应」是还没读的字节流）。
+
 第 1–5 步是「拼出一份能发出去的请求」，与读不读响应体无关。第 6 步包含自动跟随重定向（`request` 与两个流式入口共用同一段循环，所以上行地址、方法与头在跟随后的形态完全一致）；第 6 步起有三种**读法**，各有自己的入口与返回类型：
 
 | 入口 | 第 6 步之后 | 返回 | 适用 |
@@ -45,7 +58,7 @@
 
 `Response` 拿到手之后，**怎么读**同样由方法决定，这是第二层「读法」：`text()`（按 `response_encoding` 解码）、`bytes()`（精确字节）、`json()`（先解码再 `@json.parse`）。三层入口 × 三种读法都是静态的，不存在「配置变了返回类型就变」的情况。
 
-三种入口的**前半段与状态码校验完全一致**（`stream` 与 `sse` 共用 `Client::open_stream`，规则见 `status_allowed` / `status_error_code`）。差别只在失败时拿什么：`request` 报错时带的是完整响应，两个流式入口报错前会把错误体读完（不猜它是 JSON 还是别的什么格式——错误体格式不可预期，强行解释只会把「状态码失败」这个更准确的原因盖掉），字节放在 `HttpError::response()` 的 `Response` 上，按需要读成文本（`text()`）或原样取走（`bytes()`）。流式路径的超时语义见 `05-transport.md`，SSE 另见 `06-sse.md`。
+三种入口的**前半段与状态码校验完全一致**（`stream` 与 `sse` 共用 `Client::open_stream`，规则见 `status_allowed` / `status_error_code`）——**请求拦截器也在这段共用路径里**，所以三个入口都会被请求侧链处理过；响应侧链只在 `Client::request` 上。差别只在失败时拿什么：`request` 报错时带的是完整响应，两个流式入口报错前会把错误体读完（不猜它是 JSON 还是别的什么格式——错误体格式不可预期，强行解释只会把「状态码失败」这个更准确的原因盖掉），字节放在 `HttpError::response()` 的 `Response` 上，按需要读成文本（`text()`）或原样取走（`bytes()`）。流式路径的超时语义见 `05-transport.md`，SSE 另见 `06-sse.md`。
 
 **失败不等于什么都没收到**：响应头到手之后才可能开始读响应体，所以读取阶段的任何失败（单次读取超时、连接被重置）都已经晚于响应头——三个入口都会把**已经收到的响应**挂到错误上（状态行、响应头，以及失败前读到的部分正文，`Client::request` 与 `StreamResponse::read_all` 都用了 `read_all_partial` 保住那半截）。响应头到手之前就失败（连不上、DNS、缺 url）时错误里没有响应。判定与字段含义见 `04-errors.md`。
 

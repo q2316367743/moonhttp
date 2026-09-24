@@ -23,6 +23,7 @@ pub fn HttpError::code(Self) -> ErrorCode
 pub fn HttpError::config(Self) -> @config.Config
 pub fn HttpError::info(Self) -> ErrorInfo
 pub fn HttpError::message(Self) -> String
+pub fn HttpError::new(String, ErrorCode, @config.Config) -> Self
 pub fn HttpError::output(Self, &Logger) -> Unit
 pub fn HttpError::response(Self) -> Response?
 pub fn HttpError::to_string(Self) -> String
@@ -34,7 +35,7 @@ pub struct Client {
 }
 pub fn Client::create(Self, @config.Config) -> Self
 pub fn Client::defaults(Self) -> @config.Config
-pub fn Client::new(config? : @config.Config, transport? : &@transport.Transport) -> Self
+pub fn Client::new(config? : @config.Config, transport? : &@transport.Transport, interceptors? : Interceptors) -> Self
 pub async fn Client::request(Self, @config.Config) -> Response raise HttpError
 pub async fn Client::sse(Self, @config.Config) -> SseStream raise HttpError
 pub async fn Client::stream(Self, @config.Config) -> StreamResponse raise HttpError
@@ -62,6 +63,13 @@ pub(all) struct ErrorInfo {
   response : Response?
 }
 
+pub struct Interceptors {
+  // private fields
+}
+pub fn Interceptors::new() -> Self
+pub fn Interceptors::use_request(Self, async (@config.Config) -> @config.Config raise HttpError) -> Self
+pub fn Interceptors::use_response(Self, async (Response) -> Response raise HttpError, on_rejected? : async (HttpError) -> Response raise HttpError) -> Self
+
 pub(all) struct Response {
   status : Int
   status_text : String
@@ -75,6 +83,10 @@ pub fn Response::is_success(Self) -> Bool
 pub fn Response::json(Self) -> Json raise @json.ParseError
 pub fn Response::text(Self) -> String
 pub fn Response::to_repr(Self) -> @debug.Repr
+pub fn Response::with_body(Self, Bytes) -> Self
+pub fn Response::with_headers(Self, @headers.Headers) -> Self
+pub fn Response::with_status(Self, Int) -> Self
+pub fn Response::with_text(Self, String) -> Self
 
 pub(all) struct SseStream {
   status : Int
@@ -126,7 +138,13 @@ pub using @config {type Proxy}
 
 pub using @config {type ProxyProtocol}
 
+pub type RequestInterceptor = async (@config.Config) -> @config.Config raise HttpError
+
 pub using @config {type ResponseEncoding}
+
+pub type ResponseErrorHandler = async (HttpError) -> Response raise HttpError
+
+pub type ResponseInterceptor = async (Response) -> Response raise HttpError
 
 pub using @config {type SerializedBody}
 

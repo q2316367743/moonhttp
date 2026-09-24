@@ -1,8 +1,8 @@
 # moonhttp
 
-axios 风格的 MoonBit HTTP 客户端。当前实现聚焦三件事：**创建实例**、**通用 `request`**、**配置合并**；并在此基础上提供**自动跟随重定向**（`max_redirects`，默认 5 跳）与**流式响应 / SSE**（`Client::stream` 交原始字节流，`Client::sse` 交解析好的事件流）。
+axios 风格的 MoonBit HTTP 客户端。当前实现聚焦三件事：**创建实例**、**通用 `request`**、**配置合并**；并在此基础上提供**自动跟随重定向**（`max_redirects`，默认 5 跳）、**流式响应 / SSE**（`Client::stream` 交原始字节流，`Client::sse` 交解析好的事件流）与**请求 / 响应拦截器**（`Interceptors`，顺序与语义对齐 axios）。
 
-设计上刻意留出扩展点（可替换的传输层、`instance.create` 派生），但暂不实现拦截器、取消等 axios 高级特性——详见文末「暂不支持」。
+设计上刻意留出扩展点（可替换的传输层、`instance.create` 派生、两段式拦截器），但暂不实现取消等 axios 高级特性——详见文末「暂不支持」。
 
 ```moonbit nocheck
 ///|
@@ -226,6 +226,42 @@ api.request(@moonhttp.Config::new("/search").with_params({ "tags": ["a", "b"] })
 // → GET https://api.example.com/search?tags=a&tags=b
 ```
 
+## 拦截器
+
+对应 axios 的 `interceptors.request` / `interceptors.response`：请求侧在发送前改配置，响应侧在拿到响应后改响应、或在失败时救错 / 重试。拦截器挂在**实例**上（不是请求级配置——axios 的 `interceptors` 本来就是实例级）：
+
+```moonbit nocheck
+let plain = @moonhttp.Client::new()   // 给重试用的裸实例：不带这层拦截器，天然不会无限递归
+let client = @moonhttp.Client::new(
+  interceptors~ = @moonhttp.Interceptors::new()
+    // 请求侧：发送前改配置（加认证头 / 改地址 / 给所有请求注入公共 body 字段）
+    .use_request(config => config.with_header("X-Token", token))
+    // 响应侧：拿到响应后做点什么，原样返回就只是观察。
+    // 要改就用 with_status / with_headers / with_body / with_text（都返回新响应）
+    .use_response(response => {
+      println("响应状态：\{response.status}")
+      response
+    })
+    // 响应侧的错误路径：非 2xx、超时、断连都会走到这里——统一错误处理与重试写在这
+    .use_response(
+      response => response,
+      on_rejected=error => plain.request(error.config()),
+    ),
+)
+```
+
+- **顺序与 axios 一致**：请求侧**后注册先跑**（LIFO）、响应侧**先注册先跑**（FIFO）——两个方向**相反**，这是它最容易被记错的地方。
+- **拦截器拿到的配置是合并后的**（内置默认值 → 实例默认值 → 本次请求），改地址、加头、换请求体、换方法都直接生效。请求拦截器也正好补上「给所有请求注入公共 body 字段」这个缺口：`data` 只取请求级、不能靠默认值继承，而 axios 官方文档给出的出路正是请求拦截器。
+- **非 2xx 走响应侧的错误处理器**（`use_response` 的第二个参数，`error.response()` 上有完整响应），`response()` 是 `None` 的传输失败也会走到那里。处理器返回一个响应＝这个错误已处理；`raise error`＝不处理，继续往外传（等价 axios 的 `Promise.reject(error)`）。
+- **请求拦截器抛错 = 这次请求不发出**（用 `HttpError::new(message, code, config)` 造错误），错误按 axios 的语义先流进响应侧错误处理器，而不是直接抛给调用方。
+- **一次 `request` 只跑一遍**：跟 5 跳重定向也只跑一次（拦截器在重定向循环之外），认证头不会被重复注入、重试也不会被放大成「跳数 × 重试次数」。
+- **覆盖范围**：三个入口（`request` / `stream` / `sse`）都过请求拦截器；响应拦截器只作用于 `Client::request`——两个流式入口的「响应」是还没读的字节流，改写与重试都没有明确语义。
+- **两条边界**：改响应体不会同步 `Content-Length` 头（响应头是服务端写下的原文）；**不能凭空造一个响应**，只能改写手上已有的响应、重发请求、或返回之前存下来的响应（做缓存正好够用）。
+- **闭包要写箭头形式**（`config => ...`）或显式标注 `async fn`：MoonBit 的效果推断只认箭头语法，**具名同步函数不能直接传**（`(Config) -> Config` 与 `async (Config) -> Config raise HttpError` 是两个类型）。
+- 拦截器链用**值语义**构建（`use_*` 返回新值，别丢掉返回值），传给 `Client::new` 之后视作冻结；`client.create(...)` 派生的实例**继承**这份链（axios 的 `axios.create()` 不继承）。
+
+重试配方、有界重试与「缓存命中不发请求」的写法、与 axios 的逐条差异表、以及「为什么不做成传输层中间件」见 [`docs/11-interceptors.md`](docs/11-interceptors.md)。
+
 ## 流式响应与 SSE
 
 `request` 会把响应体读全再解码，SSE 这类一直不结束的响应永远等不到头。两种「不读全」的读法各有一个入口，配置合并与状态码校验都和 `request` 完全一样，区别是拿到响应头就把控制权交给调用方。
@@ -311,6 +347,8 @@ pub impl Transport for MyTransport with fn send(self, request) {
 }
 ```
 
+拦截器**不在这一层**：它挂在传输层之上（整条请求只跑一遍，不会被重定向的每一跳重复触发），理由见 [`docs/11-interceptors.md`](docs/11-interceptors.md)。
+
 ## 代理
 
 `Config.proxy` 让请求经代理服务器转发（对应 axios 的 `proxy`）：
@@ -391,7 +429,7 @@ moonhttp/
 
 配置合并跟着 `config` 走（它原来是一个独立的 `merge` 包）：`Config` 有私有字段（请求体）之后，别的包连 `{ ..config, x: ... }` 这种记录展开都写不出来，而合并必须逐字段构造新配置——顺带得到一条更强的保证，往 `Config` 加字段忘了配合并策略是**编译错误**（理由见 `docs/02-config-merge.md`）。
 
-**根包因此拆成三个源文件**（同一个包，只是为了别写成一个超长文件）：`client.mbt`（`Client` + 三个入口 + 接壤层）、`http_error.mbt`（错误类型与所有抛错点）、`facade.mbt`（对外响应类型与再导出）。AGENTS.md 的 RL-04 为根包文件放宽到 1000 行，超限的文件在文件头声明例外；子包仍守 300 行（`util/` 两个文件各不足 100 行）。
+**根包因此拆成四个源文件**（同一个包，只是为了别写成一个超长文件）：`client.mbt`（`Client` + 三个入口 + 接壤层）、`http_error.mbt`（错误类型与所有抛错点）、`facade.mbt`（对外响应类型与再导出）、`interceptors.mbt`（拦截器链）。AGENTS.md 的 RL-04 为根包文件放宽到 1000 行，超限的文件在文件头声明例外；子包仍守 300 行（`util/` 两个文件各不足 100 行）。拦截器同样只能待在根包——它的签名要提到 `Response` 与 `HttpError`，进 `config` 包会成环。
 
 测试文件不能挪到 `tests/` 之类的子目录：MoonBit 按「文件所在目录的包」归属测试，挪出去就变成了别的包的测试（白盒测试还得编进包里才能看见 `priv`，物理上不可能在别处）。
 
@@ -400,7 +438,8 @@ moonhttp/
 以下 axios 能力本版本**没有**实现，配置里也不会出现对应字段（避免「配置了但完全不生效」）：
 
 - `get` / `post` / `put` / `delete` / `head` / `options` / `patch` 等快捷方法（都是 `request` 的薄封装，见「后续扩展」）
-- 拦截器（`interceptors`）、取消（`CancelToken` / `signal`）
+- 取消（`CancelToken` / `signal`）：中止一次请求的手段是拦截器里抛 `HttpError`，或在超时上兜底
+- 拦截器的 `eject` / `clear` / `runWhen`：拦截器本身已支持（见「拦截器」），但这三个 axios 的注册期辅助能力不做——撤下一个拦截器就重新构建一份 `Interceptors` 值
 - 代理的 SOCKS 支持、`http_proxy` / `no_proxy` 环境变量与按请求关闭代理的开关（显式 `proxy` 配置已支持，见「代理」）
 - 重定向的 `beforeRedirect` 回调与自定义敏感头名单（`sensitiveHeaders`）：跟随规则固定，见 [`docs/08-redirects.md`](docs/08-redirects.md)
 - **请求体流式上传（`data` 是 Reader / 生成器）**：请求体仍是一次性字节——表单含文件时整块驻留内存，库也不读盘（文件按「字节 + 文件名」传入）。**计划下一期实现**：需要一个挂在连接上的可写流，让调用方一段段喂数据。进度回调不依赖它，已经可用（见「上传与下载进度」）
@@ -422,6 +461,7 @@ moonhttp/
 - 没有可变的全局默认值。axios 的全局 `axios.defaults` 在本项目里对应 `@config.defaults()`（固定的内置默认值）；要定制请用 `create(...)` 或 `client.create(...)` 派生。
 - 重定向（`maxRedirects`）默认 5 跳（axios 请求配置文档的默认值；它底层 follow-redirects 自己兜底是 21，文档与实现并不一致，本项目取文档口径）。四处与 axios 不同：超限错误的 `code` 同名但**带最后那个 3xx 响应**（axios 的错误里没有响应）；`response.config` 是**最后一跳**的配置（axios 是最初的配置，最终地址只在 `response.request` 上）；`timeout` 是**每一跳各算一份**（axios 是整条链一个计时器）；负数上限按「不跟随」处理。完整规则与差异表见 [`docs/08-redirects.md`](docs/08-redirects.md)。
 - 代理有五处与 axios 不同：**不读** `http_proxy` / `https_proxy` / `no_proxy` 环境变量；没有 `proxy: false` 这类「按请求关掉」的写法；http 目标也走 CONNECT 隧道（axios 对 http 目标用「请求行里放完整地址」的经典写法）；用户在 `headers` 里自定义的 `Proxy-Authorization` 在有代理时只发给代理、不会随请求穿过隧道发给源站；`protocol` 是枚举 `ProxyProtocol` 而不是字符串。差异表见 [`docs/09-proxy.md`](docs/09-proxy.md)。
+- 拦截器有六处与 axios 不同：没有 `eject` / `clear` / `runWhen`；请求拦截器不提供「错误处理器」那一半（`use_request` 只有一个处理器，因为请求侧还没来得及产生 I/O 错误）；响应拦截器只作用于 `Client::request`（两个流式入口不过响应链）；`Response` 只能改写、不能凭空合成（axios 里返回普通对象即可）；`client.create(...)` 派生的实例**继承**拦截器（axios 的 `axios.create()` 造出的是没有拦截器的新实例）；拦截器与「重定向的每一跳」无关——整条链只跑一次（axios 也是，因为它跟随重定向发生在适配器内部）。差异表见 [`docs/11-interceptors.md`](docs/11-interceptors.md)。
 
 ### 后续扩展
 

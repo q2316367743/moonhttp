@@ -30,6 +30,19 @@ pub fn decode_body(body : Bytes, encoding : ResponseEncoding) -> String {
 }
 
 ///|
+/// 把文本按 **UTF-8** 编成响应体字节，`decode_body` 的反方向。
+///
+/// 写入方向固定 UTF-8，与请求侧的 `with_data_from_str` 同口径：
+/// `response_encoding` 管的是「读出来的文本怎么解」，不管「写进去的文本怎么编」
+/// ——一个配置项同时隐式控制两个方向，只会让「换了编码结果对不上」变得难查。
+/// 要别的编码，自己编好字节再走 `Response::with_body`。
+///
+/// 谁在用：`Response::with_text`（响应拦截器改写响应体时）。
+pub fn encode_body(text : String) -> Bytes {
+  @utf8.encode(text)
+}
+
+///|
 /// 响应头里声明的媒体类型：`Content-Type` 去掉 `;` 之后的参数、去掉首尾空白、
 /// 小写化。头缺失或值为空时返回 `None`（`Headers::get` 本就大小写不敏感）。
 ///

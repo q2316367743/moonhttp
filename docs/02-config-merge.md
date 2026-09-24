@@ -88,6 +88,11 @@ pub fn merge_config(base : Config, request : Config) -> Config {
 | `method_headers` | 深合并（按方法分桶） | |
 | `validate_status` | 存在即生效 | 请求级提供即整体接管 |
 
+**拦截器不在这张表里**：它挂在 `Client` 实例上（`Client::new(interceptors~)`）而不是作为 `Config` 的字段，
+所以不参与配置合并、也没有「请求级 vs 实例级」的取舍——axios 的 `interceptors` 同样是实例级的。
+不能塞进 `Config` 还有一条硬约束：响应侧的签名要提到 `Response` 与 `HttpError`，字段一进 `config` 包就成环
+（见 `11-interceptors.md`）。
+
 ## 两个构造器
 
 | 写法 | 用途 |

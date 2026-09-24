@@ -4,7 +4,8 @@
 
 | 文件 | 职责 |
 |---|---|
-| `src/http_error.mbt` | 错误契约的全部：`ErrorCode` / `ErrorInfo` / `HttpError` 与访问器，加上**所有**构造它们的地方（`make_error`、`transport_error`、`status_error` / `validate_response`、`too_many_redirects_error`） |
+| `src/http_error.mbt` | 错误契约的全部：`ErrorCode` / `ErrorInfo` / `HttpError` 与访问器，加上**所有**构造它们的地方（`make_error`、`transport_error`、`status_error` / `validate_response`、`too_many_redirects_error`），以及给包外用构造错误的 `HttpError::new` |
+| `src/interceptors.mbt` | 请求拦截器主动中止请求时抛的就是 `HttpError`（用 `HttpError::new` 造），语义见 `11-interceptors.md` |
 | `src/util/response.mbt` | `status_allowed`：状态码是否被配置放行的**纯**判定（不构造错误，所以能待在根包外） |
 | `src/transport/stream.mbt` | `ResponseBody::read_all_partial`：读到一半失败时交出已读到的字节 |
 | `src/error_test.mbt` | 错误路径的端到端用例（含本机 server 的「中途超时」用例） |
@@ -25,6 +26,10 @@ pub(all) suberror HttpError {
 ```
 
 访问器：`HttpError::code()` / `message()` / `response()` / `config()` / `info()` / `to_string()`。
+
+包外**只有一条**构造路径：`HttpError::new(message, code, config)`（不带响应），给请求拦截器主动中止请求用——
+「客户端侧拒绝这次请求」建议用 `ErrorCode::BadRequest`（axios 在同一位置上用的也是 `ERR_BAD_REQUEST`），
+见 `11-interceptors.md`。要连响应一起构造，用 `ErrorInfo` 字面量（`HttpError` 是 `pub(all) suberror`）。
 
 两点设计取舍：
 

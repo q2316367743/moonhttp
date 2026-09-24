@@ -17,7 +17,7 @@
 //
 // 文件内的分区（顺序无关，用区块注释标出）：
 //   1. 再导出           —— pub using 各子包的类型
-//   2. Response         —— 读全量得到的响应
+//   2. Response         —— 读全量得到的响应（含 2.1 的四个改写入口，供响应拦截器）
 //   3. StreamResponse   —— 原始字节流响应（下载）
 //   4. SseStream        —— 按事件读的 SSE 响应
 // ============================================================================
@@ -156,6 +156,56 @@ pub fn Response::is_success(self : Response) -> Bool {
 pub fn Response::content_length(self : Response) -> Int {
   self.raw.length()
 }
+
+// ---------------------------------------------------------------------------
+// 2.1 Response 的改写入口 —— 供响应拦截器使用
+//
+// 响应拦截器拿到的 `Response` 必须是**能改的**，否则它就只是个旁观的日志钩子：
+// 拆业务信封（`{ code, data }` → data）、把服务端写错的状态码归一、返回上一份
+// 缓存的响应，都要经由这四个方法。四个都是「返回新响应」而非就地改
+// （`Response` 与 `Config` 一样是不可变值）。
+//
+// 四个方法都**不改响应头**：`Content-Length` 是服务端写下的原文，本项目从不
+// 改写它，所以换过 body 之后头与 `bytes().length()` 可能对不上——要一致就自己
+// 用 `with_headers` 一起换。
+// ---------------------------------------------------------------------------
+
+///|
+/// 换一个状态码，返回新响应。
+///
+/// 给响应拦截器用：把「HTTP 上是 200、业务上是失败」的响应改判，或者把服务端
+/// 写错的状态码归一。`status_text` 不跟着变——它只是状态行的原文。
+///
+/// 改状态码**不会**重新跑状态码校验：`validate_status` 早在拦截器之前就跑完了，
+/// 返回的响应原样交给调用方（要让它变成失败，请在拦截器里抛 `HttpError`）。
+pub fn Response::with_status(self : Response, status : Int) -> Response {
+  { ..self, status, }
+}
+
+///|
+/// 换一组响应头，返回新响应。整体替换而不是合并——要合并先自己 merge。
+pub fn Response::with_headers(self : Response, headers : Headers) -> Response {
+  { ..self, headers, }
+}
+
+///|
+/// 换一份响应体字节，返回新响应：`bytes()` / `text()` / `json()` /
+/// `content_length()` 读到的都是新字节（解码才看 `response_encoding`）。
+pub fn Response::with_body(self : Response, body : Bytes) -> Response {
+  { ..self, raw: body, }
+}
+
+///|
+/// 换一份响应体文本（按 **UTF-8** 编码），返回新响应。
+///
+/// 是 `with_body` 的文本版：要写的本来就是个 `String`（或
+/// `Json::stringify()` 的结果）时用它，免得为一个编码调用去 import 编码包。
+/// 编码固定 UTF-8，与请求侧的 `with_data_from_str` 同口径
+/// （`response_encoding` 只管读、不管写，理由见 `@util.encode_body`）。
+pub fn Response::with_text(self : Response, body : String) -> Response {
+  { ..self, raw: @util.encode_body(body), }
+}
+
 // ---------------------------------------------------------------------------
 // 3. StreamResponse —— 原始字节流响应（下载）
 // ---------------------------------------------------------------------------

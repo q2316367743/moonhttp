@@ -154,6 +154,36 @@ pub fn HttpError::config(self : HttpError) -> Config {
 }
 
 ///|
+/// 直接构造一个不带响应的 `HttpError`。
+///
+/// 这是 `ErrorInfo` 的公开入口：包外的代码此前只能读错误、不能造错误，而
+/// **请求拦截器需要造**——它主动中止请求时就得抛一个错误出去，见
+/// `docs/11-interceptors.md`：
+///
+/// ```moonbit nocheck
+/// .use_request(config => {
+///   if token == "" {
+///     raise @moonhttp.HttpError::new("缺少 token", @moonhttp.ErrorCode::BadRequest, config)
+///   }
+///   config.with_header("Authorization", token)
+/// })
+/// ```
+///
+/// `code` 由调用方按语义选。客户端侧拒绝请求（缺凭据、参数不合法）建议用
+/// `ErrorCode::BadRequest`：axios 在同样的位置上用的也是 `ERR_BAD_REQUEST`
+/// （它同时覆盖「4xx 响应」与「请求本身不合法」两种情况）。
+///
+/// 错误里没有响应（`response()` 返回 `None`）：这次请求根本没发出去。
+/// 要把某个响应挂上去，用 `ErrorInfo` 字面量自己造。
+pub fn HttpError::new(
+  message : String,
+  code : ErrorCode,
+  config : Config,
+) -> HttpError {
+  HttpError({ message, code, config, response: None, })
+}
+
+///|
 /// 渲染成 `错误码: 描述` 的形式，便于日志与断言。
 pub fn HttpError::to_string(self : HttpError) -> String {
   let info = self.info()

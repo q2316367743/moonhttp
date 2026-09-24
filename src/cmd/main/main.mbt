@@ -1,11 +1,12 @@
 ///|
 /// 可运行示例：用真实网络演示这个 axios 风格客户端的基本用法。
 ///
-/// 覆盖三件事：
+/// 覆盖四件事：
 /// 1. 创建实例，并让实例携带 `base_url` 等默认配置；
 /// 2. 用 `request` 发请求，配置在「内置默认值 → 实例默认值 → 本次请求」之间合并；
 /// 3. 读取响应（`text()` 是解码后的原文、`bytes()` 是精确字节、`json()` 才解析）、
-///    以及状态码校验失败时的错误处理。
+///    以及状态码校验失败时的错误处理；
+/// 4. 拦截器（`Interceptors`）：请求侧发出前改配置、响应侧拿到响应后做点什么。
 ///
 /// 用 `moon run src/cmd/main` 执行（需要联网）。
 async fn main {
@@ -83,4 +84,28 @@ async fn main {
       println("  服务端的错误正文 = \{info.response.unwrap().text()}")
     }
   }
+
+  // 6) 拦截器：挂在实例上，这个实例的每次请求都经过两条链——
+  //    请求侧在发出前改配置（这里加一个头），响应侧拿到响应后做点什么
+  //    （原样返回就只是观察；要改就用 Response 的 with_* 方法）。
+  let traced = @moonhttp.Client::new(
+    config=@moonhttp.Config::default()
+      .with_base_url("https://api.github.com")
+      .with_timeout(10_000),
+    interceptors=@moonhttp.Interceptors::new()
+      .use_request(config => {
+        println(
+          "  [请求拦截器] 即将发出：\{config.url.unwrap_or("<未设置>")}",
+        )
+        config.with_header("X-Demo", "moonhttp")
+      })
+      .use_response(response => {
+        println(
+          "  [响应拦截器] 收到：\{response.status} \{response.status_text}",
+        )
+        response
+      }),
+  )
+  let zen2 = traced.request(@moonhttp.Config::new("/zen"))
+  println("\n[GET /zen 带拦截器] 响应体 = \"\{zen2.text()}\"")
 }

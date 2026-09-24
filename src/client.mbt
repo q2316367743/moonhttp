@@ -5,15 +5,17 @@
 // `sse`），加上把 util 的纯函数结果拼成对外类型的两个函数。远超 RL-04 的 300 行
 // 上限，按 RL-04 为「根包文件」开出的例外处理——上限 1000 行。
 //
-// 与它同目录的三个文件同属一个包，拆文件不影响依赖方向（见 `docs/01-architecture.md`）：
-//   - `util/`   —— 纯逻辑：拼请求、解码、Content-Type 与状态码判定
+// 与它同目录的四个文件同属一个包，拆文件不影响依赖方向（见 `docs/01-architecture.md`）：
+//   - `util/`          —— 纯逻辑：拼请求、解码、Content-Type 与状态码判定
 //   - `http_error.mbt` —— 错误类型与抛错点
 //   - `facade.mbt`     —— 对外响应类型与再导出
+//   - `interceptors.mbt` —— 拦截器链（本文件在管线的两端调用它）
 // 本文件剩下的 `fn` 都是包私有的，没有一个是公开 API。
 //
 // 文件内的分区（顺序无关，用区块注释标出）：
 //   1. Client 与它的入口   —— request / stream / sse + 两个工厂
-//   2. 接壤层              —— 拼请求、拼 Response
+//   2. 接壤层              —— 合并配置、派发一次请求（两段拦截器夹着它）、
+//                             拼请求、拼 Response
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -31,6 +33,8 @@ pub struct Client {
   priv defaults : Config
   /// 传输层实现，决定「真的发出去」由谁完成
   priv transport : &@transport.Transport
+  /// 拦截器链，对应 axios 实例上的 `interceptors`（见 `interceptors.mbt`）
+  priv interceptors : Interceptors
 }
 
 ///|
@@ -40,10 +44,12 @@ pub struct Client {
 ///   对应 axios 里 `axios.create(config)` 的语义（`axios.defaults` 的位置由
 ///   `@config.defaults()` 固定提供）；
 /// - `transport`：传输层实现，缺省是真正走网络的 `AsyncHttpTransport`；
-///   测试或特殊场景可以注入自己的实现（例如 `MockTransport`）。
+///   测试或特殊场景可以注入自己的实现（例如 `MockTransport`）；
+/// - `interceptors`：请求 / 响应拦截器，缺省是一条都不挂（`Interceptors::new()`）。
 pub fn Client::new(
   config? : Config,
   transport? : &@transport.Transport,
+  interceptors? : Interceptors,
 ) -> Client {
   let defaults = match config {
     Some(config) => @config.merge_config(@config.defaults(), config)
@@ -53,7 +59,11 @@ pub fn Client::new(
     Some(transport) => transport
     None => @transport.AsyncHttpTransport::new()
   }
-  { defaults, transport, }
+  let interceptors = match interceptors {
+    Some(interceptors) => interceptors
+    None => Interceptors::new()
+  }
+  { defaults, transport, interceptors, }
 }
 
 ///|
@@ -62,10 +72,16 @@ pub fn Client::new(
 /// 新实例的默认值是「本实例的默认值」叠加 `config`，因此会继承父实例的
 /// `base_url`、公共头等设置。注意 axios 的 `instance.create` 合并的是
 /// 该实例自己的 defaults、与全局 defaults 无关，这里的行为一致。
+///
+/// **拦截器也继承**：派生实例与父实例用同一份链。与 axios 不同（`axios.create()`
+/// 造出来的是没有拦截器的新实例），这里选继承——`create` 在本项目是「同一个实例
+/// 换套默认值」，而换一套默认值就该照样带上认证头、日志这些横切逻辑。
+/// 确实要不带拦截器的实例，用 `Client::new(config~)` 新造一个。
 pub fn Client::create(self : Client, config : Config) -> Client {
   {
     defaults: @config.merge_config(self.defaults, config),
     transport: self.transport,
+    interceptors: self.interceptors,
   }
 }
 
@@ -81,10 +97,16 @@ pub fn Client::defaults(self : Client) -> Config {
 /// 步骤与 axios 的 `_request` 一致：
 /// 1. 合并配置（实例默认值在下、本次请求配置在上）；
 /// 2. 确定请求方法；
-/// 3. 拼接完整地址并追加 query、拍平头、序列化 body；
-/// 4. 交给传输层发送，需要时自动跟随重定向（最多 `max_redirects` 跳）；
-/// 5. 把响应体读到 EOF（读全量才有完整的响应体）；
-/// 6. 校验状态码。
+/// 3. 请求拦截器：**后注册先跑**，拿到的就是第 2 步的最终配置；
+/// 4. 拼接完整地址并追加 query、拍平头、序列化 body；
+/// 5. 交给传输层发送，需要时自动跟随重定向（最多 `max_redirects` 跳）；
+/// 6. 把响应体读到 EOF（读全量才有完整的响应体）；
+/// 7. 校验状态码；
+/// 8. 响应拦截器：**先注册先跑**，正常路径改响应、错误路径救错或重试。
+///
+/// 两段拦截器与重定向的相对位置是关键：整条重定向链只跑**一次**拦截器
+/// （axios 的适配器内部跟随重定向，拦截器在它上层，两边一致）。理由与「为什么
+/// 不把拦截器做成传输层中间件」见 `docs/11-interceptors.md`。
 ///
 /// 重定向默认跟随：`max_redirects` 缺省是 5（axios 请求配置文档里的默认值），
 /// 3xx 且带 `Location` 时自动跟过去，下一跳的地址 / 方法 / body / 凭据怎么变
@@ -104,30 +126,62 @@ pub fn Client::defaults(self : Client) -> Config {
 /// 失败不等于「什么都没收到」：响应头到手之后才失败的请求（读响应体的中途
 /// 超时、连接被重置），错误里会带上**已经收到的响应**——状态行、响应头与
 /// 读到的部分正文，从 `HttpError::response()` 取。连响应头都没到手时，
-/// 错误里没有响应。
+/// 错误里没有响应。两类失败都会先经过响应拦截器的错误路径（重试的落点）。
 ///
 /// 不想读全响应体时用另外两个入口：大文件下载用 `Client::stream`（原始字节流），
-/// SSE 用 `Client::sse`（事件流）。读不读、按什么单位读，由入口决定而不是配置。
+/// SSE 用 `Client::sse`（事件流）。读不读、按什么单位读，由入口决定而不是配置；
+/// 它们只过请求拦截器，不过响应拦截器。
 pub async fn Client::request(
   self : Client,
   config : Config,
 ) -> Response raise HttpError {
-  // 1. 合并配置
+  // 1、2. 合并配置、定方法
+  let merged = self.merged_config(config)
+  // 3. 请求拦截器。被拦下时这次请求不发出，错误按 axios 的 promise 链语义
+  //    交给响应侧错误处理器——所以这里不抛错，交给下面的 run_response 收口。
+  let outcome = match self.interceptors.run_request(merged) {
+    // 4~7. 发送、跟重定向、读全量、校验状态码
+    Ok(config) =>
+      Ok(self.dispatch_request(config)) catch {
+        error => Err(error)
+      }
+    Err(error) => Err(error)
+  }
+  // 8. 响应拦截器：正常路径改响应，错误路径救错 / 重试（重试就是在这里再发一次）
+  self.interceptors.run_response(outcome)
+}
+
+///|
+/// 合并配置并定下请求方法：三个入口共用的前两步。
+///
+/// 方法缺省时先回退到实例默认值，再回退到 HTTP 的默认约定 GET
+/// （`Config` 有私有字段，包外写不了记录展开，回填只能用构建器）。
+fn Client::merged_config(self : Client, config : Config) -> Config {
   let merged = @config.merge_config(self.defaults, config)
-  // 2. 方法缺省时先回退到实例默认值，再回退到 HTTP 的默认约定 GET
-  //    （`Config` 有私有字段，包外写不了记录展开，回填只能用构建器）
-  let merged = merged.with_method(
+  merged.with_method(
     @util.resolve_method(merged.http_method, self.defaults.http_method),
   )
-  // 3、4. 拼地址 / 头 / body 并发送，中间需要跟随重定向时自动跟。
-  //    拿回来的是**最后一跳**的响应与产出它的配置。
+}
+
+///|
+/// 发送一次请求并把响应读全：拼地址 / 头 / body → 发送（含自动跟随重定向）
+/// → 读全量 → 拼 `Response` → 校验状态码。位置对应 axios 的 `dispatchRequest`。
+///
+/// 进来的配置必须是**已经过请求拦截器**的（`Client::request` 负责把两段拦截器
+/// 摆在它两侧），本函数只管「发」。
+async fn Client::dispatch_request(
+  self : Client,
+  merged : Config,
+) -> Response raise HttpError {
+  // 拼地址 / 头 / body 并发送，中间需要跟随重定向时自动跟。
+  // 拿回来的是**最后一跳**的响应与产出它的配置。
   let (raw, merged) = self.send_following_redirects(merged)
-  // 5. 把响应体读到 EOF——读全量才有完整的响应体。读取阶段失败
-  //    （超时、断连）时响应头早已到手，把状态行、响应头与**读到的部分**
-  //    一起挂到错误上，失败现场才不会只剩一个错误码。
-  //    配了 `on_download_progress` 时逐块报告：这是「库读全量」的两条路之一
-  //    （另一条是 `StreamResponse::read_all`），按块读的路不报告，见 docs/10-progress.md。
-  //    读取中途失败时进度停在断点——已经报出去的字节数就是现场。
+  // 把响应体读到 EOF——读全量才有完整的响应体。读取阶段失败
+  // （超时、断连）时响应头早已到手，把状态行、响应头与**读到的部分**
+  // 一起挂到错误上，失败现场才不会只剩一个错误码。
+  // 配了 `on_download_progress` 时逐块报告：这是「库读全量」的两条路之一
+  // （另一条是 `StreamResponse::read_all`），按块读的路不报告，见 docs/10-progress.md。
+  // 读取中途失败时进度停在断点——已经报出去的字节数就是现场。
   let on_progress = merged.on_download_progress
   let (body, failure) = raw.body.read_all_partial(on_progress?)
   match failure {
@@ -141,7 +195,7 @@ pub async fn Client::request(
       )
     None => ()
   }
-  // 6. 校验状态码（解码不在这里：响应体以原始字节交出去，读法由调用方选）
+  // 校验状态码（解码不在这里：响应体以原始字节交出去，读法由调用方选）
   let response = build_response(
     raw.status,
     raw.status_text,
@@ -155,7 +209,11 @@ pub async fn Client::request(
 
 ///|
 /// 两个流式入口（`stream` / `sse`）共用的前半段：
-/// 合并配置 → 定方法 → 拼地址与头 → 发送（含自动跟随重定向）→ 校验状态码。
+/// 合并配置 → 定方法 → 请求拦截器 → 拼地址与头 → 发送（含自动跟随重定向）
+/// → 校验状态码。
+///
+/// 请求拦截器的位置与 `request` 一致（**后注册先跑**）；差别是被拦下时直接抛错，
+/// 而不是交给响应侧错误处理器——两个流式入口没有响应侧链。
 ///
 /// 重定向的处理与 `request` 完全一致（同一段循环，连上限与错误都一样）：
 /// 跟到 3xx 的最后一跳为止，交出去的 `config` 也是**最后一跳**的配置。
@@ -172,10 +230,11 @@ async fn Client::open_stream(
   self : Client,
   config : Config,
 ) -> (@transport.RawResponse, Config) raise HttpError {
-  let merged = @config.merge_config(self.defaults, config)
-  let merged = merged.with_method(
-    @util.resolve_method(merged.http_method, self.defaults.http_method),
-  )
+  let merged = self.merged_config(config)
+  let merged = match self.interceptors.run_request(merged) {
+    Ok(config) => config
+    Err(error) => raise error
+  }
   let (raw, merged) = self.send_following_redirects(merged)
   if !@util.status_allowed(raw.status, merged) {
     // 错误体也要读全；读到一半失败（超时、断连）时把已读到的部分挂到
@@ -330,6 +389,10 @@ fn prepare_request(
 
 ///|
 /// 发送一次请求，需要时自动跟随重定向；返回**最后一跳**的原始响应与产出它的配置。
+///
+/// 拦截器**不在**这一层：本函数每跟随一跳就调一次 `transport.send`，把拦截器
+/// 挂进来会让它每跳重跑一遍（认证头重复注入、重试被放大成「跳数 × 重试次数」）。
+/// 两段拦截器因此都落在本函数之外，整条重定向链只跑一次，见 `docs/11-interceptors.md`。
 ///
 /// 分工：跟不跟、下一跳长什么样是纯逻辑（`@config.Config::next_redirect`，
 /// 规则对齐 follow-redirects）；这里只做那层做不到的三件事：
