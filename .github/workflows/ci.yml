@@ -24,10 +24,6 @@ jobs:
   check-build-test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # 把 C 编译器换成包装脚本：闭掉依赖包 moonbitlang/async 在 Linux/GCC 下的
-    # warn_unused_result 告警（它不是我们的代码，上游也没修）。理由见脚本头部注释。
-    env:
-      MOON_CC: ${{ github.workspace }}/.github/cc-quiet.sh
     steps:
       - name: Checkout
         uses: actions/checkout@v4
