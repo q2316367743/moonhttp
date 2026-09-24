@@ -1,0 +1,94 @@
+# 发布到 mooncakes.io
+#
+# ── 发布一个新版本的四步 ─────────────────────────────────────────────
+#   1. 改 moon.mod 的 version（例如 0.1.0 → 0.2.0），提交并推送到 master
+#   2. 等这次 push 的 CI 跑绿
+#   3. GitHub 仓库页 → Releases → Draft a new release
+#        - Tag: 选「Choose a tag」输入 v0.2.0（选 target: master）
+#        - 标题与说明随便写，或点「Generate release notes」自动生成
+#        - 不要勾「Set as a pre-release」，不要存成 Draft
+#   4. 点「Publish release」→ 本工作流自动开始执行
+#
+#   不需要额外的 released 分支：GitHub 的 Release 建在 tag 上，与分支无关。
+#   tag 只是标记，mooncakes.io 上的版本号取自 moon.mod 的 version。
+#
+#   也可以不等 Release：在 Actions 页手动触发本工作流（workflow_dispatch）
+#   直接发布当前 master 的 moon.mod 版本。
+#
+# ── 触发条件 ─────────────────────────────────────────────────────────
+#   1. 发布 Release（type: released）—— 只对正式版生效
+#   2. 手动触发（workflow_dispatch）
+#
+#   注意：仅推送 tag、或把 Release 存成 Draft / 标为 pre-release，都**不会**触发。
+#
+# ── 一次性配置 ───────────────────────────────────────────────────────
+#   仓库 Settings → Secrets and variables → Actions → New repository secret
+#   名称：MOONCAKES_TOKEN
+#   值：本机 ~/.moon/credentials.json 的**完整内容**（一行 JSON），形如
+#       {"token": "<你的 token>", "username": "q2316367743"}
+
+name: publish
+
+on:
+  release:
+    types: [released]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 版本号不一致时在几秒内失败，而不是把注册表那句难懂的报错丢回来。
+      # tag 允许带 v 前缀（v0.2.0 对 0.2.0 视为一致）。
+      - name: 校验 tag 与 moon.mod 版本一致
+        if: ${{ github.event_name == 'release' }}
+        run: |
+          MOON_VERSION=$(grep -m1 '^version' moon.mod | sed -E 's/.*"(.*)".*/\1/')
+          TAG="${{ github.event.release.tag_name }}"
+          TAG_VERSION="${TAG#v}"
+          echo "moon.mod version = $MOON_VERSION"
+          echo "release tag      = $TAG"
+          if [ "$MOON_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::tag「$TAG」与 moon.mod 的 version「$MOON_VERSION」不一致。请先递增 moon.mod 的 version 并提交到 master，再创建对应的 tag 与 Release。"
+            exit 1
+          fi
+
+      - name: Install MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: moon version
+        run: moon version --all
+
+      - name: moon update
+        run: moon update
+
+      # 发布前跑一遍完整门禁：任何一步失败都不发布
+      - name: moon check
+        run: moon check --deny-warn
+
+      - name: moon info 门禁（.mbti 是否为最新）
+        run: |
+          moon info
+          git diff --exit-code
+
+      - name: moon fmt 门禁（格式是否已对齐）
+        run: |
+          moon fmt
+          git diff --exit-code
+
+      - name: moon test
+        run: moon test
+
+      - name: 发布到 mooncakes.io
+        run: |
+          echo "$CREDENTIALS" > ~/.moon/credentials.json
+          moon publish
+          rm -f ~/.moon/credentials.json
+        env:
+          CREDENTIALS: ${{ secrets.MOONCAKES_TOKEN }}

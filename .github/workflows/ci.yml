@@ -2,6 +2,10 @@
 #
 # 这三步对应赛事的验收要求「使用持续集成工具并且覆盖检查、构建、测试流程」。
 # 目标为模块默认的 native（见 moon.mod 的 preferred_target）。
+#
+# 最后两个「门禁」步骤借用了 moonbitlang 官方仓库的做法：跑 moon info / moon fmt
+# 后检查工作区是否产生 diff，产生即失败。它能自动抓出两类容易漏掉的收尾问题——
+# 新增了公开 API 却忘记重新生成 .mbti、以及代码没跑 moon fmt。
 
 name: CI
 
@@ -11,9 +15,15 @@ on:
   pull_request:
   workflow_dispatch:
 
+# 同一分支上连续推送时，取消尚未跑完的旧任务
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check-build-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,17 +33,32 @@ jobs:
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
-      # 让后续步骤能用到刚写入 GITHUB_PATH 的 moon
-      - name: Show toolchain versions
-        run: |
-          export PATH="$HOME/.moon/bin:$PATH"
-          moon version --all
+      - name: moon version
+        run: moon version --all
 
+      - name: moon update
+        run: moon update
+
+      # 检查：--deny-warn 让告警也导致失败，避免告警堆积
       - name: moon check
-        run: moon check
+        run: moon check --deny-warn
 
+      # 构建
       - name: moon build
         run: moon build
 
+      # 测试
       - name: moon test
         run: moon test
+
+      # 门禁：.mbti 必须是最新的（改了公开 API 就要提交 moon info 的结果）
+      - name: moon info 门禁（.mbti 是否为最新）
+        run: |
+          moon info
+          git diff --exit-code
+
+      # 门禁：代码必须已格式化
+      - name: moon fmt 门禁（格式是否已对齐）
+        run: |
+          moon fmt
+          git diff --exit-code
