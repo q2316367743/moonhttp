@@ -112,7 +112,7 @@ while events.next_event() is Some(event) {
 
 ## 准入检查：`Content-Type` 在入口处强制
 
-`Client::sse` 拿到响应头后立刻检查 `Content-Type` 是否声明了 `text/event-stream`（判定与 `StreamResponse::is_event_stream` 共用 `declares_event_stream`）。不是就关掉连接并抛 `ErrorCode::NotSupported`。
+`Client::sse` 拿到响应头后立刻检查 `Content-Type` 是否声明了 `text/event-stream`（判定与 `StreamResponse::is_event_stream` 共用 `src/util/response.mbt` 的 `declares_event_stream`）。不是就关掉连接并抛 `ErrorCode::NotSupported`。
 
 错误里挂着**已经收到的响应**（状态行与响应头），所以调用方看得见「回来的到底是什么」；**body 不读**——声明了别的类型就可能是任意大小的二进制，要看原文得改用 `Client::stream`。这条与其它路径「失败也带响应」的规则一致，见 `04-errors.md`。
 

@@ -1,0 +1,36 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316368843/moonhttp/util"
+
+import {
+  "q2316368843/moonhttp/config",
+  "q2316368843/moonhttp/headers",
+  "q2316368843/moonhttp/transport",
+}
+
+// Values
+pub fn build_prepared_request(@config.Config) -> @transport.PreparedRequest?
+
+pub fn declares_event_stream(@headers.Headers) -> Bool
+
+pub fn decode_body(Bytes, @config.ResponseEncoding) -> String
+
+pub fn resolve_method(@config.Method?, @config.Method?) -> @config.Method
+
+pub fn status_allowed(Int, @config.Config) -> Bool
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+pub using @config {type Auth}
+
+pub using @config {type Config}
+
+pub using @headers {type Headers}
+
+pub using @config {type Method}
+
+pub using @config {type ResponseEncoding}
+
+// Traits

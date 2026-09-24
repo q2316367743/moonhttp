@@ -1,0 +1,20 @@
+// util 包是**纯函数层**：只做字符串 / 字节 / 状态码层面的变换。
+//
+// 准入条件（往里加东西前先看这一条）：函数必须是纯的，且**签名里不出现门面类型**
+// （`Response` / `StreamResponse` / `SseStream` / `HttpError` / `ErrorCode`）。
+// 理由：根包 import 本包，本包一旦反过来需要根包的类型就成环。所以
+// 「构造响应」与「抛 HttpError」的函数必须留在根包，这里只留它们依赖的纯变换。
+//
+// 失败用 `Option` 表达（与 `url` 包的 `build_full_path` 一致），
+// 由根包翻译成 `HttpError` 与 `ErrorCode`——本包不认识错误体系。
+import {
+  "moonbitlang/core/encoding/ascii",
+  "moonbitlang/core/encoding/base64",
+  "moonbitlang/core/encoding/utf16",
+  "moonbitlang/core/encoding/utf8",
+  "q2316368843/moonhttp/config",
+  "q2316368843/moonhttp/headers",
+  "q2316368843/moonhttp/merge",
+  "q2316368843/moonhttp/transport",
+  "q2316368843/moonhttp/url",
+}

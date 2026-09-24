@@ -1,22 +1,25 @@
 // 根包是门面与编排层：
 // - 对外公开 Client / Response / StreamResponse / SseStream / HttpError，
 //   并用 pub using 再导出子包的类型；
-// - 编排「合并配置 → 拼 URL → 拍平头 → 传输 → 解码 → 校验」这条管线。
+// - 编排「合并配置 → 拼 URL → 拍平头 → 传输 → 解码 → 校验」这条管线，
+//   其中纯逻辑那半在 util 包里，这里只留与门面类型接壤的部分。
 // 这里不直接依赖 async 传输实现，只通过 transport 包的 trait 交互，
 // 因此管线本身可以用 Mock 传输层做同步/异步测试。
 import {
   "moonbitlang/core/debug",
-  "moonbitlang/core/encoding/ascii",
-  "moonbitlang/core/encoding/base64",
-  "moonbitlang/core/encoding/utf16",
-  "moonbitlang/core/encoding/utf8",
   "q2316368843/moonhttp/config",
   "q2316368843/moonhttp/headers",
   "q2316368843/moonhttp/merge",
   "q2316368843/moonhttp/sse",
   "q2316368843/moonhttp/transport",
-  "q2316368843/moonhttp/url",
+  "q2316368843/moonhttp/util",
 }
+
+// 白盒测试被编进本包，看见的是**生产** import 那份清单，所以要单独声明
+// 它自己的依赖（与黑盒测试写 `for "test"` 同理）。这里只用它造 UTF-8 字节。
+import {
+  "moonbitlang/core/encoding/utf8",
+} for "wbtest"
 
 // 黑盒测试要 import 本模块的子包（Mock 传输层等），
 // async 用于运行 async test。

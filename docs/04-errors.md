@@ -4,9 +4,8 @@
 
 | 文件 | 职责 |
 |---|---|
-| `src/facade.mbt` | `ErrorCode` / `ErrorInfo` / `HttpError` 与访问器（根包门面层，与响应类型同一文件） |
-| `src/client.mbt` | `validate_response`（状态码校验）与 `try_parse_json`（强制 JSON 失败），与入口同文件 |
-| `src/client.mbt` | 把 `TransportError` 翻译成 `ErrorCode`，并把**失败前已经收到的响应**挂到错误上 |
+| `src/http_error.mbt` | 错误契约的全部：`ErrorCode` / `ErrorInfo` / `HttpError` 与访问器，加上**所有**构造它们的地方（`make_error`、`transport_error`、`status_error` / `validate_response`） |
+| `src/util/response.mbt` | `status_allowed`：状态码是否被配置放行的**纯**判定（不构造错误，所以能待在根包外） |
 | `src/transport/stream.mbt` | `ResponseBody::read_all_partial`：读到一半失败时交出已读到的字节 |
 | `src/error_test.mbt` | 错误路径的端到端用例（含本机 server 的「中途超时」用例） |
 
@@ -40,7 +39,7 @@ pub(all) suberror HttpError {
 | `BadResponse` | `ERR_BAD_RESPONSE` | `validate_response`：其它非 2xx（含 5xx、3xx） |
 | `Network` | `ERR_NETWORK` | `TransportError::Network`（连接失败、DNS、TLS；**读响应体中途**连接被重置也算） |
 | `Timeout` | `ECONNABORTED` | `TransportError::Timeout`（含读响应体中途的单次读取超时） |
-| `InvalidUrl` | `ERR_INVALID_URL` | `build_prepared_request`：既没有 `url` 也没有可用的 `base_url` |
+| `InvalidUrl` | `ERR_INVALID_URL` | `build_prepared_request`（`src/util/request.mbt`）返回 `None`：既没有 `url` 也没有可用的 `base_url`；由根包 `prepare_request` 翻译成 `HttpError` |
 | `NotSupported` | `ERR_NOT_SUPPORT` | `TransportError::Unsupported`（传输层做不到，例如相对地址）；`Client::sse`：响应头没有声明 `text/event-stream`（拿到的不是 SSE 却要按事件读，见 `06-sse.md`）——报错前会先关掉连接 |
 
 关于超时用的是 `ECONNABORTED` 而不是 `ETIMEDOUT`：axios 默认就是前者，只有打开 `transitional.clarifyTimeoutError` 时才换成后者。这里保持默认行为。

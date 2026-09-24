@@ -1,20 +1,19 @@
 // ============================================================================
 // AGENTS.md RL-04 例外声明
 //
-// 本文件是根包的**实现层**：`Client` 及其三个入口（`request` / `stream` /
-// `sse`），加上它们共用的纯函数管线。614 行，超过 RL-04 的 300 行上限，
-// 按 RL-04 为「根包文件」开出的例外处理——上限 1000 行。
+// 本文件是根包的**实现层**：`Client` 类型、它的三个入口（`request` / `stream` /
+// `sse`），加上把 util 的纯函数结果拼成对外类型的两个函数。远超 RL-04 的 300 行
+// 上限，按 RL-04 为「根包文件」开出的例外处理——上限 1000 行。
 //
-// 为什么入口与管线在同一个文件：管线里每个函数都只被这几个入口调用
-//（`build_prepared_request` / `open_stream` 拼请求，`build_response` /
-// `validate_response` 解响应），拆开只是多一次跳转。它们仍然全部是 `fn`
-// （包私有），没有一个是公开 API——对外类型在 `facade.mbt`。
+// 与它同目录的三个文件同属一个包，拆文件不影响依赖方向（见 `docs/01-architecture.md`）：
+//   - `util/`   —— 纯逻辑：拼请求、解码、Content-Type 与状态码判定
+//   - `http_error.mbt` —— 错误类型与抛错点
+//   - `facade.mbt`     —— 对外响应类型与再导出
+// 本文件剩下的 `fn` 都是包私有的，没有一个是公开 API。
 //
 // 文件内的分区（顺序无关，用区块注释标出）：
-//   1. Client 与它的入口   —— request / stream / sse
-//   2. 请求构造            —— 地址、头、body 的纯函数
-//   3. 响应构造            —— 按 response_encoding 解码响应体与 SSE 判定
-//   4. 状态码校验          —— validate_status 判定与错误分档
+//   1. Client 与它的入口   —— request / stream / sse + 两个工厂
+//   2. 接壤层              —— 拼请求、拼 Response
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -112,11 +111,11 @@ pub async fn Client::request(
   let merged = {
     ..merged,
     http_method: Some(
-      resolve_method(merged.http_method, self.defaults.http_method),
+      @util.resolve_method(merged.http_method, self.defaults.http_method),
     ),
   }
   // 3. 地址、头、body
-  let prepared = build_prepared_request(merged)
+  let prepared = prepare_request(merged)
   // 4. 发送：这一步失败说明响应头还没到手，错误里没有响应可挂。
   let raw = self.transport.send(prepared) catch {
     error => raise transport_error(error, merged, None)
@@ -168,14 +167,14 @@ async fn Client::open_stream(
   let merged = {
     ..merged,
     http_method: Some(
-      resolve_method(merged.http_method, self.defaults.http_method),
+      @util.resolve_method(merged.http_method, self.defaults.http_method),
     ),
   }
-  let prepared = build_prepared_request(merged)
+  let prepared = prepare_request(merged)
   let raw = self.transport.send(prepared) catch {
     error => raise transport_error(error, merged, None)
   }
-  if !status_allowed(raw.status, merged) {
+  if !@util.status_allowed(raw.status, merged) {
     // 错误体也要读全；读到一半失败（超时、断连）时把已读到的部分挂到
     // 错误上——那部分通常正是服务端写下的原因，比一个光秃秃的超时有用。
     let (body, failure) = raw.body.read_all_partial()
@@ -241,7 +240,7 @@ pub async fn Client::sse(
   config : Config,
 ) -> SseStream raise HttpError {
   let (raw, merged) = self.open_stream(config)
-  if !declares_event_stream(raw.headers) {
+  if !@util.declares_event_stream(raw.headers) {
     // 连接已经建立，报错前必须先释放，否则漏一条 TCP 连接。
     raw.body.close()
     raise make_error(
@@ -261,25 +260,6 @@ pub async fn Client::sse(
     body: raw.body,
     parser: @sse.SseParser::new(),
     closed: false,
-  }
-}
-
-///|
-/// 方法缺省时先回退到实例默认值，再回退到 HTTP 的默认约定 GET。
-///
-/// axios 在 `_request` 里也是从 `this.defaults.method` 单独回退一次，
-/// 因为合并时 method 走的是「只取请求级」策略，实例默认值不在合并结果里。
-fn resolve_method(
-  request_level : Method?,
-  instance_default : Method?,
-) -> Method {
-  match request_level {
-    Some(meth) => meth
-    None =>
-      match instance_default {
-        Some(meth) => meth
-        None => Method::Get
-      }
   }
 }
 
@@ -304,40 +284,22 @@ pub fn default_client() -> Client {
   Client::new()
 }
 // ---------------------------------------------------------------------------
-// 2. 请求构造 —— 地址、头、body 的纯函数
+// 2. 接壤层 —— 把 util 的纯函数结果拼成对外类型与对外错误
+//    （错误类型与传输层/状态码的抛错点在 http_error.mbt）
 // ---------------------------------------------------------------------------
 
 ///|
-/// 拼出 `Basic base64(username:password)`。
+/// 拼请求：调 `@util.build_prepared_request`，把「地址不可用」这唯一一种
+/// 纯逻辑失败翻译成对外错误。
 ///
-/// 用户名或密码只给了一半时，缺的那半按空串处理——
-/// 这与 axios 直接把 `username + ':' + password` 交给 base64 的行为一致。
-fn basic_auth(auth : Auth) -> String {
-  let username = auth.username.unwrap_or("")
-  let password = auth.password.unwrap_or("")
-  "Basic " + @base64.encode(@utf8.encode(username + ":" + password))
-}
-
-///|
-/// 把已经合并好的配置加工成一份可以直接发送的请求（纯数据变换，没有 IO）。
-///
-/// 这里承担三件事，顺序与 axios 一致：
-/// 1. `base_url` + `url` 拼成完整地址，再追加序列化后的 query；
-/// 2. 把三层头（common < 按方法 < 请求级平铺）拍平成一份；
-/// 3. 序列化请求体，并按需补 `Content-Type` 与 `Authorization`。
-///
-/// 补默认头一律用 `set_if_absent`：用户显式设置的同名头永远优先，
-/// 否则自动补的 `Content-Type: application/json` 会盖掉用户写的表单类型。
-fn build_prepared_request(
+/// 为什么这层翻译要单独有个函数：纯函数用 `None` 表达失败（util 不认识
+/// `HttpError`，也拿不到 `ErrorCode`），错误码与文案只能由根包决定。
+/// `request` 与 `open_stream` 两条入口都走它，免得同一份文案写两遍。
+fn prepare_request(
   config : Config,
 ) -> @transport.PreparedRequest raise HttpError {
-  let url = match
-    @url.build_full_path(
-      config.base_url,
-      config.url,
-      config.allow_absolute_urls,
-    ) {
-    Some(url) => url
+  match @util.build_prepared_request(config) {
+    Some(prepared) => prepared
     None =>
       raise make_error(
         "请求缺少 url：请在配置里提供 url 或 base_url",
@@ -345,139 +307,6 @@ fn build_prepared_request(
         config,
         None,
       )
-  }
-  // query 在地址拼接完成之后追加，避免参数被当成路径的一部分。
-  let url = @url.build_url(url, config.params)
-  let meth = config.http_method.unwrap_or(Method::Get)
-  let mut headers = @merge.flatten_headers(
-    config.common_headers,
-    config.method_headers,
-    config.headers,
-    meth,
-  )
-  let body = match config.data {
-    None => None
-    // 字符串按原文发送，且不推断 Content-Type：调用方可能就是想发一段
-    // 纯文本或一段自己序列化好的载体。
-    Some(Json::String(text)) => Some(@utf8.encode(text))
-    Some(data) => {
-      // 其它 Json 值按 axios 默认的 transformRequest 处理：序列化成 JSON 文本，
-      // 并补上 Content-Type: application/json（不覆盖用户已设置的值）。
-      headers = headers.set_if_absent("Content-Type", "application/json")
-      Some(@utf8.encode(data.stringify()))
-    }
-  }
-  let headers = match config.auth {
-    // Basic 认证同样不覆盖用户自己设置的 Authorization。
-    Some(auth) => headers.set_if_absent("Authorization", basic_auth(auth))
-    None => headers
-  }
-  { http_method: meth, url, headers, body, timeout: config.timeout, }
-}
-
-///|
-/// 把传输层错误翻译成对外的 `HttpError`。
-///
-/// 这层翻译的意义是：调用方不需要认识 `moonbitlang/async` 的错误类型，
-/// 也不必知道底层用的是哪套 HTTP 实现。流式读取失败走的是同一条映射。
-///
-/// `response` 是**失败前已经收到的响应**：传输层失败不等于「什么都没收到」
-/// ——响应头到手之后才失败的请求，状态行、响应头与已经读到的字节都在手里
-/// （`raw` 可能是半截的），把它们挂到错误上，失败现场才不会只剩一个错误码。
-/// 失败发生在收到响应头之前（连不上、DNS 解析失败、请求还没发出去）时传
-/// `None`——那时确实没有响应。
-///
-/// 错误码仍然是「失败本身」的分类（超时归 `Timeout`、断连归 `Network`），
-/// 不会因为挂上了响应就改用状态码分档。
-fn transport_error(
-  error : @transport.TransportError,
-  config : Config,
-  response : Response?,
-) -> HttpError {
-  match error {
-    @transport.TransportError::Timeout =>
-      make_error("请求超时", ErrorCode::Timeout, config, response)
-    @transport.TransportError::Network(message) =>
-      make_error(
-        "网络请求失败：" + message,
-        ErrorCode::Network,
-        config,
-        response,
-      )
-    @transport.TransportError::Unsupported(message) =>
-      make_error(
-        "传输层不支持该请求：" + message,
-        ErrorCode::NotSupported,
-        config,
-        response,
-      )
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 3. 响应构造 —— 按 response_encoding 解码响应体、拼成 Response
-// ---------------------------------------------------------------------------
-
-///|
-/// 按配置的编码把响应体字节解成文本。
-///
-/// 解码一律是 lossy 的（core 的 `decode_lossy` 系列）：该编码下非法的字节
-/// 解成替换字符 `U+FFFD` 而不是抛错。响应正文由服务端说了算，为了几个坏字节
-/// 把整个响应判成失败得不偿失；要精确字节读 `Response::raw`。
-///
-/// 只有 `latin1` 是自己写的（core 没有）：ISO-8859-1 的码点就是字节值，
-/// 一个循环就够。其余三种都直接调 core。
-///
-/// `response_encoding` 为 `None`（手写的 `Config` 没过内置默认值）时按 UTF-8
-/// 处理，与 `defaults()` 里显式设的默认值一致。
-fn decode_body(body : Bytes, encoding : ResponseEncoding) -> String {
-  match encoding {
-    Utf8 => @utf8.decode_lossy(body)
-    Latin1 => {
-      let buf = StringBuilder()
-      for i in 0..<body.length() {
-        buf.write_char(body[i].to_char())
-      }
-      buf.to_string()
-    }
-    Ascii => @ascii.decode_lossy(body)
-    Utf16le => @utf16.decode_lossy(body, endianness=@utf16.Endian::Little)
-  }
-}
-
-///|
-/// 响应头里声明的媒体类型：`Content-Type` 去掉 `;` 之后的参数、去掉首尾空白、
-/// 小写化。头缺失或值为空时返回 `None`（`Headers::get` 本就大小写不敏感）。
-///
-/// 只取「媒体类型本体」：`application/json; charset=utf-8` 与 `application/json`
-/// 必须得到同一个判断结果。
-fn media_type(headers : Headers) -> String? {
-  let raw = match headers.get("Content-Type") {
-    Some(value) => value
-    None => return None
-  }
-  // 参数以第一个 `;` 为界，之后的 charset 之类与类型判定无关。
-  let essence = match raw.find(";") {
-    Some(index) => raw[:index]
-    None => raw
-  }
-  let normalized = essence.trim().to_lower().to_owned()
-  if normalized.is_empty() {
-    None
-  } else {
-    Some(normalized)
-  }
-}
-
-///|
-/// 响应头是否声明了 SSE（`text/event-stream`）。
-///
-/// 判定只有这一处：`StreamResponse::is_event_stream`（给原始流的调用方自查）
-/// 与 `Client::sse`（入口处的准入检查）都走它，避免两处规则漂移。
-fn declares_event_stream(headers : Headers) -> Bool {
-  match media_type(headers) {
-    Some(media) => media == "text/event-stream"
-    None => false
   }
 }
 
@@ -503,69 +332,11 @@ fn build_response(
   config : Config,
 ) -> Response {
   {
-    data: decode_body(body, config.response_encoding.unwrap_or(Utf8)),
+    data: @util.decode_body(body, config.response_encoding.unwrap_or(Utf8)),
     status,
     status_text,
     headers,
     config,
     raw: body,
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 4. 状态码校验 —— validate_status 判定与错误分档
-// ---------------------------------------------------------------------------
-
-///|
-/// 状态码是否被配置放行，对应 axios 的 `settle` 判定。
-///
-/// - `validate_status` 为 `None` 时一律放行（axios 里 `!validateStatus` 的效果）；
-/// - 内置默认值是 `200 <= status < 300`，只认 2xx，
-///   所以 3xx 也算失败——这与 axios 一致（它不把重定向当成功）。
-///
-/// 流式路径（`Client::stream`）复用这个判定：那时响应体还没读，
-/// 不能先造出 `Response` 再校验。
-fn status_allowed(status : Int, config : Config) -> Bool {
-  match config.validate_status {
-    None => true
-    Some(validate) => validate(status)
-  }
-}
-
-///|
-/// 校验失败时按 axios 的分档给错误码：4xx → `BadRequest`，其余 → `BadResponse`
-/// （axios 用 `[ERR_BAD_REQUEST, ERR_BAD_RESPONSE][floor(status/100) - 4]` 取到同一结果）。
-fn status_error_code(status : Int) -> ErrorCode {
-  if status >= 400 && status < 500 {
-    ErrorCode::BadRequest
-  } else {
-    ErrorCode::BadResponse
-  }
-}
-
-///|
-/// 状态码不被放行时的统一错误。两条路径（读全量 / 流式）共用同一份文案与分档。
-///
-/// 响应是必有的：读全量路径此时已经解析出响应，流式路径也把错误体读完了
-/// （哪怕只读到一部分，状态行与响应头一定在）。所以这里不收 `None`——
-/// 「状态码失败」和「错误里带响应」是同一件事。
-fn status_error(
-  status : Int,
-  config : Config,
-  response : Response,
-) -> HttpError {
-  make_error(
-    "请求失败，状态码 " + status.to_string(),
-    status_error_code(status),
-    config,
-    Some(response),
-  )
-}
-
-///|
-/// 校验响应状态码；不通过就抛出带响应的错误。
-fn validate_response(response : Response) -> Unit raise HttpError {
-  if !status_allowed(response.status, response.config) {
-    raise status_error(response.status, response.config, response)
   }
 }

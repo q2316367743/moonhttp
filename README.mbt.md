@@ -83,7 +83,7 @@ import {
 7. 按 `response_encoding` 把响应体字节解码成 `data`（**不做 JSON 解析**）
 8. 用 `validate_status` 校验状态码，失败则抛 `HttpError`
 
-第 3～8 步的实现分别在 [`src/url/`](src/url/)、[`src/client.mbt`](src/client.mbt) 里，全部是纯函数，可以脱离网络单独测试。第 6 步里「读全量」是 `request` 的选择，不需要完整响应体时改用 [`Client::stream`](#流式响应与-sse) 或 [`Client::sse`](#流式响应与-sse)。
+第 3～8 步的实现分别在 [`src/url/`](src/url/)、[`src/util/`](src/util/) 与 [`src/client.mbt`](src/client.mbt) 里：拼地址/头/body 与解码、判定是纯函数（`util`），把它们拼成 `Response`、翻译错误是根包与门面类型接壤的那一层。纯函数那部分可以脱离网络单独测试。第 6 步里「读全量」是 `request` 的选择，不需要完整响应体时改用 [`Client::stream`](#流式响应与-sse) 或 [`Client::sse`](#流式响应与-sse)。
 
 失败时抛出的 `HttpError` 会带上**已经收到的响应**：响应头到手之后才可能开始读响应体，所以读取阶段的任何失败（超时、断连）都不等于「什么都没收到」——状态行、响应头与失败前读到的部分正文都会挂在错误上，见[错误处理](#错误处理)。
 
@@ -238,27 +238,28 @@ try {
 
 ## 包结构
 
-七个包构成无环依赖，每个包只依赖它真正需要的下层：
+八个包构成无环依赖，每个包只依赖它真正需要的下层：
 
 ```
 moonhttp/
 └── src/                     业务代码全部在 src/ 下（根目录只放模块元数据与文档）
-    ├── (根包)               门面 + 请求管线：Client / create / request / stream / sse
+    ├── (根包)               门面 + 编排：Client / create / request / stream / sse
     │                        / Response / StreamResponse / SseStream / HttpError
     ├── config/              配置形状、Method、内置默认值、with_* 构建器
     ├── headers/             大小写不敏感的 Headers
     ├── merge/               配置合并（四种策略）与头拍平
     ├── sse/                 SSE 事件解析（纯逻辑：吃字节、吐事件）
     ├── url/                 绝对地址判定、拼接、params 序列化
+    ├── util/                纯函数层：拼请求、解码、Content-Type 与状态码判定
     ├── transport/           Transport trait + AsyncHttpTransport + MockTransport
     └── cmd/main/            可运行示例
 ```
 
-约定：凡是出现在公开签名里的类型，都在定义它的包里**再导出一次**（`pub using`），根包也再导出一份。所以日常使用只需要 `@moonhttp` 一个 import。
+约定：凡是出现在公开签名里的类型，都在**用到它**的包里**再导出一次**（`pub using`），根包也再导出一份。所以日常使用只需要 `@moonhttp` 一个 import。
 
-拆包的依据是「能不能不依赖门面类型」：`config` / `headers` / `merge` / `url` / `sse` 都是纯逻辑，可以同步测试、谁也不依赖；`Response` / `StreamResponse` / `SseStream` / `HttpError` 互相引用（`HttpError` 要带 `Response`，流式类型要抛 `HttpError`），拆开就会形成循环依赖，所以它们同属根包这个门面层。
+拆包的依据是「签名里能不能不出现门面类型」：`config` / `headers` / `merge` / `url` / `sse` / `util` 都不依赖 `Response` / `StreamResponse` / `SseStream` / `HttpError`，所以能独立成包、能用同步测试覆盖、能脱离网络跑。反过来，这几个门面类型互相引用（`HttpError` 要带 `Response`，流式类型要抛 `HttpError`，`Client` 抛 `HttpError` 又返回这三个响应类型），必须同属根包——而且**只能**在根包：`pub using` 再导出不了错误构造子，`HttpError` 一离开根包，`catch { @moonhttp.HttpError(info) }` 就写不出来了（实验证据见 `docs/01-architecture.md`）。
 
-**根包因此只有两个源文件**：`client.mbt`（`Client` + 三个入口 + 共用的纯函数管线）与 `facade.mbt`（对外类型与再导出）。AGENTS.md 的 RL-04 为根包文件放宽到 1000 行，超限的文件在文件头声明例外；子包仍守 300 行。
+**根包因此拆成三个源文件**（同一个包，只是为了别写成一个超长文件）：`client.mbt`（`Client` + 三个入口 + 接壤层）、`http_error.mbt`（错误类型与所有抛错点）、`facade.mbt`（对外响应类型与再导出）。AGENTS.md 的 RL-04 为根包文件放宽到 1000 行，超限的文件在文件头声明例外；子包仍守 300 行（`util/` 两个文件各不足 100 行）。
 
 测试文件不能挪到 `tests/` 之类的子目录：MoonBit 按「文件所在目录的包」归属测试，挪出去就变成了别的包的测试（白盒测试还得编进包里才能看见 `priv`，物理上不可能在别处）。
 
@@ -317,5 +318,7 @@ moon coverage analyze   # 覆盖率
 ```
 
 测试分层：`config` / `headers` / `merge` / `url` / `sse` 五个包是纯逻辑，用同步测试逐条钉住合并语义与 SSE 解析规则；根包与 `transport` 用 `async test` 配合 `MockTransport` 跑完整管线。`src/sse_stream_test.mbt`、`transport/stream_test.mbt` 与 `src/error_test.mbt` 会各起一个本机 server（`127.0.0.1` 随机端口）——分别验证 CRLF 的 SSE 事件能在服务端停顿期间就到达、真实连接的流式读取与单次读取超时、以及「读响应体中途失败时错误里带着已经收到的部分」（内存体读得完，只有真实连接能造出「读到一半」）。同样不需要外网，只有 `src/cmd/main` 会访问真实网络。
+
+`util` 没有自己的 `_test.mbt`：里面的函数都被根包的黑盒测试从端到端一路覆盖（`src/encoding_test.mbt` 钉四种编码、`src/request_test.mbt` 钉拼请求与错误分档、`src/moonhttp_test.mbt` 钉方法回退），再补一份单元测试只是重复覆盖。
 
 维护者文档（实现思路、API 契约、改动清单、MoonBit 语言坑位）见 [`docs/`](docs/README.md)。

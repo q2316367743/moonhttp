@@ -8,11 +8,12 @@ moonhttp/
 ├── README.mbt.md                使用者文档（README.md 是指向它的符号链接）
 ├── docs/                        本目录：维护者文档
 └── src/
-    ├── moon.pkg                 根包：门面 + 请求管线
-    ├── client.mbt               Client 与三个入口 + 它们共用的纯函数管线
-    │                            （request / stream / sse、拼请求、解码、校验）
-    ├── facade.mbt               门面层：Response / StreamResponse / SseStream /
-    │                            HttpError 等对外类型 + pub using 再导出
+    ├── moon.pkg                 根包：门面与编排（依赖下方全部）
+    ├── client.mbt               Client 与三个入口（request / stream / sse）+ 两个工厂
+    │                            + 接壤层（拼请求、拼 Response）
+    ├── http_error.mbt           错误契约：ErrorCode / ErrorInfo / HttpError 与**所有**抛错点
+    ├── facade.mbt               门面层：Response / StreamResponse / SseStream 等
+    │                            对外响应类型 + pub using 再导出
     ├── *_test.mbt               根包黑盒测试（用 MockTransport 跑整条管线）
     ├── *_wbtest.mbt             根包白盒测试（覆盖只能从包内部触达的分支）
     ├── config/                  配置的形状、默认值与构建器
@@ -20,15 +21,37 @@ moonhttp/
     ├── merge/                   配置合并（四种策略）与头拍平
     ├── sse/                     SSE 事件解析（纯逻辑：吃字节、吐事件）
     ├── url/                     绝对地址判定、拼接、params 序列化
+    ├── util/                    纯函数层：拼请求、解码、Content-Type 与状态码判定
     ├── transport/               传输层：trait + 真实实现 + Mock + 响应体流
     └── cmd/main/                可运行示例（真实网络）
 ```
 
 **为什么根目录的文件多，而测试文件不能挪到 `tests/` 之类的子目录**：MoonBit 的约定是「一个目录 = 一个包」，测试文件按**所在目录的包**归属——`src/foo_test.mbt` 是 `src` 这个包的黑盒测试，`src/foo_wbtest.mbt` 是它的白盒测试（白盒测试会被编进包里才能看见 `priv`，物理上不可能在别处）。把它们移进子目录，它们就变成了「一个新包的测试」，与被测的包再无关系。
 
-根包的源码也不能随手拆包：`HttpError` 要带 `Response`（失败时把响应挂在错误上），两个流式类型要抛 `HttpError`，拆成不同包会立刻形成循环依赖，而 MoonBit 不允许包间循环依赖。它们同属「对外的门面类型」，本来就该在同一个包里。能干净独立出去的是**不依赖门面类型**的纯逻辑，所以 `sse/` 出去了（`config` / `headers` / `merge` / `url` 同理）。
+**为什么这些代码只能待在根包（`client.mbt` / `http_error.mbt` / `facade.mbt`），而不能整体搬进一个 `client/` 子包**：两层原因，第二层是实测出来的硬限制。
 
-**根包只有两个源文件**：`client.mbt`（实现：`Client` + 三个入口 + 共用的纯函数管线）与 `facade.mbt`（对外类型与再导出）。它们都用上了 RL-04 为根包文件开出的例外（≤ 1000 行，需在文件头声明），原本按「一个类型一个文件」「入口与管线分开」拆出来的六个文件因此合一——拆开只是多几次跳转，耦合一点没少。**例外只给根包**：子包仍守 300 行（`config` / `sse` / `transport` 里的文件超了就必须拆）。
+第一层是包间不能成环。`Client` 抛 `HttpError`、又返回 `Response` / `StreamResponse` / `SseStream`，两个流式类型的方法也抛 `HttpError`，`HttpError` 带 `Response`——这几个类型互相引用，构成一个强连通块，必须同属一个包。而根包要能用 `@moonhttp.Client` / `@moonhttp.default_client()`，`Client` 就必须定义在根包里（`pub using` 能再导出**类型与函数**，但包一旦 import 一个反过来 import 自己的包就成环）。
+
+第二层是 `pub using` 再导出不了**错误构造子**，这是决定性的：
+
+| 试法 | 编译器结果 |
+|---|---|
+| `pub using @client {type HttpError}` | 类型可用，但 `catch { @moonhttp.HttpError(info) }` 报 `Value HttpError not found in package 'moonhttp'` |
+| `pub using @client {HttpError}`（裸名当值） | `Alias for the type '@client.HttpError' should be created via 'using @client {type HttpError}'` |
+| `pub using @transport {type TransportError, Timeout, Network, Unsupported}`（构造子名与类型名不同的对照） | `The type/trait @transport.Timeout is not found`——`using` 列表里的裸名只按**类型 / trait** 解析，根本不认错误构造子 |
+| `pub type HttpError = @client.HttpError`（类型别名） | 同样只带类型，不带构造子 |
+
+也就是说，只要 `HttpError` 定义在子包里，`catch { @moonhttp.HttpError(info) => ... }` 这个写法就必然失效（只能改成 `catch { error => error.code() / error.message() }` 这种访问器写法，要解构就得额外 `import @moonhttp/client`）。`http_error.mbt` 里把它声明成 `pub(all) suberror` 就是为了让调用方能解构，这个代价换一个「根包更干净」不值得——**所以不要再尝试把这些代码搬进子包**（拆文件是可以的，见下）。
+
+**能干净独立出去的是「签名里不出现门面类型」的纯逻辑**——`sse/` 就是这么出去的（`config` / `headers` / `merge` / `url` 同理），根包里的纯函数同理，它们现在都在 `util/` 包里：`resolve_method` / `basic_auth` / `build_prepared_request` / `decode_body` / `media_type` / `declares_event_stream` / `status_allowed`。
+
+判据落在**签名**上，不是「感觉像工具函数」：只要返回 `Response` 或抛 `HttpError`，就必须留在根包——`util` 一旦反过来依赖根包就成环。所以 `prepare_request` / `build_response` 留在 `client.mbt`，`transport_error` / `status_error` / `status_error_code` / `validate_response` 与错误类型一起待在 `http_error.mbt`，它们正是「与门面类型接壤」的那一层；`util` 的准入条件写在 `src/util/moon.pkg` 里，往里加东西前先看那一条。
+
+`build_prepared_request` 是这条判据下唯一需要改造才搬得动的：它原来用 `raise HttpError` 报「地址不可用」，搬进 `util` 后改成返回 `Option`（`None` = 地址不可用），由根包的 `prepare_request` 翻译成 `InvalidUrl` 错误——错误码与文案属于对外契约，留在根包。这与 `@url.build_full_path` 返回 `Option`、根包负责报错的分工完全一致。
+
+**根包有三个源文件**：`client.mbt`（`Client` + 三个入口 + 接壤层）、`http_error.mbt`（错误类型与所有抛错点）、`facade.mbt`（对外响应类型与再导出）。三者都用上了 RL-04 为根包文件开出的例外（≤ 1000 行，需在文件头声明）。
+
+**同包拆文件是免费的**：同目录 = 同包，拆文件既不成环、也不影响 `pub` / `priv` 的可见性，`.mbti` 一个字都不会变——所以「文件太长」永远可以靠拆文件解决，不必动包结构。跨包才有代价（`HttpError` 就是被这一条钉在根包里的，理由见上）。**例外只给根包**：子包仍守 300 行（`util/` 两个文件各不足 100 行，`config` / `sse` / `transport` 里的文件超了就必须拆）。
 
 ## 依赖方向（无环）
 
@@ -37,9 +60,10 @@ MoonBit 的包之间不能循环依赖，所以分层是按「数据从谁流向
 ```
 config ──┐
 headers ─┼─→ merge ──┐
-url ─────┘           ├─→ （根包：门面 + 管线） ──→ Client / request / stream / sse
-transport ───────────┤
-sse ─────────────────┘
+url ─────┘           ├─→ util ──┐
+transport ───────────┘          │
+                                ├─→ （根包：门面 + 编排）──→ Client / request / stream / sse
+sse ────────────────────────────┘
 ```
 
 - `config` 依赖 `headers`（配置里有头字段）；
@@ -47,6 +71,7 @@ sse ─────────────────┘
 - `url` 不依赖任何本项目的包（只吃字符串和 `Json`）；
 - `sse` 也不依赖本项目的包（只吃字节），所以它是这层里唯一能被任意字节来源复用的包；
 - `transport` 依赖 `config` 与 `headers`（`PreparedRequest` 的字段类型），**并且是唯一依赖 `moonbitlang/async` 的包**；
+- `util` 依赖 `config` / `headers` / `merge` / `url` / `transport`（拼请求要用到它们），但它不认识任何门面类型——这正是它能待在根包外面的唯一理由；
 - 根包依赖以上全部，负责编排与对外 API。
 
 ## 关键设计决策
@@ -57,12 +82,12 @@ MoonBit 标准库没有任何网络能力，唯一的 HTTP 实现在 `moonbitlan
 
 因此把「真的把字节发出去」抽成 `Transport` trait，异步实现只存在于 `src/transport/` 这个包里（`async_http.mbt` 是真实传输，`stream.mbt` 是响应体流）。收益：
 
-- `config` / `headers` / `merge` / `url` 四个包可以用**普通同步测试**覆盖，跑得快、不依赖网络；
+- `config` / `headers` / `merge` / `url` / `util` 五个包可以用**普通同步测试**覆盖，跑得快、不依赖网络；
 - 根包的管线测试用 `MockTransport` 注入，能确定性复现 4xx/5xx、超时、读到一半失败等分支；
 - 响应体是流（`ResponseBody`），但它的读语义在内存体与真实连接上完全一致，Mock 因此能代表网络侧的流式行为；
 - 使用方也能替换传输层（自定义实现只需一个方法）。
 
-同一把尺子也决定了 SSE 解析的位置：它只吃字节、不碰 async，所以独立成 `sse` 包，用同步测试覆盖规范逐条（`src/sse/sse_test.mbt`）。传输层只负责把字节交出来，「字节怎么解」是上层的事；而「怎么把字节喂给解析器」是根包里 `SseStream` 的事（`sse_stream.mbt`）。
+同一把尺子也决定了 SSE 解析的位置：它只吃字节、不碰 async，所以独立成 `sse` 包，用同步测试覆盖规范逐条（`src/sse/sse_test.mbt`）。传输层只负责把字节交出来，「字节怎么解」是上层的事；而「怎么把字节喂给解析器」是根包里 `SseStream` 的事（`facade.mbt`）。
 
 ### 2. 配置是值语义 + `Option` 字段
 
@@ -74,7 +99,7 @@ MoonBit 标准库没有任何网络能力，唯一的 HTTP 实现在 `moonbitlan
 
 MoonBit 的 import 是包级的：`Config` 的字段类型 `Headers` 定义在另一个包里，使用者若要用 `Config` 就得 import 两个包。为此确立约定：
 
-> 凡是出现在公开签名里的类型，都在定义它的包里用 `pub using` 再导出一次；根包（`src/facade.mbt`）也再导出一份。
+> 凡是出现在公开签名里的类型，都在**用到它**的那个包里用 `pub using` 再导出一次，本包代码因此能写裸名（`config` / `merge` / `transport` / `util` 都这么干）；根包（`src/facade.mbt`）再对使用者导出一份。
 
 所以日常使用只需要 `@moonhttp` 一个 import。
 
@@ -86,8 +111,8 @@ MoonBit 的 import 是包级的：`Config` 的字段类型 `Headers` 定义在�
 2. `src/config/config.mbt` 加 `with_*` 构建器（若使用者需要设置它）；
 3. `src/config/render.mbt` 的 `Config::to_string` 里加一行渲染（可选，但有助于排查）；
 4. `src/merge/merge.mbt` 的 `merge_config` 里**显式**选择一档策略调用，并在注释里说明为什么是这一档；
-5. 若它参与请求构造，接到 `src/client.mbt` 的 `build_prepared_request` / `build_response`；
-6. 补测试：`src/merge/merge_test.mbt` 测合并语义，`src/*_test.mbt` 测端到端效果；
+5. 若它参与请求构造，接到 `src/util/request.mbt` 的 `build_prepared_request`（拼地址/头/body）或 `src/client.mbt` 的 `build_response`（解码已有 `src/util/response.mbt` 的 `decode_body`）；
+6. 补测试：`src/merge/merge_test.mbt` 测合并语义，根包 `src/*_test.mbt` 测端到端效果；
 7. 更新 `docs/02-config-merge.md` 的字段归属表。
 
 ### 新增一个快捷方法（如 `get` / `post`）

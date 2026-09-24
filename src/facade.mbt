@@ -2,19 +2,24 @@
 // AGENTS.md RL-04 例外声明
 //
 // 本文件是根包的**门面层**：对外暴露的数据类型与再导出集中在这里。
-// 它超过 RL-04 的 300 行上限（532 行），按 RL-04 为「根包文件」开出的例外
-// 处理——上限 1000 行，并在此声明。
+// 它超过 RL-04 的 300 行上限，按 RL-04 为「根包文件」开出的例外处理
+// ——上限 1000 行，并在此声明。
 //
-// 为什么这几个类型在同一个文件：它们互相引用——`HttpError` 要带 `Response`
-// （失败时把响应挂在错误上），两个流式类型要抛 `HttpError`。拆成多个文件不会
-// 减少这层耦合，只增加跳转成本；拆成多个**包**更不行，MoonBit 不允许包间循环依赖。
+// 这几个类型必须在根**包**（而不是像 `util` 那样独立成包）：它们互相引用，而且
+// `Client` 要返回它们、`StreamResponse` / `SseStream` 要抛 `HttpError`。更硬的
+// 一条是 `HttpError`——`pub using` **再导出不了错误构造子**，它一旦离开根包，
+// `catch { @moonhttp.HttpError(info) }` 就写不出来了。实验证据与「为什么不能在
+// 子包里安家」见 `docs/01-architecture.md`。
+//
+// 但**文件**怎么分是自由的：同目录 = 同包，拆文件不影响依赖方向，跨文件的
+// `pub` / `priv` 照常可见。`HttpError` 与所有抛错点因此单独放在 `http_error.mbt`，
+// 纯逻辑（拼请求、解码、Content-Type 与状态码判定）独立成 `util` 包。
 //
 // 文件内的分区（顺序无关，用区块注释标出）：
 //   1. 再导出           —— pub using 各子包的类型
 //   2. Response         —— 读全量得到的响应
 //   3. StreamResponse   —— 原始字节流响应（下载）
 //   4. SseStream        —— 按事件读的 SSE 响应
-//   5. HttpError        —— 错误分类、详细信息与访问器
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -144,7 +149,7 @@ pub fn StreamResponse::is_success(self : StreamResponse) -> Bool {
 /// 只做查询：这是给「已经拿到原始流、想知道对面到底是不是 SSE」的调用方自查用的。
 /// 真按事件读请改用 `Client::sse`，它在入口处就用同一个判定做了准入检查。
 pub fn StreamResponse::is_event_stream(self : StreamResponse) -> Bool {
-  declares_event_stream(self.headers)
+  @util.declares_event_stream(self.headers)
 }
 
 ///|
@@ -372,152 +377,4 @@ pub async fn SseStream::next_event(
 pub fn SseStream::close(self : SseStream) -> Unit {
   self.closed = true
   self.body.close()
-}
-// ---------------------------------------------------------------------------
-// 5. HttpError —— 错误分类、详细信息与访问器
-// ---------------------------------------------------------------------------
-
-///|
-/// 错误的分类，对应 axios 的 `AxiosError.code`。
-///
-/// 分成这几档是为了让调用方能按「该怎么处理」分支：
-/// 超时可以重试，网络失败要看连接，4xx 要看自己的请求参数，
-/// 5xx 要等服务端恢复。
-pub(all) enum ErrorCode {
-  /// 4xx：请求本身有问题（参数、权限、资源不存在等）
-  BadRequest
-  /// 5xx，以及被校验规则拒绝的其它状态码：服务端没有正常完成请求
-  BadResponse
-  /// 网络层失败：连接失败、DNS 解析失败、TLS 握手失败等
-  Network
-  /// 超时
-  Timeout
-  /// url 缺失或非法
-  InvalidUrl
-  /// 本地就失败了：配置有误，或用了传输层不支持的能力
-  NotSupported
-} derive(Eq, Debug)
-
-///|
-pub extend ErrorCode with Eq::{equal, not_equal}
-
-///|
-pub extend ErrorCode with @debug.Debug::{to_repr}
-
-///|
-/// 渲染成 axios 风格的错误码字符串（即 `AxiosError.code` 的取值）。
-///
-/// 超时用的是 `ECONNABORTED` 而不是 `ETIMEDOUT`：axios 默认就是前者，
-/// 只有在打开 `transitional.clarifyTimeoutError` 时才会改用后者。
-pub fn ErrorCode::to_string(self : ErrorCode) -> String {
-  match self {
-    BadRequest => "ERR_BAD_REQUEST"
-    BadResponse => "ERR_BAD_RESPONSE"
-    Network => "ERR_NETWORK"
-    Timeout => "ECONNABORTED"
-    InvalidUrl => "ERR_INVALID_URL"
-    NotSupported => "ERR_NOT_SUPPORT"
-  }
-}
-
-///|
-/// 渲染与 `ErrorCode::to_string` 一致，这样 `"\{code}"` 直接给出 axios 风格错误码。
-pub impl Show for ErrorCode with fn to_string(self) {
-  self.to_string()
-}
-
-///|
-pub extend ErrorCode with Show::{output}
-
-///|
-/// 错误的详细信息，对应 `AxiosError` 上的 `message` / `code` / `config` / `response`。
-pub(all) struct ErrorInfo {
-  /// 面向人的错误描述
-  message : String
-  code : ErrorCode
-  /// 触发这次错误的配置（**已完成合并**），便于定位到底是哪一项配置不对
-  config : Config
-  /// 服务端已经返回的响应：
-  ///
-  /// - 状态码没通过校验时：完整响应（两个流式入口会把错误体读完再抛）；
-  /// - 传输层失败（超时、断连）发生在响应头到手之后时：失败前已经收到的部分
-  ///   ——状态行与响应头一定在，`raw` 可能只有半截（`read_all` 中途失败时
-  ///   就是已经读到的那部分）；
-  /// - 连响应头都没收到就失败（连不上、DNS 失败、请求没发出去）：`None`。
-  response : Response?
-}
-
-///|
-/// 本模块对外的错误类型。
-///
-/// 用 `pub(all) suberror` 而不是 `pub suberror`：后者不导出构造子，
-/// 使用方就只能拿到错误、无法按分类匹配。这里刻意把构造子放开，
-/// 让调用方能写 `catch { @moonhttp.HttpError(info) => ... }`。
-pub(all) suberror HttpError {
-  HttpError(ErrorInfo)
-}
-
-///|
-/// 取出错误的详细信息。
-pub fn HttpError::info(self : HttpError) -> ErrorInfo {
-  match self {
-    HttpError(info) => info
-  }
-}
-
-///|
-/// 错误的分类。
-pub fn HttpError::code(self : HttpError) -> ErrorCode {
-  self.info().code
-}
-
-///|
-/// 错误的文字描述。
-pub fn HttpError::message(self : HttpError) -> String {
-  self.info().message
-}
-
-///|
-/// 错误里带的响应：
-///
-/// - 状态码没通过校验时是完整响应；
-/// - 传输层失败（超时、断连）发生在响应头到手之后时，是失败前已经收到的部分
-///   ——`raw` 可能只有半截；
-/// - 连响应头都没收到时为 `None`。
-pub fn HttpError::response(self : HttpError) -> Response? {
-  self.info().response
-}
-
-///|
-/// 触发这次错误的配置（已完成合并）。
-pub fn HttpError::config(self : HttpError) -> Config {
-  self.info().config
-}
-
-///|
-/// 渲染成 `错误码: 描述` 的形式，便于日志与断言。
-pub fn HttpError::to_string(self : HttpError) -> String {
-  let info = self.info()
-  info.code.to_string() + ": " + info.message
-}
-
-///|
-/// 渲染与 `HttpError::to_string` 一致，便于日志与字符串插值。
-pub impl Show for HttpError with fn to_string(self) {
-  self.to_string()
-}
-
-///|
-pub extend HttpError with Show::{output}
-
-///|
-/// 统一构造 `HttpError`，避免每处都手写一遍 `ErrorInfo`。
-/// 调用点用 `raise make_error(...)` 抛出。
-fn make_error(
-  message : String,
-  code : ErrorCode,
-  config : Config,
-  response : Response?,
-) -> HttpError {
-  HttpError(ErrorInfo::{ message, code, config, response, })
 }

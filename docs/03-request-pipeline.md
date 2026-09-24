@@ -5,13 +5,16 @@
 | 文件 | 职责 |
 |---|---|
 | `src/client.mbt` | `Client::request` / `Client::stream` / `Client::sse` 的编排：合并 → 定方法 → 发送 →（读全量 / 交还流）→ 解码 → 校验 |
-| `src/client.mbt` | 入口之外的纯函数管线（与入口同文件）：`build_prepared_request` / `build_response` / `decode_body` / `validate_response` / `transport_error` / `media_type` |
+| `src/util/request.mbt` | 请求侧的纯函数：`resolve_method`、`build_prepared_request`（地址、头、body 的拼装）与只给它用的 `basic_auth` |
+| `src/util/response.mbt` | 响应侧的纯函数：`decode_body`、`declares_event_stream`（与只给它用的 `media_type`）、`status_allowed` |
+| `src/client.mbt` | 与门面类型接壤的那两个函数：`prepare_request`（把纯函数的 `None` 翻译成 `InvalidUrl` 错误）、`build_response` |
+| `src/http_error.mbt` | 错误类型 `ErrorCode` / `ErrorInfo` / `HttpError` 与所有抛错点：`transport_error`、状态码分档 `status_error_code` / `status_error` / `validate_response` |
 | `src/url/combine.mbt` | 绝对地址判定、`combine_urls`、`build_full_path` |
 | `src/url/build_url.mbt` | `params` → query string |
 | `src/url/encode.mbt` | 单个 URL 组件的百分号编码 |
 | `src/facade.mbt` | 门面层：`Response`（读全量）/ `StreamResponse`（原始流）/ `SseStream`（事件流）/ `HttpError` 与各子包类型的再导出 |
 
-管线函数与 `url/` 都是**纯函数**（没有 IO、不涉及异步），可以脱离网络单独测试，`url/url_test.mbt` 就是逐条钉住边界行为的。
+`util/` 与 `url/` 里的管线函数都是**纯函数**（没有 IO、不涉及异步），可以脱离网络单独测试，`url/url_test.mbt` 就是逐条钉住边界行为的。两者的差别只在依赖：`url/` 连 `Config` 都不认识，`util/` 认识配置与传输层的数据形状（`PreparedRequest`），但不认识任何门面类型。
 
 ## 八个步骤
 
@@ -112,7 +115,7 @@ URL 里已有 `?` 时用 `&` 续接，否则用 `?`；`#fragment` 会被**丢弃
 | `response_encoding` | 解码方式 | 实现 |
 |---|---|---|
 | `Utf8`（默认，内置默认值显式设置） | UTF-8；非法字节 → `U+FFFD` | `@utf8.decode_lossy` |
-| `Latin1` | 字节值即码点（`0xE9` → `é`），任何字节序列都能解出文本 | `client.mbt` 里的 `decode_body`（core 没有，一个循环） |
+| `Latin1` | 字节值即码点（`0xE9` → `é`），任何字节序列都能解出文本 | `src/util/response.mbt` 里的 `decode_body`（core 没有，一个循环） |
 | `Ascii` | 只认 `0x00`–`0x7F`，更高的字节 → `U+FFFD` | `@ascii.decode_lossy` |
 | `Utf16le` | 两个字节一个码元，小端 | `@utf16.decode_lossy(endianness=Little)` |
 
