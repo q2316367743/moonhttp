@@ -1,7 +1,7 @@
 ///|
 /// 这两个类型出现在 `PreparedRequest` / `RawResponse` 的公开签名里，
 /// 因此随本包一起再导出，使用者不必为了构造一份请求再 import 两个包。
-pub using @config {type Method}
+pub using @config {type Method, type ProgressCallback}
 
 ///|
 pub using @headers {type Headers}
@@ -51,7 +51,51 @@ pub(all) struct PreparedRequest {
   ///
   /// 有代理时流量全部经代理转发，http 目标也走 CONNECT 隧道（见 `docs/09-proxy.md`）。
   proxy : ProxyEndpoint?
-} derive(Debug)
+  /// 上传进度回调；`None` 表示这次请求不报告进度。
+  ///
+  /// **由传输实现负责调用**：在把 `body` 写出去的过程中逐块报告。
+  /// 内置的 `AsyncHttpTransport` 会按 64 KiB 分块写入并逐块回调；
+  /// 自定义实现可以不调用它（测试用的 `MockTransport` 就不调用——
+  /// 它不真的发送数据，所以上传进度无从报告）。
+  /// 语义与粒度见 `docs/10-progress.md`。
+  on_upload_progress : ProgressCallback?
+}
+
+///|
+/// 手写 Debug 而不是 `derive(Debug)`：`on_upload_progress` 是函数类型，
+/// 函数没有可打印的内容。两处刻意与默认渲染不同：
+/// - 回调渲染成 `<fn>` / `<none>`（与 `Config` 对函数字段的处理一致）；
+/// - `body` 只给字节数，`proxy` 只给地址：前者可能是整个上传文件的内容，
+///   后者的 `authorization` 是一份凭据，都不该整段进日志。
+pub impl @debug.Debug for PreparedRequest with fn to_repr(self) {
+  let body = match self.body {
+    Some(bytes) =>
+      @debug.Repr::opaque_(
+        "Bytes",
+        @debug.Repr::integer(bytes.length().to_string()),
+      )
+    None => @debug.Repr::literal("None")
+  }
+  let fields : Map[String, @debug.Repr] = Map([])
+  fields["http_method"] = @debug.Repr::string(self.http_method.to_string())
+  fields["url"] = @debug.Repr::string(self.url)
+  fields["headers"] = @debug.Repr::string(self.headers.to_string())
+  fields["body"] = body
+  fields["timeout"] = match self.timeout {
+    Some(milliseconds) => @debug.Repr::integer(milliseconds.to_string())
+    None => @debug.Repr::literal("None")
+  }
+  fields["proxy"] = match self.proxy {
+    Some(endpoint) =>
+      @debug.Repr::opaque_("ProxyEndpoint", @debug.Repr::string(endpoint.url))
+    None => @debug.Repr::literal("None")
+  }
+  fields["on_upload_progress"] = match self.on_upload_progress {
+    Some(_) => @debug.Repr::literal("<fn>")
+    None => @debug.Repr::literal("<none>")
+  }
+  @debug.Repr::opaque_("PreparedRequest", @debug.Repr::record(fields))
+}
 
 ///|
 pub extend PreparedRequest with @debug.Debug::{to_repr}

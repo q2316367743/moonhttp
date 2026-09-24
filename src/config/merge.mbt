@@ -144,7 +144,7 @@ fn merge_method_headers(
 /// 策略分配与 axios 保持一致：
 /// - 只取请求级：url / http_method / data
 /// - 请求级优先、否则默认：base_url / timeout / max_redirects / response_encoding /
-///   allow_absolute_urls / params_serializer
+///   allow_absolute_urls / params_serializer / on_upload_progress / on_download_progress
 /// - 深合并：params / auth / proxy / headers / common_headers / method_headers
 /// - 存在即生效：validate_status
 ///
@@ -182,6 +182,16 @@ pub fn merge_config(base : Config, request : Config) -> Config {
     params_serializer: prefer_request(
       base.params_serializer,
       request.params_serializer,
+    ),
+    // 两个进度回调同样走策略 2（axios 把它们登记成 `defaultToConfig2`），
+    // 请求级提供即整体替换实例默认值，不会出现「两个回调都被调用」。
+    on_upload_progress: prefer_request(
+      base.on_upload_progress,
+      request.on_upload_progress,
+    ),
+    on_download_progress: prefer_request(
+      base.on_download_progress,
+      request.on_download_progress,
     ),
     // 策略 3：深合并
     params: merge_json_option(base.params, request.params),

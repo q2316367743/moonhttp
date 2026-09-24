@@ -107,7 +107,7 @@ MoonBit 的 import 是包级的：`Config` 的字段类型 `Headers` 定义在�
 ### 新增一个配置字段（最常见）
 
 1. `src/config/config.mbt` 的 `Config` 加字段（`Option[T]`），文档注释里写明它在哪一档合并策略下；
-2. `src/config/config.mbt` 加 `with_*` 构建器（若使用者需要设置它）；
+2. 加 `with_*` 构建器（若使用者需要设置它）。放 `src/config/config.mbt`；那个文件贴着 RL-04 的 300 行上限，构建器可以按功能单独成文件（`proxy.mbt` / `serializer.mbt` / `progress.mbt`），字段本身只能留在结构体里；
 3. `src/config/render.mbt` 的 `Config::to_string` 里加一行渲染（可选，但有助于排查）；
 4. `src/config/merge.mbt` 的 `merge_config` 里**显式**选择一档策略调用，并在注释里说明为什么是这一档（漏了是编译错误：记录字面量必须列全字段）；
 5. 若它参与请求构造，接到 `src/util/request.mbt` 的 `build_prepared_request`（拼地址/头/body）或 `src/client.mbt` 的 `build_response`（解码已有 `src/util/response.mbt` 的 `decode_body`）。若它影响的是「每一跳怎么发」这类编排，落点同样在 `src/client.mbt`：`max_redirects` 由 `Client::send_following_redirects` 消费，配置侧的改写规则在 `src/config/redirect.mbt`（见 `08-redirects.md`）；

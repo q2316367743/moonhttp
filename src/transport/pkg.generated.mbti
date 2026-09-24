@@ -43,8 +43,10 @@ pub(all) struct PreparedRequest {
   body : Bytes?
   timeout : Int?
   proxy : ProxyEndpoint?
-} derive(@debug.Debug)
+  on_upload_progress : ((@config.ProgressEvent) -> Unit)?
+}
 pub fn PreparedRequest::to_repr(Self) -> @debug.Repr
+pub impl @debug.Debug for PreparedRequest
 
 pub(all) struct ProxyEndpoint {
   url : String
@@ -65,8 +67,8 @@ pub struct ResponseBody {
 }
 pub fn ResponseBody::close(Self) -> Unit
 pub fn ResponseBody::from_bytes(Bytes) -> Self
-pub async fn ResponseBody::read_all(Self) -> Bytes raise TransportError
-pub async fn ResponseBody::read_all_partial(Self) -> (Bytes, TransportError?) noraise
+pub async fn ResponseBody::read_all(Self, on_progress? : (@config.ProgressEvent) -> Unit) -> Bytes raise TransportError
+pub async fn ResponseBody::read_all_partial(Self, on_progress? : (@config.ProgressEvent) -> Unit) -> (Bytes, TransportError?) noraise
 pub async fn ResponseBody::read_some(Self, max_len? : Int) -> Bytes? raise TransportError
 pub async fn ResponseBody::read_until(Self, String) -> String? raise TransportError
 pub fn ResponseBody::to_repr(Self) -> @debug.Repr
@@ -76,6 +78,8 @@ pub impl @debug.Debug for ResponseBody
 pub using @headers {type Headers}
 
 pub using @config {type Method}
+
+pub type ProgressCallback = (@config.ProgressEvent) -> Unit
 
 // Traits
 pub(open) trait Transport {

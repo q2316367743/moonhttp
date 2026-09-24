@@ -37,6 +37,7 @@
 /// 因此各层之间不会出现「要用这个 API 却不知道类型该从哪 import」的情况。
 /// 请求体的相关类型也一并再导出：`with_data_from_form` 的入参是 `FormData`，
 /// `serialize_body` 的返回值是 `SerializedBody`，用它们不该再 import 一个 `@config`。
+/// 进度回调的两个类型同理：`with_on_upload_progress` 的入参是 `ProgressCallback`。
 pub using @config {
   type Config,
   type Method,
@@ -48,6 +49,8 @@ pub using @config {
   type FormValue,
   type FormFile,
   type SerializedBody,
+  type ProgressEvent,
+  type ProgressCallback,
 }
 
 ///|
@@ -287,10 +290,15 @@ pub async fn StreamResponse::read_until(
 /// 中途失败时抛 `HttpError`，并且**已经读到的字节不会丢**：它们与状态行、
 /// 响应头一起挂在错误的响应上（`HttpError::response()` 的 `bytes()` / `text()`）
 /// ——下载断在 90% 时，这 90% 就是现场。
+///
+/// 配了 `on_download_progress` 时逐块报告进度（与 `Client::request` 同一条口径：
+/// 凡「库读全量」都报告）。按块读的 `read_some` / `read_until` 不报告——
+/// 那条路由调用方自己驱动，进度自己累加即可，见 `docs/10-progress.md`。
 pub async fn StreamResponse::read_all(
   self : StreamResponse,
 ) -> Bytes raise HttpError {
-  let (bytes, failure) = self.body.read_all_partial()
+  let on_progress = self.config.on_download_progress
+  let (bytes, failure) = self.body.read_all_partial(on_progress?)
   match failure {
     Some(error) => raise self.read_error(error, bytes)
     None => bytes

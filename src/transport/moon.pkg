@@ -2,7 +2,8 @@
 // 配置合并、URL 拼接、头拍平等纯逻辑都留在其它包里，可以离线同步测试。
 // core/error 用于把底层错误渲染成可读消息，core/debug 用于 Debug 实现，
 // core/encoding/utf8 用于按分隔符读流时的文本解码，
-// core/buffer 用于读全量时把分块攒起来（中途失败也要能交出已读到的部分）。
+// core/buffer 用于读全量时把分块攒起来（中途失败也要能交出已读到的部分），
+// core/string 用于解析响应头里的 Content-Length（下载进度的 total）。
 import {
   "moonbitlang/async",
   "moonbitlang/async/http",
@@ -10,6 +11,7 @@ import {
   "moonbitlang/core/buffer",
   "moonbitlang/core/debug",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/string",
   "q2316367743/moonhttp/config",
   "q2316367743/moonhttp/headers",
 }

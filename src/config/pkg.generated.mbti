@@ -39,6 +39,8 @@ pub(all) struct Config {
   response_encoding : ResponseEncoding?
   params : Json?
   params_serializer : ((Json) -> String)?
+  on_upload_progress : ((ProgressEvent) -> Unit)?
+  on_download_progress : ((ProgressEvent) -> Unit)?
   auth : Auth?
   proxy : Proxy?
   headers : @headers.Headers?
@@ -68,6 +70,8 @@ pub fn Config::with_headers(Self, @headers.Headers) -> Self
 pub fn Config::with_max_redirects(Self, Int) -> Self
 pub fn Config::with_method(Self, Method) -> Self
 pub fn Config::with_method_header(Self, Method, StringView, String) -> Self
+pub fn Config::with_on_download_progress(Self, (ProgressEvent) -> Unit) -> Self
+pub fn Config::with_on_upload_progress(Self, (ProgressEvent) -> Unit) -> Self
 pub fn Config::with_params(Self, Json) -> Self
 pub fn Config::with_params_serializer(Self, (Json) -> String) -> Self
 pub fn Config::with_proxy(Self, String, port? : Int, protocol? : ProxyProtocol, username? : String, password? : String) -> Self
@@ -123,6 +127,13 @@ pub fn Method::parse(StringView) -> Self?
 pub fn Method::to_repr(Self) -> @debug.Repr
 pub fn Method::to_string(Self) -> String
 
+pub(all) struct ProgressEvent {
+  loaded : Int
+  total : Int?
+} derive(@debug.Debug)
+pub fn ProgressEvent::progress(Self) -> Double?
+pub fn ProgressEvent::to_repr(Self) -> @debug.Repr
+
 pub(all) struct Proxy {
   protocol : ProxyProtocol?
   host : String?
@@ -163,5 +174,7 @@ pub(all) struct SerializedBody {
 
 // Type aliases
 pub using @headers {type Headers}
+
+pub type ProgressCallback = (ProgressEvent) -> Unit
 
 // Traits

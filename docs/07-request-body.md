@@ -117,7 +117,9 @@ let form = FormData::new()
 ### 代价：整块驻留内存
 
 `PreparedRequest.body` 是一次性字节，所以表单（含文件）会被完整拼进内存再发。
-上传进度回调与流式上传**不支持**（见 README 的「暂不支持」），大文件请自行评估内存。
+**流式上传（Reader 形态的 body）不支持，计划下一期实现**（见 README 的「暂不支持」），
+大文件请自行评估内存。上传进度不受此限：请求体本来就是按块写出去的，进度回调已经可用
+（见 `10-progress.md`）。
 
 ## URL 编码表单（`application/x-www-form-urlencoded`）
 

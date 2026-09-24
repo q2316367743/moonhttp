@@ -24,6 +24,7 @@ async test "mock transport records requests and serves queued responses" {
     body: None,
     timeout: None,
     proxy: None,
+    on_upload_progress: None,
   }
   let first = transport.send(request)
   assert_eq(first.body.read_all(), b"first")
@@ -50,6 +51,7 @@ async test "mock transport without responses fails loudly" {
     body: None,
     timeout: None,
     proxy: None,
+    on_upload_progress: None,
   }
   let error = try {
     ignore(transport.send(request))
@@ -75,6 +77,7 @@ async test "mock transport propagates configured failure" {
     body: Some(b"payload"),
     timeout: Some(1000),
     proxy: None,
+    on_upload_progress: None,
   }
   let error = try {
     ignore(transport.send(request))
@@ -99,6 +102,7 @@ async test "async transport classifies unsupported protocols" {
     body: None,
     timeout: Some(1000),
     proxy: None,
+    on_upload_progress: None,
   }
   let error = try {
     ignore(transport.send(request))
@@ -130,6 +134,7 @@ async test "async transport classifies connection failures" {
     // 给一个上限，避免万一卡在重试上导致测试挂住
     timeout: Some(3000),
     proxy: None,
+    on_upload_progress: None,
   }
   let error = try {
     ignore(transport.send(request))
@@ -162,8 +167,44 @@ async test "mock transport accessors" {
       body: None,
       timeout: None,
       proxy: None,
+      on_upload_progress: None,
     }),
   )
   assert_eq(mock.received().length(), 1)
   assert_true(mock.last_request() is Some(_))
+}
+
+///|
+/// `PreparedRequest` 的手写 Debug：**body 只给字节数、代理只给地址**。
+///
+/// 它因为多了 `on_upload_progress` 这个函数字段而不能 `derive(Debug)`，顺手把两处
+/// 「不该整段进日志」的东西换掉了：body 可能是整个上传文件的内容，代理的
+/// `authorization` 是一份凭据。这条用例就是钉住这两个替换不会被改回默认渲染。
+async test "prepared request debug hides body content and proxy credentials" {
+  debug_inspect(
+    @transport.PreparedRequest::{
+      http_method: @transport.Method::Post,
+      url: "https://example.com/upload",
+      headers: @transport.Headers::new().set("Content-Type", "text/plain"),
+      body: Some(b"secret-payload-bytes"),
+      timeout: Some(5000),
+      proxy: Some(@transport.ProxyEndpoint::{
+        url: "http://proxy.example:8080",
+        authorization: Some("Basic dTpw"),
+      }),
+      on_upload_progress: Some(fn(_event) { () }),
+    },
+    content=(
+      #|<PreparedRequest:
+      #|  {
+      #|    http_method: "POST",
+      #|    url: "https://example.com/upload",
+      #|    headers: "Content-Type: text/plain",
+      #|    body: <Bytes: 20>,
+      #|    timeout: 5000,
+      #|    proxy: <ProxyEndpoint: "http://proxy.example:8080">,
+      #|    on_upload_progress: <fn>,
+      #|  }>
+    ),
+  )
 }

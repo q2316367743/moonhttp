@@ -5,8 +5,9 @@
 | 文件 | 职责 |
 |---|---|
 | `src/transport/transport.mbt` | `Transport` trait、`PreparedRequest`、`RawResponse`、`TransportError` |
-| `src/transport/stream.mbt` | `ResponseBody`：响应体流（真实连接 / 内存体两种来源） |
-| `src/transport/async_http.mbt` | 真实实现（唯一对接 `moonbitlang/async` 的文件） |
+| `src/transport/stream.mbt` | `ResponseBody`：响应体流（真实连接 / 内存体两种来源），按块读的部分 |
+| `src/transport/stream_all.mbt` | `ResponseBody` 的「读全量」三件套（`drain_into` / `read_all_partial` / `read_all`）与下载进度的逐块报告 |
+| `src/transport/async_http.mbt` | 真实实现（唯一对接 `moonbitlang/async` 的文件），含上传进度的分块写 |
 | `src/transport/mock.mbt` | 测试用实现：记录请求、按队列返回响应、可注入失败 |
 | `src/transport/transport_test.mbt` | 传输层自身的用例（含不依赖外网的真实实现用例） |
 | `src/transport/stream_test.mbt` | 响应体流的读语义 + 本机 server 的真实流式读取用例 |
@@ -29,6 +30,7 @@ pub(open) trait Transport {
 | `body` | 请求体字节；`None` 表示不带 body |
 | `timeout` | 超时毫秒数；`None` 或 `<= 0` 表示不限时 |
 | `proxy` | 代理服务器（`ProxyEndpoint`：`url` + `authorization`）；`None` 表示直连。契约见 `09-proxy.md` |
+| `on_upload_progress` | 上传进度回调；`None` 表示不报告。**由传输实现负责调用**（内置实现按 64 KiB 分块写、逐块回调；`MockTransport` 不调用）。语义见 `10-progress.md` |
 
 `RawResponse` 是**纯传输结果**，刻意不叫 `Response`（上层的 `Response` 还要承担响应体解码与状态码校验）：
 
@@ -51,10 +53,12 @@ pub(open) trait Transport {
 pub fn ResponseBody::from_bytes(Bytes) -> ResponseBody   // 内存体：Mock 与自定义实现用
 pub async fn ResponseBody::read_some(Self, max_len? : Int) -> Bytes? raise TransportError
 pub async fn ResponseBody::read_until(Self, sep : String) -> String? raise TransportError
-pub async fn ResponseBody::read_all(Self) -> Bytes raise TransportError
-pub async fn ResponseBody::read_all_partial(Self) -> (Bytes, TransportError?) noraise
+pub async fn ResponseBody::read_all(Self, on_progress? : ProgressCallback) -> Bytes raise TransportError
+pub async fn ResponseBody::read_all_partial(Self, on_progress? : ProgressCallback) -> (Bytes, TransportError?) noraise
 pub fn ResponseBody::close(Self) -> Unit
 ```
+
+`on_progress` 是下载进度的报告钩子（`None` 表示不报告），只有两个「读全量」的方法有它：按块读的 `read_some` / `read_until` 不报告，那条路由调用方自己累加。报告粒度、`total` 从哪来、回调为什么是 `noraise` 见 `10-progress.md`。
 
 两种来源（真实连接、内存字节）的语义**完全一致**，对齐 `@io.Reader`，Mock 才能真实代表网络侧：
 
@@ -133,6 +137,8 @@ pub impl Transport for MyTransport with fn send(self, request) {
 - `@http.request(uri, method, headers, body)`：便捷，但内部 `client.read_all()` 把整个响应体读光，SSE 就没有落点了——这正是本次改造要解决的问题；
 - `@http.get_stream(uri, ...)`：返回 `(Response, Client)` 正合用，但只覆盖 GET（`post_stream` / `put_stream` 只返回写入口，拿不到响应头）。
 
+第三步的 `write` 由 `write_body` 承担：没有上传进度回调时是一次 `client.write(body)`（与改造前完全一致），有回调时按 `UPLOAD_CHUNK_SIZE` 分块写、每块 `flush` 后报一次进度。分块不改变线上行为——底层不传 `Content-Length` 时请求体本来就是 `Transfer-Encoding: chunked`，它的发送缓冲只有 1 KiB，整块 `write` 在底层早已被切成许多 chunk；这里只是换个切法并让「报告了 = 已经交给内核」成立。同时 `send` 从响应头解析出 `Content-Length` 交给 `ResponseBody::open`，作为下载进度的 `total`（取不到就是 `None`）。
+
 配套的四处适配：
 
 1. **地址切分**（`split_url`）：底层 `Client::Client(uri)` 要求 uri 的 path 恰好是 `/`（否则抛 `InvalidFormat`），路径必须留给 `Client::request(meth, path)`。切法镜像底层私有的 `resolve_url`：按 `://` 分出协议，取之后第一个 `/` 之前的部分作为 host、其余作为 path+query。相对地址与非 http/https 协议抛 `TransportError::Unsupported`——同一类输入以前走 `@http.request` 时会被归到 `Network`，现在分类更准（`Unsupported` 的定义就是「请求还没发出去就失败了」）。
@@ -146,8 +152,9 @@ pub impl Transport for MyTransport with fn send(self, request) {
 | 能力 | 现状 | 可能的实现方式 |
 |---|---|---|
 | 连接复用 | 每次请求新建连接 | 按 host 缓存 `@http.Client`；注意本项目不回传连接池状态给上层，缓存要自己做失效处理 |
-| 请求体流式上传 | 不支持（`PreparedRequest::body` 是完整字节） | 需要 `ResponseBody` 的对偶：一个挂在 `@http.Client` 上的可写流，`write` 完再 `end_request()` |
-| 上传进度 | 不支持 | 与上一条一起做；下载进度不需要新 API——调用方按 `read_some` 的每块大小累加即可 |
+| 请求体流式上传 | 不支持（`PreparedRequest::body` 是完整字节） | 需要 `ResponseBody` 的对偶：一个挂在 `@http.Client` 上的可写流，`write` 完再 `end_request()`。README 的「暂不支持」里标了下一期 |
+| 上传进度 | **已支持**（`PreparedRequest::on_upload_progress`）：按 64 KiB 分块写 + 每块 `flush` 后回调。分块不改变线上格式——请求体本来就是 chunked | 粒度见 `async_http.mbt` 的 `UPLOAD_CHUNK_SIZE`；契约见 `10-progress.md` |
+| 下载进度 | **已支持**（`ResponseBody` 的 `read_all*` 带 `on_progress`），只由「库读全量」触发 | 见 `10-progress.md` |
 | 代理 | 已支持（`PreparedRequest::proxy`） | 底层 `Client::Client(uri, proxy~)` 的 CONNECT 隧道；凭据落在代理客户端自己的持久头上。契约与注意事项见 `09-proxy.md` |
 | TLS 校验开关 | 固定为默认（校验） | `Client::Client(trust~ / verify~)` |
 | 响应 cookie | 读不到 `Set-Cookie` | 底层把响应 cookie 单独放在 `Response::cookies` 里，没有并进 headers。要暴露需要先决定多值头的表示（本项目的 `Headers` 一个名字只能有一个值） |

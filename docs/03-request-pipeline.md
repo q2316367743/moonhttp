@@ -8,6 +8,7 @@
 | `src/config/merge.mbt` | 合并契约：四种策略、`merge_config`、`flatten_headers`（为什么在 `config` 包见 `02-config-merge.md`） |
 | `src/config/body.mbt` | 请求体的四种形态与序列化：`serialize_body`（字节 + 建议的 `Content-Type`） |
 | `src/config/form.mbt` | 表单的 `multipart/form-data` 编码（详见 `07-request-body.md`） |
+| `src/config/progress.mbt` | 进度回调的 `ProgressEvent` / `ProgressCallback` 与两个 `with_on_*` 构建器（详见 `10-progress.md`） |
 | `src/util/request.mbt` | 请求侧的纯函数：`resolve_method`、`build_prepared_request`（地址、头、body 的拼装）与只给它用的 `basic_auth` |
 | `src/util/response.mbt` | 响应侧的纯函数：`decode_body`、`declares_event_stream`（与只给它用的 `media_type`）、`status_allowed` |
 | `src/client.mbt` | 与门面类型接壤的那两个函数：`prepare_request`（把纯函数的 `None` 翻译成 `InvalidUrl` 错误）、`build_response` |
@@ -47,6 +48,17 @@
 三种入口的**前半段与状态码校验完全一致**（`stream` 与 `sse` 共用 `Client::open_stream`，规则见 `status_allowed` / `status_error_code`）。差别只在失败时拿什么：`request` 报错时带的是完整响应，两个流式入口报错前会把错误体读完（不猜它是 JSON 还是别的什么格式——错误体格式不可预期，强行解释只会把「状态码失败」这个更准确的原因盖掉），字节放在 `HttpError::response()` 的 `Response` 上，按需要读成文本（`text()`）或原样取走（`bytes()`）。流式路径的超时语义见 `05-transport.md`，SSE 另见 `06-sse.md`。
 
 **失败不等于什么都没收到**：响应头到手之后才可能开始读响应体，所以读取阶段的任何失败（单次读取超时、连接被重置）都已经晚于响应头——三个入口都会把**已经收到的响应**挂到错误上（状态行、响应头，以及失败前读到的部分正文，`Client::request` 与 `StreamResponse::read_all` 都用了 `read_all_partial` 保住那半截）。响应头到手之前就失败（连不上、DNS、缺 url）时错误里没有响应。判定与字段含义见 `04-errors.md`。
+
+## 进度回调的落点
+
+两个方向各只有一处触发点，都挂在上面那张步骤表的中间：
+
+| 方向 | 触发点 | 时机 |
+|---|---|---|
+| 上传（`on_upload_progress`） | 第 6 步的 `Transport::send` 里 | 请求体按 64 KiB 分块写入连接，每块 `flush` 后回调一次（每跳重定向各报一轮） |
+| 下载（`on_download_progress`） | 第 7 步读全量时（`ResponseBody::read_all*`） | 每读到一块回调一次；`Client::request` 与 `StreamResponse::read_all` 会接上回调，按块读的入口不接 |
+
+两个回调都是 `noraise` 且同步执行，占用请求自己的时间预算；`loaded` / `total` 的确切口径、`total` 为什么会不准、Mock 为什么不触发上传进度，见 `10-progress.md`。
 
 ## URL 拼接规则
 

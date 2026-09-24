@@ -18,7 +18,8 @@ pub using @headers {type Headers}
 /// 字段按合并策略分组，与 `merge` 包里的实现一一对应：
 /// - 只取请求级（axios `valueFromConfig2`）：url / http_method / data
 /// - 请求级优先、否则回退默认（`defaultToConfig2`）：
-///   base_url / timeout / max_redirects / response_encoding / params_serializer
+///   base_url / timeout / max_redirects / response_encoding / params_serializer /
+///   on_upload_progress / on_download_progress
 /// - 深合并（`mergeDeepProperties`）：
 ///   params / auth / proxy / headers / common_headers / method_headers / allow_absolute_urls
 /// - 请求级存在即生效（`mergeDirectKeys`）：validate_status
@@ -27,9 +28,9 @@ pub using @headers {type Headers}
 /// 是保留字，直接用作字段名会触发告警，也会让使用者写记录字面量时踩到。
 /// 构建器仍保留短名 `with_method`，因为参数类型 `Method` 已经说明了语境。
 ///
-/// 因为 `validate_status` 与 `params_serializer` 是函数类型字段，本类型不能
-/// `derive(Debug)` 也不能 `derive(Eq)`，两者都是手写实现（Debug 把函数渲染成
-/// `<fn>`，需要比较配置时请逐字段比较）。
+/// 因为 `validate_status` / `params_serializer` / 两个进度回调都是函数类型字段，
+/// 本类型不能 `derive(Debug)` 也不能 `derive(Eq)`，两者都是手写实现
+/// （Debug 把函数渲染成 `<fn>`，需要比较配置时请逐字段比较）。
 pub(all) struct Config {
   /// 请求地址；相对路径会和 `base_url` 拼接
   url : String?
@@ -79,6 +80,16 @@ pub(all) struct Config {
   /// 与 axios 的差异：只接受函数形式，没有 `{ serialize, encode, indexes }`
   /// 那套对象形式，也没有单独定制某个组件编码器的口子。
   params_serializer : ((Json) -> String)?
+  /// 上传进度回调，对应 axios 的 `onUploadProgress`；`None` 表示不报告进度。
+  ///
+  /// 请求体写入连接时逐块调用，构建器是 `with_on_upload_progress`，
+  /// 触发入口、粒度与 `total` 的口径见 `progress.mbt` 与 `docs/10-progress.md`。
+  on_upload_progress : ProgressCallback?
+  /// 下载进度回调，对应 axios 的 `onDownloadProgress`；`None` 表示不报告进度。
+  ///
+  /// 只由库执行的「读全量」触发（`Client::request` / `StreamResponse::read_all`），
+  /// 构建器是 `with_on_download_progress`。
+  on_download_progress : ProgressCallback?
   auth : Auth?
   /// 代理服务器设置，对应 axios 的 `proxy`；`None` 表示直连。
   ///

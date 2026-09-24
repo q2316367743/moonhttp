@@ -125,7 +125,11 @@ pub async fn Client::request(
   // 5. 把响应体读到 EOF——读全量才有完整的响应体。读取阶段失败
   //    （超时、断连）时响应头早已到手，把状态行、响应头与**读到的部分**
   //    一起挂到错误上，失败现场才不会只剩一个错误码。
-  let (body, failure) = raw.body.read_all_partial()
+  //    配了 `on_download_progress` 时逐块报告：这是「库读全量」的两条路之一
+  //    （另一条是 `StreamResponse::read_all`），按块读的路不报告，见 docs/10-progress.md。
+  //    读取中途失败时进度停在断点——已经报出去的字节数就是现场。
+  let on_progress = merged.on_download_progress
+  let (body, failure) = raw.body.read_all_partial(on_progress?)
   match failure {
     Some(error) =>
       raise transport_error(

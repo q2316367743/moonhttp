@@ -170,6 +170,38 @@ api.request(@moonhttp.Config::new("/other")
 
 三种入口，读法由**调哪个方法**决定：`request` 读全量返回 `Response`，`stream` 不读返回 `StreamResponse`，`sse` 按事件读返回 `SseStream`。调错是编译错误，不需要运行时守卫。
 
+### 上传与下载进度
+
+两个回调字段，对应 axios 的 `onUploadProgress` / `onDownloadProgress`：
+
+```moonbit nocheck
+let client = @moonhttp.default_client()
+let response = client.request(
+  @moonhttp.Config::new("/upload")
+  .with_method(@moonhttp.Method::Post)
+  .with_data_from_form(form)
+  .with_on_upload_progress(fn(event) {
+    match event.progress() {
+      Some(ratio) => println("上传 \{event.loaded}/\{event.total.unwrap_or(0)} (\{(ratio * 100).to_int()}%)")
+      None => println("上传 \{event.loaded} 字节（总长度未知）")
+    }
+  })
+  .with_on_download_progress(fn(event) { println("收到 \{event.loaded} 字节") }),
+)
+```
+
+事件只有两个字段：`loaded`（已传输字节）与 `total`（总字节，`None` 表示长度未知），
+外加一个算比例的 `progress()`（`total` 未知或为 0 时给 `None`）。方向由「哪个回调被调用」表达。
+
+四条要点：
+
+- **上传按 64 KiB 分块写、每块之后报告**，`loaded` 是「已写入连接」的字节——已经交给内核，不代表对端已经收到。`total` 恒等于请求体字节数。
+- **下载只在「库读全量」时报告**：`request` 与 `StreamResponse::read_all` 会逐块回调；按块读的 `read_some` / `read_until` 与 SSE 不介入，那条路由你自己累加。
+- **`total` 可能不准或没有**：chunked 响应没有 `Content-Length`，`total` 就是 `None`；响应被 gzip 压缩时 `total` 是压缩后的长度，`loaded` 可能超过它（`progress()` 不截断）。
+- 回调是**同步执行且不允许抛错**（类型上就是 `noraise`），占用这次请求自己的时间预算——别在回调里做耗时的事。
+
+详细契约（含重定向每跳重置、Mock 为什么不触发上传进度、读失败时进度停在哪）见 [`docs/10-progress.md`](docs/10-progress.md)。
+
 ### URL 与 query 的边界行为
 
 - 绝对地址判定等价于 axios 的 `/^([a-z][a-z\d+\-.]*:)?\/\//i`：`//cdn.example.com/x` 算绝对地址，而 `localhost:8080/x` **不**算（冒号后不是 `//`），会正常和 `base_url` 拼接。
@@ -208,7 +240,8 @@ async fn download(
   let res = api.stream(@moonhttp.Config::new("/big-file"))
   println(res.status)                       // 响应头已到手，body 还没读
   println(res.headers.get("content-type"))
-  // 边到边读，每块自己处理（下载进度就是在这上面按块大小累加）
+  // 边到边读，每块自己处理（这条路上进度自己累加；
+  // 要库替你报进度就用 with_on_download_progress + read_all，见「上传与下载进度」）
   while res.read_some() is Some(chunk) {
     println(chunk.length())
   }
@@ -370,8 +403,7 @@ moonhttp/
 - 拦截器（`interceptors`）、取消（`CancelToken` / `signal`）
 - 代理的 SOCKS 支持、`http_proxy` / `no_proxy` 环境变量与按请求关闭代理的开关（显式 `proxy` 配置已支持，见「代理」）
 - 重定向的 `beforeRedirect` 回调与自定义敏感头名单（`sensitiveHeaders`）：跟随规则固定，见 [`docs/08-redirects.md`](docs/08-redirects.md)
-- 上传进度（`onUploadProgress`）：请求体是一次性字节，不支持流式上传（表单含文件时整块驻留内存）
-- 下载进度回调（`onDownloadProgress`）：没有回调字段，但流式路径下按 `read_some` 每块大小累加即可自己统计
+- **请求体流式上传（`data` 是 Reader / 生成器）**：请求体仍是一次性字节——表单含文件时整块驻留内存，库也不读盘（文件按「字节 + 文件名」传入）。**计划下一期实现**：需要一个挂在连接上的可写流，让调用方一段段喂数据。进度回调不依赖它，已经可用（见「上传与下载进度」）
 - SSE 自动重连：事件里带了 `id` / `retry`（重连所需的全部状态），但没有按 `retry` 间隔自动重订阅、也不自动带 `Last-Event-ID`——重连策略交给上层
 - 请求/响应转换器（`transformRequest` / `transformResponse`）：请求体固定为四种形态（`with_data_from_str` / `with_data_from_json` / `with_data_from_form` / `with_data_from_urlencoded`，见「请求体」），响应体交出去的是原始字节，要文本/对象分别用 `text()` / `json()`（见「响应体怎么读」）
 - `withCredentials` / `xsrfCookieName` / `xsrfHeaderName`（本项目不管理 cookie）
@@ -422,7 +454,7 @@ moon info && moon fmt   # 更新 .mbti 接口文件并格式化
 moon coverage analyze   # 覆盖率
 ```
 
-测试分层：`config` / `headers` / `merge` / `url` / `sse` 五个包是纯逻辑，用同步测试逐条钉住合并语义与 SSE 解析规则；根包与 `transport` 用 `async test` 配合 `MockTransport` 跑完整管线。`src/sse_stream_test.mbt`、`transport/stream_test.mbt` 与 `src/error_test.mbt` 会各起一个本机 server（`127.0.0.1` 随机端口）——分别验证 CRLF 的 SSE 事件能在服务端停顿期间就到达、真实连接的流式读取与单次读取超时、以及「读响应体中途失败时错误里带着已经收到的部分」（内存体读得完，只有真实连接能造出「读到一半」）。同样不需要外网，只有 `src/cmd/main` 会访问真实网络。
+测试分层：`config` / `headers` / `merge` / `url` / `sse` 五个包是纯逻辑，用同步测试逐条钉住合并语义与 SSE 解析规则；根包与 `transport` 用 `async test` 配合 `MockTransport` 跑完整管线。`src/sse_stream_test.mbt`、`transport/stream_test.mbt`、`src/error_test.mbt` 与 `src/progress_test.mbt` 会各起一个本机 server（`127.0.0.1` 随机端口）——分别验证 CRLF 的 SSE 事件能在服务端停顿期间就到达、真实连接的流式读取与单次读取超时、「读响应体中途失败时错误里带着已经收到的部分」（内存体读得完，只有真实连接能造出「读到一半」），以及上传进度按块回调与 chunked 响应的 `total` 未知（内存体的长度总是已知，只有真实连接能造出「长度未知」）。同样不需要外网，只有 `src/cmd/main` 会访问真实网络。
 
 `util` 没有自己的 `_test.mbt`：里面的函数都被根包的黑盒测试从端到端一路覆盖（`src/encoding_test.mbt` 钉四种编码、`src/request_test.mbt` 钉拼请求与错误分档、`src/moonhttp_test.mbt` 钉方法回退），再补一份单元测试只是重复覆盖。
 

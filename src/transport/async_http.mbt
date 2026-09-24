@@ -125,6 +125,73 @@ async fn open_proxy(endpoint : ProxyEndpoint) -> @http.Client {
 }
 
 ///|
+/// 上传进度的分块大小：每写完这么多字节报告一次进度。
+///
+/// 它不是协议要求（请求体本来就是 chunked 编码），只是「进度回调的粒度」：
+/// 太小会让回调次数暴涨、太大则进度条一顿一顿。64 KiB 是常见的折中。
+const UPLOAD_CHUNK_SIZE : Int = 65536
+
+///|
+/// 把请求体写出去；有上传进度回调时按 `UPLOAD_CHUNK_SIZE` 分块写、逐块报告。
+///
+/// 为什么分块不改变线上行为：底层不传 `Content-Length` 时本来就把请求体编码成
+/// `Transfer-Encoding: chunked`，它的发送缓冲只有 1 KiB——也就是说现在的整块
+/// `write` 在底层早就被切成很多个 chunk 了。这里只是换个切法，并对齐
+/// 「报告了 = 已经交给内核」这个口径：每块写完 `flush()` 一次，
+/// 免得进度报完了数据还堆在库的缓冲里。
+///
+/// 报告不保证对端已经收到：`flush` 只把字节交给内核，TCP 缓冲区里还剩多少
+/// 只有对端知道（见 `docs/10-progress.md`）。
+///
+/// 空 body（或 `None`）不触发任何回调——没有字节可报。
+async fn write_body(
+  client : @http.Client,
+  data : Bytes,
+  on_progress : @config.ProgressCallback?,
+) -> Unit {
+  match on_progress {
+    None => {
+      let body : &@io.Data = data
+      client.write(body)
+    }
+    Some(report) => {
+      let total = data.length()
+      let mut sent = 0
+      while sent < total {
+        let mut end = sent + UPLOAD_CHUNK_SIZE
+        if end > total {
+          end = total
+        }
+        let chunk : &@io.Data = data.exact_view(start=sent, end~)
+        client.write(chunk)
+        client.flush()
+        sent = end
+        report({ loaded: sent, total: Some(total), })
+      }
+    }
+  }
+}
+
+///|
+/// 从响应头里取 `Content-Length`，作为下载进度的 `total`。
+///
+/// 取不到（chunked 响应没有这个头、值不是合法整数）就是 `None`：进度事件据此
+/// 表达「长度未知」，而不是编一个 0 出来。注意压缩响应里这个值是**压缩后**的
+/// 长度，而读出来的是解压后的字节，所以 `loaded` 可能超过 `total`
+/// （见 `docs/10-progress.md`）。
+fn content_length(headers : Map[@http.CaseInsensitiveString, String]) -> Int? {
+  let raw = match headers.get(@http.CaseInsensitiveString("Content-Length")) {
+    Some(value) => value
+    None => return None
+  }
+  let parsed : Int? = Some(@string.parse_int(raw.trim())) catch { _ => None }
+  match parsed {
+    Some(length) if length >= 0 => Some(length)
+    _ => None
+  }
+}
+
+///|
 /// 建连、发出请求头与请求体、等回响应头，然后把「还开着的连接」与响应头
 /// 一起交出去。
 ///
@@ -156,10 +223,7 @@ async fn send_head(
     errdefer client.close()
     client.request(to_request_method(request.http_method), path)
     match request.body {
-      Some(bytes) => {
-        let data : &@io.Data = bytes
-        client.write(data)
-      }
+      Some(bytes) => write_body(client, bytes, request.on_upload_progress)
       // 无 body 时什么都不写：底层据此发 Content-Length: 0 或 chunked。
       None => ()
     }
@@ -206,7 +270,12 @@ pub impl Transport for AsyncHttpTransport with fn send(self, request) {
     headers: from_http_headers(response.headers),
     // 响应体还没读：连接的所有权转移给这个流，读到 EOF 或 close() 时关闭。
     // 不在这里读全，是为了让 chunked / SSE 这类协议能边到边读。
-    body: ResponseBody::open(client, request.timeout),
+    // `Content-Length` 一并交出去，它是下载进度的 total（可能没有，见 content_length）。
+    body: ResponseBody::open(
+      client,
+      request.timeout,
+      content_length(response.headers),
+    ),
   }
 }
 

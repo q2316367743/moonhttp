@@ -77,6 +77,8 @@ pub fn merge_config(base : Config, request : Config) -> Config {
 | `max_redirects` | 请求优先/否则默认 | axios 没把它登记进 `mergeConfig` 的表，落到默认的深合并策略，标量上等价于请求优先。内置默认值是 5，请求级的 `0`（不跟随）必须能覆盖掉它，见 `08-redirects.md` |
 | `response_encoding` | 请求优先/否则默认 | 内置默认值是 `Utf8`（axios 的 `responseEncoding: 'utf8'`） |
 | `params_serializer` | 请求优先/否则默认 | 自定义 query 序列化器（axios 的 `paramsSerializer`，登记为 `defaultToConfig2`）。请求级提供即**整体替换**实例默认值，不是深合并——函数没法「合并」；字段说明见 `03-request-pipeline.md` |
+| `on_upload_progress` | 请求优先/否则默认 | 上传进度回调（axios 的 `onUploadProgress`，同为 `defaultToConfig2`）。请求级提供即整体替换实例默认值，不会出现「实例级与请求级的回调都被调用」；字段说明见 `10-progress.md` |
+| `on_download_progress` | 请求优先/否则默认 | 下载进度回调（axios 的 `onDownloadProgress`），与上一条同档、同样整体替换 |
 | `allow_absolute_urls` | 深合并（标量） | 等价于请求优先/否则默认 |
 | `params` | 深合并 | 逐键递归；数组**整体替换** |
 | `auth` | 深合并 | 逐字段 |

@@ -103,6 +103,7 @@ async test "async transport streams a chunked response from a real server" {
       // 这里不设限，所以停顿不会被当成超时。
       timeout: None,
       proxy: None,
+      on_upload_progress: None,
     })
     assert_eq(raw.status, 200)
     assert_eq(raw.body.read_until("\n\n"), Some("data: first"))
@@ -140,6 +141,7 @@ async test "response body read times out after the configured wait" {
       body: None,
       timeout: Some(200),
       proxy: None,
+      on_upload_progress: None,
     })
     assert_eq(raw.status, 200)
     // 第一段已经在路上，能在上限内读到

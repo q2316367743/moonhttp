@@ -164,5 +164,8 @@ pub fn build_prepared_request(config : Config) -> @transport.PreparedRequest? {
     body,
     timeout: config.timeout,
     proxy,
+    // 上传进度回调原样交给传输层：怎么分块、什么时候报告由实现决定
+    // （`AsyncHttpTransport` 按 64 KiB 分块写，见 `docs/10-progress.md`）。
+    on_upload_progress: config.on_upload_progress,
   })
 }
