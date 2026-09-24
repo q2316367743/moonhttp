@@ -38,6 +38,7 @@ pub(all) struct Config {
   max_redirects : Int?
   response_encoding : ResponseEncoding?
   params : Json?
+  params_serializer : ((Json) -> String)?
   auth : Auth?
   proxy : Proxy?
   headers : @headers.Headers?
@@ -68,6 +69,7 @@ pub fn Config::with_max_redirects(Self, Int) -> Self
 pub fn Config::with_method(Self, Method) -> Self
 pub fn Config::with_method_header(Self, Method, StringView, String) -> Self
 pub fn Config::with_params(Self, Json) -> Self
+pub fn Config::with_params_serializer(Self, (Json) -> String) -> Self
 pub fn Config::with_proxy(Self, String, port? : Int, protocol? : ProxyProtocol, username? : String, password? : String) -> Self
 pub fn Config::with_response_encoding(Self, ResponseEncoding) -> Self
 pub fn Config::with_timeout(Self, Int) -> Self

@@ -23,6 +23,9 @@ fn[T] value_from_request(base : T?, request : T?) -> T? {
 /// 策略 2：请求级优先，否则回退默认值（对应 `defaultToConfig2`）。
 ///
 /// 这是最符合直觉的一档：请求里没写的配置项就沿用实例默认值。
+/// 函数字段（`params_serializer`）同样走这一档，所以请求级提供时是**整体替换**：
+/// axios 的 `mergeConfig` 把它们都登记成 `defaultToConfig2`，两个函数不会被串成
+/// 一条链（要叠加就在自己的函数里调另一个）。
 fn[T] prefer_request(base : T?, request : T?) -> T? {
   match request {
     Some(_) => request
@@ -140,7 +143,8 @@ fn merge_method_headers(
 ///
 /// 策略分配与 axios 保持一致：
 /// - 只取请求级：url / http_method / data
-/// - 请求级优先、否则默认：base_url / timeout / max_redirects / response_encoding / allow_absolute_urls
+/// - 请求级优先、否则默认：base_url / timeout / max_redirects / response_encoding /
+///   allow_absolute_urls / params_serializer
 /// - 深合并：params / auth / proxy / headers / common_headers / method_headers
 /// - 存在即生效：validate_status
 ///
@@ -170,6 +174,14 @@ pub fn merge_config(base : Config, request : Config) -> Config {
     allow_absolute_urls: prefer_request(
       base.allow_absolute_urls,
       request.allow_absolute_urls,
+    ),
+    // `params_serializer` 与 `params` 是配套的两个字段，但策略不同：它走策略 2
+    // 而不是深合并——axios 把 `paramsSerializer` 登记成 `defaultToConfig2`，
+    // 所以请求级提供就**整体替换**实例默认值，两个序列化器不会被拼起来
+    // （函数也没法「合并」）。
+    params_serializer: prefer_request(
+      base.params_serializer,
+      request.params_serializer,
     ),
     // 策略 3：深合并
     params: merge_json_option(base.params, request.params),

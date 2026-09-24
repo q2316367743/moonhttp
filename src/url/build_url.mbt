@@ -93,7 +93,8 @@ fn collect_pairs(out : Array[String], key : String, value : Json) -> Unit {
 
 ///|
 /// 把参数序列化成 query string（不含前导 `?`），
-/// 等价于 axios 默认的 `paramsSerializer`。
+/// 等价于 axios 默认的 `paramsSerializer`。`build_url` 的 `serializer` 参数
+/// 可以整体替换这一步（见那里的说明），本函数本身保持默认行为不变。
 ///
 /// 顶层不是对象时返回空串：`params` 在语义上就是「键值对集合」，
 /// 传数组或标量没有对应的合法输出，axios 在这种情况下同样什么都不做。
@@ -119,17 +120,30 @@ pub fn serialize_params(params : Json) -> String {
 ///|
 /// 把 `params` 追加到 `url` 后面，等价于 axios 的 `buildURL`。
 ///
+/// `serializer` 是自定义序列化器（对应 axios `paramsSerializer` 的函数形式）：
+/// 给了它就用它替换 `serialize_params` 那一步，返回值直接被当作 query 文本。
+/// **替换的只有序列化本身**——下面三条拼接规则与默认路径完全一致，
+/// 因为 axios 的 `buildURL` 也是先调 `serialize`、再由自己做拼接与截断。
+///
 /// 三个边界行为与 axios 保持一致：
 /// - URL 里已有 `?` 时用 `&` 续接，否则用 `?`；
 /// - `#fragment` 会被丢弃（axios 先在 `#` 处截断再拼 query），
 ///   所以带 fragment 的地址发出去后不会再带 fragment；
-/// - 没有参数时不留下一个空 `?`，URL 原样返回。
-pub fn build_url(url : String, params : Json?) -> String {
+/// - 序列化结果是空串时不留下一个空 `?`（自定义序列化器返回空串同理），
+///   URL 原样返回。
+pub fn build_url(
+  url : String,
+  params : Json?,
+  serializer? : (Json) -> String,
+) -> String {
   let params = match params {
     None => return url
     Some(params) => params
   }
-  let query = serialize_params(params)
+  let query = match serializer {
+    Some(serializer) => serializer(params)
+    None => serialize_params(params)
+  }
   if query.length() == 0 {
     return url
   }

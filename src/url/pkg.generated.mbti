@@ -4,7 +4,7 @@ package "q2316367743/moonhttp/url"
 // Values
 pub fn build_full_path(String?, String?, Bool?) -> String?
 
-pub fn build_url(String, Json?) -> String
+pub fn build_url(String, Json?, serializer? : (Json) -> String) -> String
 
 pub fn combine_urls(String, String) -> String
 

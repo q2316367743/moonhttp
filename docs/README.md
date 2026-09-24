@@ -8,7 +8,7 @@
 |---|---|---|---|
 | 01 | [架构与分层](01-architecture.md) | 目录结构、七个包的职责与依赖方向、为什么把 async 关在一层、为什么测试文件不能挪出包目录、为什么实现层不能整体搬进子包（`pub using` 再导出不了错误构造子）而纯逻辑可以独立成 `util`、如何新增一个配置字段或一个新包 | 要动手改代码之前 |
 | 02 | [配置合并契约](02-config-merge.md) | axios `mergeConfig` 四种策略在本项目的落法、字段归属表、`Option` 与 `undefined` 的对应、数组替换语义、为什么合并逻辑必须与 `Config` 同包（私有字段与记录字面量的硬约束） | 要改合并行为、或要新增配置字段时 |
-| 03 | [请求管线](03-request-pipeline.md) | 三种入口（`request` / `stream` / `sse`）的分工、八个步骤、URL 拼接与 query 序列化规则、请求体四种形态与自动补头、`Response` 的三种读法（`text` / `bytes` / `json`）与 `response_encoding` 的作用面（为什么没有默认解码、为什么不自动解析 JSON）、状态码校验 | 要改请求行为（URL、头的优先级、body 处理、响应体读取）时 |
+| 03 | [请求管线](03-request-pipeline.md) | 三种入口（`request` / `stream` / `sse`）的分工、八个步骤、URL 拼接与 query 序列化规则（含自定义序列化器 `paramsSerializer` 的替换范围）、请求体四种形态与自动补头、`Response` 的三种读法（`text` / `bytes` / `json`）与 `response_encoding` 的作用面（为什么没有默认解码、为什么不自动解析 JSON）、状态码校验 | 要改请求行为（URL、头的优先级、body 处理、响应体读取）时 |
 | 04 | [错误契约](04-errors.md) | `HttpError` / `ErrorCode` 形状、与 axios 错误码的对应、各类错误的触发点、错误里带什么上下文（完整响应 / 失败前已收到的部分 / `None`） | 要新增错误分类或调整错误信息时 |
 | 05 | [传输层契约](05-transport.md) | `Transport` trait 与 `PreparedRequest` / `RawResponse` 字段含义、`ResponseBody` 响应体流的读语义（含 `read_all_partial` 的半截字节）与超时语义、`AsyncHttpTransport` 的实现注意事项、如何写自定义传输 | 要换 HTTP 实现、加连接池 / 代理 / 上传进度，或要动流式读取时 |
 | 06 | [SSE 事件解析](06-sse.md) | 为什么 `read_until("\n\n")` 切不了 SSE、为什么解析器独立成包、为什么按事件读是独立类型、`SseEvent` / `SseParser` 的公开 API、EventSource 规范逐条落点、`id` / `retry` 的持久状态、跨块安全与 `finish()`、不自动重连的边界 | 要改 SSE 行为、接新的 SSE 服务端，或要加自动重连时 |

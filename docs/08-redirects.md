@@ -51,7 +51,7 @@
 
 三个容易看漏的点：
 
-- **`base_url` 与 `params` 必须清空**：解析出来的已经是绝对地址，query 早就在里面了，留着它们会被 `build_full_path` 再拼一次、被 `build_url` 再追加一次。
+- **`base_url` 与 `params` 必须清空**：解析出来的已经是绝对地址，query 早就在里面了，留着它们会被 `build_full_path` 再拼一次、被 `build_url` 再追加一次。连带效果：自定义的 `params_serializer` 只在**第一跳**被调用（拼请求这一步每跳都跑，但后续跳的 `params` 已经清空，query 早烘进 `url` 里了）。
 - **`params` 不继承**：`Location: /v2/users` 落在基地址上时**不带**原请求的 query——这与 RFC 3986 的解析一致（换路径就换 query），follow-redirects 同样如此。
 - **`http_method` 会被写死成解析后的方法**：原始配置里方法可能是 `None`（表示「按默认 GET」），下一跳的配置里它总是 `Some(...)`，这样交出去的配置自己就能说明「这一跳是怎么发的」。
 

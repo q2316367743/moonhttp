@@ -11,7 +11,7 @@
 | `src/config/form.mbt` | `FormData` / `FormValue` / `FormFile` 与 `multipart/form-data` 编码（含 boundary、转义） |
 | `src/config/render.mbt` | `Config::to_string` 里 `data` 一栏按形态渲染 |
 | `src/util/request.mbt` | `build_prepared_request`：取序列化结果，按建议补 `Content-Type` |
-| `src/url/build_url.mbt` | `serialize_params`：urlencoded 请求体与 URL query 共用的序列化器 |
+| `src/url/build_url.mbt` | `serialize_params`：urlencoded 请求体与 URL query 共用的序列化器（query 那一侧可被 `params_serializer` 替换，请求体这一侧不可） |
 | `src/config/body_test.mbt` | 字节级用例（四种形态 + multipart 布局） |
 | `src/request_test.mbt` | 端到端用例（真正写到连接上的头与 body） |
 
@@ -139,6 +139,10 @@ Config::new("/x").with_params({ "a": 1 })              // /x?a=1
 Config::new("/x").with_data_from_urlencoded({ "a": 1 }) // 正文 a=1
 ```
 
+**请求体这一侧不会被 `with_params_serializer` 改掉**：那个自定义序列化器只管 URL 的
+query（见 `03-request-pipeline.md` 的「自定义序列化器」）。axios 里也是分开的——`buildURL`
+用 `paramsSerializer`，请求体走的是另一个内部选项 `formSerializer`。
+
 继承来的规则（细节与用例见 `03-request-pipeline.md` 的 query 序列化表与 `url/url_test.mbt`）：
 
 | 输入 | 正文片段 |
@@ -156,7 +160,8 @@ Config::new("/x").with_data_from_urlencoded({ "a": 1 }) // 正文 a=1
 - **列表/嵌套走括号约定**：`tags[]=a` 这类是 Rails / PHP / Express 的惯例，方括号会被
   百分号编码。后端要 `tags=a&tags=b` 这种**重复平键**、或者要逗号连接时，
   内置规则不适用，用 `with_data_from_str` 自己拼 + 自己设 `Content-Type`
-  （也就是老办法，这条路不会消失）；
+  （也就是老办法，这条路不会消失）。query 那一侧有 `with_params_serializer` 可以换约定，
+  请求体这一侧没有对应的口子；
 - **文件不行**：urlencoded 里没有承载二进制的位置，带文件请用 `with_data_from_form`。
 
 ## `Content-Type` 是「补」不是「设」

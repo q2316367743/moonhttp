@@ -190,6 +190,43 @@ test "build_url appends query string" {
 }
 
 ///|
+/// 自定义序列化器（axios 的 `paramsSerializer`）替换的只有「params → query 文本」
+/// 这一步：返回值被原样使用，拼接、丢 fragment、空串不留分隔符的规则一个不变。
+test "build_url uses the custom serializer verbatim" {
+  // 内置规则会把数组写成 `tags%5B%5D=a&tags%5B%5D=b`，自定义的平键写法原样通过
+  let flat = fn(_params) { "tags=a&tags=b" }
+  assert_eq(
+    @url.build_url("/foo", Some({ "tags": ["a", "b"] }), serializer=flat),
+    "/foo?tags=a&tags=b",
+  )
+  // 已有的 `?` 仍用 `&` 续接，fragment 仍被丢弃——这些是 buildURL 自己的事
+  assert_eq(
+    @url.build_url("/foo?x=1#sec", Some({ "a": 1 }), serializer=flat),
+    "/foo?x=1&tags=a&tags=b",
+  )
+  // 返回空串等价于「没有 query」：URL 原样返回，不留下空 `?`
+  assert_eq(
+    @url.build_url("/foo", Some({ "a": 1 }), serializer=fn(_params) { "" }),
+    "/foo",
+  )
+  // 没有 params 时序列化器根本不会被调用（URL 原样返回）
+  assert_eq(@url.build_url("/foo", None, serializer=flat), "/foo")
+}
+
+///|
+/// 自定义序列化器拿到的是 `params` 本身，没有被内置规则预先加工过。
+test "custom serializer receives the raw params" {
+  // 直接把拿到的值 stringify：输出里是未编码的 JSON 文本，说明内置的键值编码
+  // 没有先跑过一遍（内置路径下这里会得到 `tags%5B%5D=a&tags%5B%5D=b`）。
+  assert_eq(
+    @url.build_url("/foo", Some({ "tags": ["a", "b"] }), serializer=fn(params) {
+      params.stringify()
+    }),
+    "/foo?{\"tags\":[\"a\",\"b\"]}",
+  )
+}
+
+///|
 /// 冒号在开头（空 scheme）或 scheme 后不是 `//` 时都不算绝对地址。
 test "is_absolute_url rejects empty and malformed schemes" {
   assert_false(@url.is_absolute_url(":foo"))

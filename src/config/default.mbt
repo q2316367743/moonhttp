@@ -1,9 +1,10 @@
 ///|
 /// 内置默认值，对应 axios 的 `lib/defaults/index.js`。
 ///
-/// 只包含本项目真正会读的字段：`withCredentials` / `proxy` / `transformRequest`
-/// 等暂不支持的能力不在这里出现（见 README 的「暂不支持」清单），
-/// 免得出现「配置了但完全不生效」的字段。
+/// 只包含本项目真正会读的字段：`withCredentials` / `onUploadProgress` /
+/// `transformRequest` 等暂不支持的能力不在这里出现（见 README 的「暂不支持」清单），
+/// 免得出现「配置了但完全不生效」的字段。反过来，支持但**没有默认值**的字段
+/// （`params_serializer` 这类钩子）也不出现：`None` 本身就是「用内置行为」。
 ///
 /// `Client::new()` 用它作为最底层，用户在 `create(config)` 里传的配置合并在其之上。
 pub fn defaults() -> Config {

@@ -13,7 +13,7 @@
 | `src/client.mbt` | 与门面类型接壤的那两个函数：`prepare_request`（把纯函数的 `None` 翻译成 `InvalidUrl` 错误）、`build_response` |
 | `src/http_error.mbt` | 错误类型 `ErrorCode` / `ErrorInfo` / `HttpError` 与所有抛错点：`transport_error`、状态码分档 `status_error_code` / `status_error` / `validate_response` |
 | `src/url/combine.mbt` | 绝对地址判定、`combine_urls`、`build_full_path` |
-| `src/url/build_url.mbt` | `params` → query string |
+| `src/url/build_url.mbt` | `params` → query string（自定义 `paramsSerializer` 的接入点） |
 | `src/url/encode.mbt` | 单个 URL 组件的百分号编码 |
 | `src/facade.mbt` | 门面层：`Response`（读全量）/ `StreamResponse`（原始流）/ `SseStream`（事件流）/ `HttpError` 与各子包类型的再导出 |
 
@@ -25,7 +25,7 @@
 
 1. **合并配置**：`merge_config(实例默认值, 请求配置)`（契约见 `02-config-merge.md`）。
 2. **确定方法**：合并结果 → 实例默认值 → `Method::Get`。
-3. **拼完整地址**：`build_full_path(base_url, url, allow_absolute_urls)`，再 `build_url(url, params)` 追加 query。
+3. **拼完整地址**：`build_full_path(base_url, url, allow_absolute_urls)`，再 `build_url(url, params)` 追加 query（配置里有 `params_serializer` 时用自定义序列化器替换「params → query 文本」那一步，见下）。
 4. **拍平头**：`flatten_headers(common_headers, method_headers, headers, method)`，优先级 `common` < 按方法 < 请求级平铺。
 5. **取请求体**：`Config::serialize_body()` 给出字节与**建议**的 `Content-Type`（序列化在 `config` 包内完成，见 `07-request-body.md`），有 `auth` 则补 `Authorization`。补默认头一律用 `Headers::set_if_absent`，用户显式设置的同名头永远优先。有 `proxy` 时，`Proxy-Authorization` 在这一步从目标头里取走、改落在 CONNECT 请求上（代理凭据不该发给源站，见 `09-proxy.md`）。
 6. **发送**：交给 `Transport::send`（契约见 `05-transport.md`）。配了代理时先与代理建立 CONNECT 隧道，再在隧道里发出请求（见 `09-proxy.md`）。失败映射见 `04-errors.md`。收到 3xx 且带 `Location` 时**自动跟随重定向**（最多 `max_redirects` 跳，默认 5），一直跟到最后一跳——这段循环在 `Client::send_following_redirects`，规则见 `08-redirects.md`。
@@ -100,6 +100,41 @@
 ### 追加位置
 
 URL 里已有 `?` 时用 `&` 续接，否则用 `?`；`#fragment` 会被**丢弃**（axios 先截断再拼 query，本项目保持一致）。没有参数时 URL 原样返回，不留下空的 `?`。
+
+### 自定义序列化器（`paramsSerializer`）
+
+内置约定不合用时（后端要 `tags=a&tags=b` 这种重复平键、逗号连接、或者别的编码表），
+可以用 `with_params_serializer` 换掉序列化那一步：
+
+```moonbit
+Config::new("/search")
+  .with_params({ "tags": ["a", "b"] })
+  .with_params_serializer(fn(_params) {
+    // 拿到的就是 params 本身，返回值就是 query 文本（不含前导 `?`）
+    "tags=a&tags=b"
+  })
+// → /search?tags=a&tags=b（内置规则会写成 tags%5B%5D=a&tags%5B%5D=b）
+```
+
+契约与 axios 的对应关系：
+
+- 替换的**只有**「`params` → query 文本」这一步，对应 axios `buildURL` 里的
+  `options.serialize` / 老的函数形式 `paramsSerializer(params)`；
+- 拼接仍由 `build_url` 负责：已有 `?` 用 `&`、丢弃 `#fragment`、
+  **返回空串**时不留下空 `?`（用例在 `src/url/url_test.mbt`）；
+- `params` 为 `None` 时序列化器根本不会被调用；
+- 合并走策略 2（请求级提供即整体替换实例默认值，见 `02-config-merge.md`）；
+- **只管 query**：`with_data_from_urlencoded` 的请求体仍走内置序列化器
+  （axios 里请求体走的是另一个内部选项 `formSerializer`，见 `07-request-body.md`）；
+- 落点在 `build_prepared_request`，所以三个入口（`request` / `stream` / `sse`）都生效；
+  重定向时只有**第一跳**会调用它（后续跳的 `params` 已清空，见 `08-redirects.md`）。
+
+与 axios 的差异：只接受函数形式，没有 `{ serialize, encode, indexes }` 那套对象形式，
+也没有单独定制某个组件（键、值、方括号）编码器的口子。
+
+判断「要不要用」的一条经验：约定只差「key 怎么拼」时用它；连百分号编码表都要换、
+或者要发的是二进制/多部分正文时，那已经超出 query 的范围，另想办法（改 `url` 手里的
+完整地址，或自己拼 `with_data_from_str`）。
 
 ## body 序列化与自动补头
 

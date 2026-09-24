@@ -23,7 +23,7 @@ fn push_field(
 /// 紧凑渲染，只打印被显式提供的字段。
 ///
 /// `None` 表示「未提供」，把它打印出来只是噪音，也会让合并前后的对比失真。
-/// `validate_status` 是函数，渲染成 `<fn>`。
+/// 函数字段（`validate_status` / `params_serializer`）渲染成 `<fn>`。
 pub fn Config::to_string(self : Config) -> String {
   let buf = StringBuilder()
   let mut first = true
@@ -57,6 +57,12 @@ pub fn Config::to_string(self : Config) -> String {
   }
   match self.params {
     Some(params) => first = push_field(buf, first, "params", params.stringify())
+    None => ()
+  }
+  // 函数字段与 validate_status 一样只渲染成 `<fn>`：函数没有可打印的内容，
+  // 打印闭包的内部结构也无从对照。
+  match self.params_serializer {
+    Some(_) => first = push_field(buf, first, "params_serializer", "<fn>")
     None => ()
   }
   // 请求体按形态渲染：JSON 给序列化后的文本、urlencoded 给编码后的键值对

@@ -58,6 +58,7 @@ import {
 | `base_url` / `timeout` / `response_encoding` | `defaultToConfig2` | 请求级优先，缺省则回退默认值 |
 | `max_redirects` | `defaultToConfig2`（axios 没登记，走默认的深合并） | 请求级优先，缺省则回退默认值（内置 **5**）；`0` 表示不跟随 |
 | `params` | `mergeDeepProperties` | 按 JSON 对象逐键递归合并；数组**整体替换而非拼接** |
+| `params_serializer` | `defaultToConfig2` | 自定义 query 序列化器；请求级提供即**整体替换**实例默认值（函数没法「合并」） |
 | `auth` | `mergeDeepProperties` | 逐字段合并：默认值给 `username`、请求给 `password`，两者都在 |
 | `proxy` | `mergeDeepProperties` | 逐字段合并（内层 `auth` 同样逐字段）：默认值给代理地址、请求级补凭据，两者都在 |
 | `headers` | caseless 深合并 | 头名大小写不敏感；请求级同名头覆盖默认值，默认值独有的头保留 |
@@ -78,7 +79,7 @@ import {
 
 1. `merge_config(实例默认值, 请求配置)`
 2. 确定请求方法（缺省回退到实例默认值，再回退到 `GET`）
-3. `base_url` + `url` 拼成完整地址，再追加序列化后的 query
+3. `base_url` + `url` 拼成完整地址，再追加序列化后的 query（序列化规则可用 `with_params_serializer` 换掉，见下文「URL 与 query 的边界行为」）
 4. 三层头拍平成一份（`common` < 按方法 < 请求级平铺）
 5. 取请求体：`Config::serialize_body()` 给出字节与**建议**的 `Content-Type`（四种形态见下文「请求体」）；有 `auth` 则补 `Authorization`；有代理则把 `Proxy-Authorization` 改成落在 CONNECT 上（见「代理」）
 6. 交给传输层发送（`timeout > 0` 时套超时，含与代理的 CONNECT 握手）；3xx 且带 `Location` 时**自动跟随重定向**，最多 `max_redirects` 跳
@@ -101,7 +102,7 @@ import {
 | `with_data_from_str(s)` | `s` 的 UTF-8 字节，一个字节不改 | 不补 |
 | `with_data_from_json(j)` | `j.stringify()` 后的 JSON 文本 | `application/json` |
 | `with_data_from_form(form)` | `multipart/form-data` 正文 | `multipart/form-data; boundary=...` |
-| `with_data_from_urlencoded(j)` | `a=1&b=2` 形式（与 `params` 同一套编码） | `application/x-www-form-urlencoded` |
+| `with_data_from_urlencoded(j)` | `a=1&b=2` 形式（与 `params` 默认规则的同一套编码） | `application/x-www-form-urlencoded` |
 
 字符串那一路最容易踩：**「是不是 JSON」由你选的方法决定，不由值的类型决定**——
 `with_data_from_json("hi")` 发出去的是带引号的 `"hi"`（合法 JSON 字面量并补头），
@@ -113,7 +114,7 @@ api.request(@moonhttp.Config::new("/users")
   .with_method(@moonhttp.Method::Post)
   .with_data_from_json({ "name": "moon" }))
 
-// 普通表单（a=1&b=2）：与 params 用的是同一个序列化器
+// 普通表单（a=1&b=2）：与 params 用的是同一个**内置**序列化器（不随 with_params_serializer 变）
 api.request(@moonhttp.Config::new("/login")
   .with_method(@moonhttp.Method::Post)
   .with_data_from_urlencoded({ "user": "alice", "password": "s3cret" }))
@@ -180,6 +181,18 @@ api.request(@moonhttp.Config::new("/other")
   - 空格写成 `+`；保留下来的字符集是 `A-Za-z0-9-_.*`，`~` 反而要转义成 `%7E`（对齐 `encodeURIComponent` + axios 的额外转义表）
   - URL 里已有 `?` 时用 `&` 续接；`#fragment` 会被丢弃（axios 也是先截断再拼 query）
 - 数字参数优先使用 `Json::Number` 里保存的原始字面量（`repr`）：`@json.parse` 对超出 `Double` 精度的大整数会填上它，从而避免 `123456789012345678901234567890` 被写成 `1.2345678901234568e+29`；没有 `repr` 时退回 `Double` 的最短表示（`1.0` 写成 `1`）。
+- **自定义序列化器**：内置约定不合用时（例如后端要 `tags=a&tags=b` 这种重复平键），用 `with_params_serializer(fn(_params) { ... })` 整体替换序列化那一步——拿到的就是 `params` 本身，返回值就是 query 文本。`?` / `&` 续接、丢弃 `#fragment`、返回空串时不留下空 `?` 这些拼接规则不变，且它**只管 URL 的 query**（`with_data_from_urlencoded` 的请求体仍走内置规则）。
+
+```moonbit nocheck
+// 实例级设置一次，该实例的所有请求都按这个约定拼 query
+let api = @moonhttp.create(
+  @moonhttp.Config::default()
+    .with_base_url("https://api.example.com")
+    .with_params_serializer(fn(_params) { "tags=a&tags=b" }),
+)
+api.request(@moonhttp.Config::new("/search").with_params({ "tags": ["a", "b"] }))
+// → GET https://api.example.com/search?tags=a&tags=b
+```
 
 ## 流式响应与 SSE
 
@@ -371,6 +384,7 @@ moonhttp/
 - `Config` 的 `method` 字段在本项目里叫 `http_method`（保留字原因，见上文）。
 - `Config` 的请求体是**私有字段**（构造配置只能用构建器，见「请求体」）；`multipart/form-data` 的 `name` / `filename` 按 WHATWG 规则转义（`"` → `%22`、CR / LF → `%0D` / `%0A`），axios 依赖的 node `form-data` 不做转义。
 - `application/x-www-form-urlencoded` 只提供一种约定（与 `params` 共用的那套：数组/嵌套走 `tags%5B%5D=a` 括号形式、空格写成 `+`）。axios 会按 `URLSearchParams` / 对象 / `formSerializer` 选项给出多种输出；本项目要换约定就自己拼字符串 + 自己设头。
+- `paramsSerializer` 只接受**函数**形式（axios 还有 `{ serialize, encode, indexes }` 对象形式与逐组件的编码器），且只作用于 URL 的 query：请求体（`with_data_from_urlencoded`）仍走内置序列化器——axios 里请求体走的是另一个内部选项 `formSerializer`，两者本就分开。
 - `Headers` 内部以小写保存头名（写入时的原始拼写会被记住并用于输出），但不支持 axios 用 `false` 表示「禁止被同名默认值覆盖」的哨兵值。
 - 响应体没有默认解码的字段：`Response` 只保存原始字节，`text()`（按 `response_encoding` 解码）、`bytes()`（精确字节）、`json()`（解码后 `@json.parse`）由你显式选。axios 的 `res.data` 是 `any`，靠 `responseType` / `transformResponse` / `forcedJSONParsing` 自动解析；本项目不做那一套，`json()` 不看 `Content-Type`、失败抛 `@json.ParseError`。二进制内容用 `bytes()`（或改走 `Client::stream`）。
 - 没有可变的全局默认值。axios 的全局 `axios.defaults` 在本项目里对应 `@config.defaults()`（固定的内置默认值）；要定制请用 `create(...)` 或 `client.create(...)` 派生。

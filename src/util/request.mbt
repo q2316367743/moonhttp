@@ -76,7 +76,8 @@ fn proxy_endpoint(
 /// 把已经合并好的配置加工成一份可以直接发送的请求（纯数据变换，没有 IO）。
 ///
 /// 这里承担四件事，顺序与 axios 一致：
-/// 1. `base_url` + `url` 拼成完整地址，再追加序列化后的 query；
+/// 1. `base_url` + `url` 拼成完整地址，再追加序列化后的 query
+///    （`params_serializer` 有值时用自定义序列化器，见下）；
 /// 2. 把三层头（common < 按方法 < 请求级平铺）拍平成一份；
 /// 3. 取请求体字节（`Config::serialize_body`，序列化在 config 包内完成），
 ///    并按需补 `Content-Type` 与 `Authorization`；
@@ -112,7 +113,14 @@ pub fn build_prepared_request(config : Config) -> @transport.PreparedRequest? {
     None => return None
   }
   // query 在地址拼接完成之后追加，避免参数被当成路径的一部分。
-  let url = @url.build_url(url, config.params)
+  //
+  // 自定义序列化器（`params_serializer`）替换的只是「params → query 文本」这一步：
+  // `?`/`&` 续接与丢 fragment 仍由 `build_url` 负责，与 axios 把 `serialize`
+  // 放在 `buildURL` 里一致。
+  let url = match config.params_serializer {
+    Some(serializer) => @url.build_url(url, config.params, serializer~)
+    None => @url.build_url(url, config.params)
+  }
   let meth = config.http_method.unwrap_or(Method::Get)
   let mut headers = @config.flatten_headers(
     config.common_headers,

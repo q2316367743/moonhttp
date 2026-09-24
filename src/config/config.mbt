@@ -18,7 +18,7 @@ pub using @headers {type Headers}
 /// 字段按合并策略分组，与 `merge` 包里的实现一一对应：
 /// - 只取请求级（axios `valueFromConfig2`）：url / http_method / data
 /// - 请求级优先、否则回退默认（`defaultToConfig2`）：
-///   base_url / timeout / max_redirects / response_encoding
+///   base_url / timeout / max_redirects / response_encoding / params_serializer
 /// - 深合并（`mergeDeepProperties`）：
 ///   params / auth / proxy / headers / common_headers / method_headers / allow_absolute_urls
 /// - 请求级存在即生效（`mergeDirectKeys`）：validate_status
@@ -27,9 +27,9 @@ pub using @headers {type Headers}
 /// 是保留字，直接用作字段名会触发告警，也会让使用者写记录字面量时踩到。
 /// 构建器仍保留短名 `with_method`，因为参数类型 `Method` 已经说明了语境。
 ///
-/// 因为 `validate_status` 是函数类型字段，本类型不能 `derive(Debug)` 也不能
-/// `derive(Eq)`，两者都是手写实现（Debug 把函数渲染成 `<fn>`，
-/// 需要比较配置时请逐字段比较）。
+/// 因为 `validate_status` 与 `params_serializer` 是函数类型字段，本类型不能
+/// `derive(Debug)` 也不能 `derive(Eq)`，两者都是手写实现（Debug 把函数渲染成
+/// `<fn>`，需要比较配置时请逐字段比较）。
 pub(all) struct Config {
   /// 请求地址；相对路径会和 `base_url` 拼接
   url : String?
@@ -64,6 +64,21 @@ pub(all) struct Config {
   response_encoding : ResponseEncoding?
   /// 查询参数，序列化后追加到 URL（不覆盖 URL 里已有的 query）
   params : Json?
+  /// 自定义 query 序列化器，对应 axios 的 `paramsSerializer`（函数形式）；
+  /// `None` 表示用内置规则（`@url.serialize_params`，逐条规则见
+  /// `docs/03-request-pipeline.md` 的「query 序列化」）。
+  ///
+  /// 传入的函数**整体替换**「`params` → query 文本」这一步：它拿到的就是 `params`
+  /// 本身，返回的字符串就是 query 本体（不带前导 `?`）。拼接规则仍由 `build_url`
+  /// 负责，与 axios 的 `buildURL` 一致——URL 里已有 `?` 时用 `&` 续接、丢弃
+  /// `#fragment`、返回空串时不留下空分隔符。
+  ///
+  /// **只管 URL 的 query**：`with_data_from_urlencoded` 的请求体不走它
+  /// （axios 里请求体走的是另一个内部选项 `formSerializer`，两者本就分开）。
+  ///
+  /// 与 axios 的差异：只接受函数形式，没有 `{ serialize, encode, indexes }`
+  /// 那套对象形式，也没有单独定制某个组件编码器的口子。
+  params_serializer : ((Json) -> String)?
   auth : Auth?
   /// 代理服务器设置，对应 axios 的 `proxy`；`None` 表示直连。
   ///
