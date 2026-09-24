@@ -35,6 +35,7 @@ pub(all) struct Config {
   http_method : Method?
   base_url : String?
   timeout : Int?
+  max_redirects : Int?
   response_encoding : ResponseEncoding?
   params : Json?
   auth : Auth?
@@ -47,6 +48,7 @@ pub(all) struct Config {
 } derive(Default)
 pub fn Config::default() -> Self
 pub fn Config::new(String) -> Self
+pub fn Config::next_redirect(Self, String, Int, String?) -> Self?
 pub fn Config::output(Self, &Logger) -> Unit
 pub fn Config::serialize_body(Self) -> SerializedBody
 pub fn Config::to_repr(Self) -> @debug.Repr
@@ -61,6 +63,7 @@ pub fn Config::with_data_from_str(Self, String) -> Self
 pub fn Config::with_data_from_urlencoded(Self, Json) -> Self
 pub fn Config::with_header(Self, StringView, String) -> Self
 pub fn Config::with_headers(Self, @headers.Headers) -> Self
+pub fn Config::with_max_redirects(Self, Int) -> Self
 pub fn Config::with_method(Self, Method) -> Self
 pub fn Config::with_method_header(Self, Method, StringView, String) -> Self
 pub fn Config::with_params(Self, Json) -> Self

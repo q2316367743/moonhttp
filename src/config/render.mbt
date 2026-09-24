@@ -45,6 +45,11 @@ pub fn Config::to_string(self : Config) -> String {
       first = push_field(buf, first, "timeout", timeout.to_string())
     None => ()
   }
+  match self.max_redirects {
+    Some(max_redirects) =>
+      first = push_field(buf, first, "max_redirects", max_redirects.to_string())
+    None => ()
+  }
   match self.response_encoding {
     Some(encoding) =>
       first = push_field(buf, first, "response_encoding", encoding.to_string())

@@ -142,6 +142,8 @@ test "error code rendering covers every category" {
     (@moonhttp.ErrorCode::Timeout, "ECONNABORTED"),
     (@moonhttp.ErrorCode::InvalidUrl, "ERR_INVALID_URL"),
     (@moonhttp.ErrorCode::NotSupported, "ERR_NOT_SUPPORT"),
+    // 重定向上限用的是 axios 透传的 follow-redirects 错误码
+    (@moonhttp.ErrorCode::TooManyRedirects, "ERR_FR_TOO_MANY_REDIRECTS"),
   ]
   for entry in cases {
     assert_eq(entry.0.to_string(), entry.1)

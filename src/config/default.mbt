@@ -1,8 +1,8 @@
 ///|
 /// 内置默认值，对应 axios 的 `lib/defaults/index.js`。
 ///
-/// 只包含本项目真正会读的字段：`withCredentials` / `proxy` / `transformRequest` /
-/// `maxRedirects` 等暂不支持的能力不在这里出现（见 README 的「暂不支持」清单），
+/// 只包含本项目真正会读的字段：`withCredentials` / `proxy` / `transformRequest`
+/// 等暂不支持的能力不在这里出现（见 README 的「暂不支持」清单），
 /// 免得出现「配置了但完全不生效」的字段。
 ///
 /// `Client::new()` 用它作为最底层，用户在 `create(config)` 里传的配置合并在其之上。
@@ -15,6 +15,9 @@ pub fn defaults() -> Config {
     ..Config::default(),
     // axios 的 timeout 默认值是 0，含义是「不超时」。
     timeout: Some(0),
+    // axios 请求配置文档里写的 maxRedirects 默认值就是 5，这里跟上；
+    // （它底层用的 follow-redirects 自己兜底是 21，文档与实现并不一致，取文档口径。）
+    max_redirects: Some(5),
     // axios 的 responseEncoding 默认值是 'utf8'，这里显式放进默认值，
     // 让 client.defaults() 里看得见「响应体按什么解码」。
     response_encoding: Some(ResponseEncoding::Utf8),

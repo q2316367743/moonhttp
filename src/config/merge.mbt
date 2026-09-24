@@ -119,13 +119,15 @@ fn merge_method_headers(
 ///
 /// 策略分配与 axios 保持一致：
 /// - 只取请求级：url / http_method / data
-/// - 请求级优先、否则默认：base_url / timeout / response_encoding / allow_absolute_urls
+/// - 请求级优先、否则默认：base_url / timeout / max_redirects / response_encoding / allow_absolute_urls
 /// - 深合并：params / auth / headers / common_headers / method_headers
 /// - 存在即生效：validate_status
 ///
 /// 注意 `allow_absolute_urls` 这类标量在 axios 里走的是默认策略
 /// `mergeDeepProperties`，而「深合并」作用在标量上退化成「请求级有就用请求级」，
-/// 结果与「请求级优先、否则默认」相同。
+/// 结果与「请求级优先、否则默认」相同。`max_redirects` 也一样：它不在 axios 的
+/// `mergeMap` 里，落到默认策略，标量上等价于请求级优先（所以实例默认值里的
+/// `max_redirects` 会被请求级的值覆盖，包括用 0 关掉跟随）。
 ///
 /// `None` 一律表示「未提供」，永远是回退而不是覆盖；
 /// 数组（例如 `params` 里的数组）是整体替换而不是拼接，
@@ -139,6 +141,7 @@ pub fn merge_config(base : Config, request : Config) -> Config {
     // 策略 2：请求级优先，否则回退默认值
     base_url: prefer_request(base.base_url, request.base_url),
     timeout: prefer_request(base.timeout, request.timeout),
+    max_redirects: prefer_request(base.max_redirects, request.max_redirects),
     response_encoding: prefer_request(
       base.response_encoding,
       request.response_encoding,

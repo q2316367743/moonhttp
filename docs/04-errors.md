@@ -4,7 +4,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `src/http_error.mbt` | 错误契约的全部：`ErrorCode` / `ErrorInfo` / `HttpError` 与访问器，加上**所有**构造它们的地方（`make_error`、`transport_error`、`status_error` / `validate_response`） |
+| `src/http_error.mbt` | 错误契约的全部：`ErrorCode` / `ErrorInfo` / `HttpError` 与访问器，加上**所有**构造它们的地方（`make_error`、`transport_error`、`status_error` / `validate_response`、`too_many_redirects_error`） |
 | `src/util/response.mbt` | `status_allowed`：状态码是否被配置放行的**纯**判定（不构造错误，所以能待在根包外） |
 | `src/transport/stream.mbt` | `ResponseBody::read_all_partial`：读到一半失败时交出已读到的字节 |
 | `src/error_test.mbt` | 错误路径的端到端用例（含本机 server 的「中途超时」用例） |
@@ -40,9 +40,12 @@ pub(all) suberror HttpError {
 | `Network` | `ERR_NETWORK` | `TransportError::Network`（连接失败、DNS、TLS；**读响应体中途**连接被重置也算） |
 | `Timeout` | `ECONNABORTED` | `TransportError::Timeout`（含读响应体中途的单次读取超时） |
 | `InvalidUrl` | `ERR_INVALID_URL` | `build_prepared_request`（`src/util/request.mbt`）返回 `None`：既没有 `url` 也没有可用的 `base_url`；由根包 `prepare_request` 翻译成 `HttpError` |
-| `NotSupported` | `ERR_NOT_SUPPORT` | `TransportError::Unsupported`（传输层做不到，例如相对地址）；`Client::sse`：响应头没有声明 `text/event-stream`（拿到的不是 SSE 却要按事件读，见 `06-sse.md`）——报错前会先关掉连接 |
+| `NotSupported` | `ERR_NOT_SUPPORT` | `TransportError::Unsupported`（传输层做不到，例如相对地址、重定向到非 http(s) 协议）；`Client::sse`：响应头没有声明 `text/event-stream`（拿到的不是 SSE 却要按事件读，见 `06-sse.md`）——报错前会先关掉连接 |
+| `TooManyRedirects` | `ERR_FR_TOO_MANY_REDIRECTS` | `Client::send_following_redirects`：重定向次数超过 `max_redirects`（默认 5，见 `08-redirects.md`） |
 
 关于超时用的是 `ECONNABORTED` 而不是 `ETIMEDOUT`：axios 默认就是前者，只有打开 `transitional.clarifyTimeoutError` 时才换成后者。这里保持默认行为。
+
+重定向上限用的是 `ERR_FR_TOO_MANY_REDIRECTS`：axios 直接透传 follow-redirects 的这个错误码（`AxiosError` 里也定义了这个常量），跟着用同一个字符串，调用方按码分支时不必区分是哪一家的实现。与 axios 的一点不同：这个错误里**有**响应（最后一个 3xx），见下表。
 
 状态码分档是复刻 axios 的 `[ERR_BAD_REQUEST, ERR_BAD_RESPONSE][floor(status / 100) - 4]`：按百位取档，4xx 一档、其它一档。写成显式判断是为了让源码可读。
 
@@ -56,6 +59,7 @@ pub(all) suberror HttpError {
 |---|---|
 | 状态码没通过 `validate_status` | **完整响应**：三个入口都会先把错误体读完，字节原样放在 `Response` 里（要文本按 `response_encoding` 调 `text()`，要原样调 `bytes()`），错误体内容不额外解释 |
 | 传输层失败发生在**响应头到手之后**（读响应体时超时、断连） | 已经收到的部分：状态行与响应头一定在，响应体字节是**失败前读到的部分**（`bytes()` / `text()` 拿到的可能只有半截） |
+| 重定向次数超过 `max_redirects` | **最后那个 3xx 响应**（用 `read_all_partial` 读，正文可能是半截）：`Location` 与状态码都在里面，重定向成环时这是最直接的现场。axios 的同一个错误里没有响应 |
 | 本地失败（缺 url、传输层不支持）与响应头到手之前的传输层失败（连不上、DNS 失败） | `None`——那时确实没有响应 |
 
 | 字段 | 什么时候有值 |
@@ -91,8 +95,8 @@ ErrorCode { Timeout | Network | NotSupported | ... }                 ← src/
 
 ## 新增一个错误分类的步骤
 
-1. `src/facade.mbt` 的 `ErrorCode` 加构造子（并补 `to_string` 映射与 axios 错误码字符串）；
-2. 在触发点调用 `make_error(message, code, config, response)` 后 `raise`——`response` 传**当时已经收到的响应**，没有就传 `None`；
+1. `src/http_error.mbt` 的 `ErrorCode` 加构造子（并补 `to_string` 映射与 axios 错误码字符串）；
+2. 在触发点调用 `make_error(message, code, config, response)` 后 `raise`——`response` 传**当时已经收到的响应**，没有就传 `None`；同一份文案只有一个落点时，按 `status_error` / `too_many_redirects_error` 的样子抽一个专用构造器；
 3. 若是传输层能提前识别的失败，考虑先在 `TransportError` 里加一类；
-4. `src/error_test.mbt` 补用例；
+4. `src/error_test.mbt` 补用例（错误码字符串的契约表在 `error code rendering covers every category`）；
 5. 更新本文件与 `docs/README.md` 的索引说明（如果涉及读法变化）。

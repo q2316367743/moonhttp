@@ -13,6 +13,7 @@
 | 05 | [传输层契约](05-transport.md) | `Transport` trait 与 `PreparedRequest` / `RawResponse` 字段含义、`ResponseBody` 响应体流的读语义（含 `read_all_partial` 的半截字节）与超时语义、`AsyncHttpTransport` 的实现注意事项、如何写自定义传输 | 要换 HTTP 实现、加连接池 / 代理 / 上传进度，或要动流式读取时 |
 | 06 | [SSE 事件解析](06-sse.md) | 为什么 `read_until("\n\n")` 切不了 SSE、为什么解析器独立成包、为什么按事件读是独立类型、`SseEvent` / `SseParser` 的公开 API、EventSource 规范逐条落点、`id` / `retry` 的持久状态、跨块安全与 `finish()`、不自动重连的边界 | 要改 SSE 行为、接新的 SSE 服务端，或要加自动重连时 |
 | 07 | [请求体](07-request-body.md) | 为什么 `Config.data` 是私有字段（`Json::String` 的歧义、Content-Type 必须与 body 配套）、四个 `with_data_from_*` 的线上格式、`multipart/form-data` 的逐字节布局与 `name` / `filename` 转义、文件怎么给（只收字节、库不读盘）、`urlencoded` 的括号约定与它复用的 query 序列化器、与 axios 的差异 | 要改请求体行为、加新的 body 形态、或接文件上传时 |
+| 08 | [自动重定向](08-redirects.md) | `max_redirects` 的默认值 5 与「3xx + Location」判定、`<= 0` 不跟随、下一跳的地址 / 方法 / body / `content-*` / 凭据 / `Host` 改写规则（凭据在同 host 升级与子域上的存留）、为什么规则在 `config` 包而循环在根包、超限错误带最后那个 3xx 响应、与 axios 的六处差异、每跳各一个 `timeout` | 要改重定向行为、排查重定向成环、或要动 `max_redirects` 时 |
 
 ## 改动时的同步清单
 
@@ -29,3 +30,4 @@
 9. **改 SSE 解析**：解析规则在 `src/sse/`（独立包，同步测试在 `src/sse/sse_test.mbt`），接到 HTTP 上的部分在 `src/facade.mbt`（`SseStream`）/ `src/client.mbt`（`Client::sse`）。先补用例再改代码；CRLF 家族（裸 CR 收尾、CR 跨块）最容易改坏。同步 `06-sse.md`。
 10. **想给 `StreamResponse` 加「按事件读」的方法**：不要这样做。它是下载用的原始字节流，把二进制喂给事件解析器只会解出无意义的东西；SSE 有独立的 `SseStream` 与 `Client::sse`，理由见 `06-sse.md`。
 11. **改请求体（结构 / 编码 / 新增形态）**：形态与序列化在 `src/config/body.mbt`，表单的 multipart 编码在 `src/config/form.mbt`，urlencoded 复用的是 `src/url/build_url.mbt` 的 `serialize_params`，落头在 `src/util/request.mbt`（只做 `set_if_absent`），渲染在 `src/config/render.mbt`。字节级用例在 `src/config/body_test.mbt`，端到端在 `src/request_test.mbt`。**别动的前提**：`data` 是私有字段（构造配置只能走构建器，包外的记录字面量/展开会被编译器拒绝）、`Json::String` 的语义由构建器决定（`with_data_from_json("hi")` 发带引号的 `"hi"`）、urlencoded 与 query 共用同一个序列化器（改它等于同时改两处线上行为）、用户显式设的 `Content-Type` 永远优先。同步 `07-request-body.md` 与 `03-request-pipeline.md` 的表格。
+12. **改重定向行为（跟随判定 / 下一跳改写 / 上限）**：规则集中在 `src/config/redirect.mbt`（纯逻辑，用例在 `src/config/redirect_test.mbt`，先加用例再改代码），计数与发送在 `src/client.mbt` 的 `Client::send_following_redirects`，默认上限在 `src/config/default.mbt` 与那里的 `unwrap_or(5)` 兜底（两处一起改；`src/redirect_test.mbt` 的「默认 5 跳」用例有意钉死默认值）。**别动的前提**：3xx 的正文不能当响应交出去（跟随前必须 `close()`，否则漏连接）、相对 `Location` 只按 RFC 3986 解析且结果不含 fragment、`base_url` / `params` 在下一跳必须清空、超限错误要挂上最后那个 3xx 响应。同步 `08-redirects.md` 与 `03-request-pipeline.md` 的状态码校验一节。

@@ -73,6 +73,7 @@ pub fn merge_config(base : Config, request : Config) -> Config {
 | `data` | 只取请求级 | 默认值里的 body 同样不生效。字段是私有的，设置只能经 `with_data_from_str` / `with_data_from_json` / `with_data_from_form` / `with_data_from_urlencoded`（见 `07-request-body.md`） |
 | `base_url` | 请求优先/否则默认 | |
 | `timeout` | 请求优先/否则默认 | |
+| `max_redirects` | 请求优先/否则默认 | axios 没把它登记进 `mergeConfig` 的表，落到默认的深合并策略，标量上等价于请求优先。内置默认值是 5，请求级的 `0`（不跟随）必须能覆盖掉它，见 `08-redirects.md` |
 | `response_encoding` | 请求优先/否则默认 | 内置默认值是 `Utf8`（axios 的 `responseEncoding: 'utf8'`） |
 | `allow_absolute_urls` | 深合并（标量） | 等价于请求优先/否则默认 |
 | `params` | 深合并 | 逐键递归；数组**整体替换** |

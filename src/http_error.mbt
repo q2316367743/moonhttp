@@ -36,6 +36,8 @@ pub(all) enum ErrorCode {
   InvalidUrl
   /// 本地就失败了：配置有误，或用了传输层不支持的能力
   NotSupported
+  /// 重定向次数超过 `max_redirects`：多半是重定向成环，或上限设得太小
+  TooManyRedirects
 } derive(Eq, Debug)
 
 ///|
@@ -49,6 +51,10 @@ pub extend ErrorCode with @debug.Debug::{to_repr}
 ///
 /// 超时用的是 `ECONNABORTED` 而不是 `ETIMEDOUT`：axios 默认就是前者，
 /// 只有在打开 `transitional.clarifyTimeoutError` 时才会改用后者。
+///
+/// 重定向上限用 `ERR_FR_TOO_MANY_REDIRECTS`：这是 axios 透传的
+/// follow-redirects 错误码（axios 自己也定义了 `AxiosError.ERR_FR_TOO_MANY_REDIRECTS`
+/// 这个常量），跟着用同一个字符串，调用方按码分支时不必区分是哪一家的实现。
 pub fn ErrorCode::to_string(self : ErrorCode) -> String {
   match self {
     BadRequest => "ERR_BAD_REQUEST"
@@ -57,6 +63,7 @@ pub fn ErrorCode::to_string(self : ErrorCode) -> String {
     Timeout => "ECONNABORTED"
     InvalidUrl => "ERR_INVALID_URL"
     NotSupported => "ERR_NOT_SUPPORT"
+    TooManyRedirects => "ERR_FR_TOO_MANY_REDIRECTS"
   }
 }
 
@@ -175,7 +182,7 @@ fn make_error(
 }
 
 // ---------------------------------------------------------------------------
-// 4. 抛错点 —— 传输层失败与状态码失败都从这里出去
+// 4. 抛错点 —— 传输层失败、状态码失败与重定向上限都从这里出去
 //    （「状态码是否放行」这个判定本身是纯函数，在 util/response.mbt）
 // ---------------------------------------------------------------------------
 
@@ -246,6 +253,28 @@ fn status_error(
     status_error_code(status),
     config,
     Some(response),
+  )
+}
+
+///|
+/// 重定向次数超过上限时的统一错误（`Client::request` 的重定向循环里抛）。
+///
+/// `response` 是**最后那个 3xx 响应**：读到它时说明重定向又来了一个，
+/// 只是预算已经用完。按本项目「失败时带上已经收到的响应」的规则
+/// （见 docs/README.md 的同步清单第 8 条）把它挂上——跟到第几跳、
+/// 对面给的 `Location` 是什么，正是排查重定向成环最需要的信息。
+/// 这一点与 axios 不同：axios 的这个错误里没有响应（follow-redirects
+/// 在跟随下一跳前就把 3xx 响应 destroy 掉了），差异见 docs/08-redirects.md。
+fn too_many_redirects_error(
+  max_redirects : Int,
+  config : Config,
+  response : Response?,
+) -> HttpError {
+  make_error(
+    "重定向次数超过上限：max_redirects = " + max_redirects.to_string(),
+    ErrorCode::TooManyRedirects,
+    config,
+    response,
   )
 }
 

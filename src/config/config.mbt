@@ -18,7 +18,7 @@ pub using @headers {type Headers}
 /// 字段按合并策略分组，与 `merge` 包里的实现一一对应：
 /// - 只取请求级（axios `valueFromConfig2`）：url / http_method / data
 /// - 请求级优先、否则回退默认（`defaultToConfig2`）：
-///   base_url / timeout / response_encoding
+///   base_url / timeout / max_redirects / response_encoding
 /// - 深合并（`mergeDeepProperties`）：
 ///   params / auth / headers / common_headers / method_headers / allow_absolute_urls
 /// - 请求级存在即生效（`mergeDirectKeys`）：validate_status
@@ -51,6 +51,13 @@ pub(all) struct Config {
   /// `request` 下是这条请求的时限；`stream` 下是**每次读取**的等待上限，
   /// 所以 SSE 这类「长时间没有数据是正常的」长连应保持不超时。
   timeout : Int?
+  /// 最多跟随几次重定向，对应 axios 的 `maxRedirects`；默认 5。
+  ///
+  /// `0` 或负数表示不跟随：3xx 原样交出去，由 `validate_status` 判定成败。
+  /// 跟随规则（哪些状态码跟、下一跳的方法 / body / 凭据怎么变）见 redirect.mbt。
+  ///
+  /// 每一跳各自受 `timeout` 约束，所以整条链的最坏耗时是「上限 × timeout」。
+  max_redirects : Int?
   /// 响应体字节怎么解码成文本（`Response::text()` / `Response::json()` 用它）。
   /// 缺省（或未设置时）按 UTF-8 解码，非法字节用替换字符；
   /// 只在 `Client::request` 路径上生效。
@@ -125,6 +132,15 @@ pub fn Config::with_base_url(self : Config, base_url : String) -> Config {
 /// 设置超时（毫秒）。传 `0` 表示不限时。
 pub fn Config::with_timeout(self : Config, timeout : Int) -> Config {
   { ..self, timeout: Some(timeout), }
+}
+
+///|
+/// 设置最多跟随几次重定向。
+///
+/// 传 `0` 表示不跟随（3xx 直接交给 `validate_status` 判定，默认规则下会判成失败）；
+/// `1` 表示只跟一跳。上限按「跳数」计，超过就抛 `ErrorCode::TooManyRedirects`。
+pub fn Config::with_max_redirects(self : Config, max_redirects : Int) -> Config {
+  { ..self, max_redirects: Some(max_redirects), }
 }
 
 ///|

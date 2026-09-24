@@ -174,6 +174,28 @@ test "allow_absolute_urls prefers the request value" {
 }
 
 ///|
+/// `max_redirects` 与 `allow_absolute_urls` 同档：axios 没把它登记进 `mergeMap`，
+/// 于是落到默认的深合并策略，标量上等于「请求级有就用请求级」——
+/// 所以实例默认值里的 5 能被请求级覆盖，包括用 0 把跟随关掉。
+test "max_redirects prefers the request value" {
+  let base = @config.defaults()
+  assert_eq(
+    @config.merge_config(base, @config.Config::default()).max_redirects,
+    Some(5),
+  )
+  // 实例默认值可以被请求级改大改小
+  assert_eq(
+    @config.merge_config(base, @config.Config::default().with_max_redirects(1)).max_redirects,
+    Some(1),
+  )
+  // 0 是「不跟随」，必须能覆盖掉默认的 5（哨兵值最容易被误当「未提供」）
+  assert_eq(
+    @config.merge_config(base, @config.Config::default().with_max_redirects(0)).max_redirects,
+    Some(0),
+  )
+}
+
+///|
 /// 合并结果不与输入共享可变状态：改合并结果不应影响请求级配置。
 test "merge result does not alias the inputs" {
   let base = @config.Config::default().with_header("Accept", "application/json")

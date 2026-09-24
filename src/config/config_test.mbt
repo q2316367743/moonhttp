@@ -97,6 +97,8 @@ test "with_method_header keeps per-method buckets separate" {
 test "builtin defaults mirror axios" {
   let config = @config.defaults()
   assert_eq(config.timeout, Some(0))
+  // axios 请求配置文档里的 maxRedirects 默认值是 5
+  assert_eq(config.max_redirects, Some(5))
   // axios 的 responseEncoding 默认值是 'utf8'，这里显式落在默认值里
   assert_eq(config.response_encoding, Some(@config.ResponseEncoding::Utf8))
   assert_eq(config.allow_absolute_urls, Some(true))

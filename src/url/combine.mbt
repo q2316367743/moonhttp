@@ -3,18 +3,24 @@
 /// `/^([a-z][a-z\d+\-.]*:)?\/\//i`：可选的 scheme（字母开头，其后为字母/数字/`+`/`-`/`.`）
 /// 之后紧跟 `//`。
 ///
-/// 两点容易踩坑：
+/// 三点容易踩坑：
 /// - scheme 部分是可选的，所以 `//cdn.example.com/x` 这种「协议相对地址」
 ///   也算绝对地址，这与 axios 的注释一致；
 /// - `localhost:8080/x` 不是绝对地址：它虽然含冒号，但 `:` 后面不是 `//`，
-///   所以会正常地和 `base_url` 拼接。
+///   所以会正常地和 `base_url` 拼接；
+/// - 协议相对地址必须先判 `//` 前缀：`//cdn.example.com:8080/x` 里也有冒号，
+///   若先按冒号切 scheme 会把 `//cdn.example.com` 当成 scheme 而误判成相对地址
+///   （axios 的正则里 scheme 可选，端口不影响判定）。
 pub fn is_absolute_url(url : StringView) -> Bool {
+  if url.has_prefix("//") {
+    return true
+  }
   match url.find(":") {
     Some(colon) => {
       let scheme = url[:colon]
       is_valid_scheme(scheme) && url[colon + 1:].has_prefix("//")
     }
-    None => url.has_prefix("//")
+    None => false
   }
 }
 

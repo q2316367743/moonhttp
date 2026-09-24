@@ -1,8 +1,8 @@
 # moonhttp
 
-axios 风格的 MoonBit HTTP 客户端。当前实现聚焦三件事：**创建实例**、**通用 `request`**、**配置合并**；并在此基础上提供**流式响应与 SSE**（`Client::stream` 交原始字节流，`Client::sse` 交解析好的事件流）。
+axios 风格的 MoonBit HTTP 客户端。当前实现聚焦三件事：**创建实例**、**通用 `request`**、**配置合并**；并在此基础上提供**自动跟随重定向**（`max_redirects`，默认 5 跳）与**流式响应 / SSE**（`Client::stream` 交原始字节流，`Client::sse` 交解析好的事件流）。
 
-设计上刻意留出扩展点（可替换的传输层、`instance.create` 派生），但暂不实现拦截器、取消、重定向等 axios 高级特性——详见文末「暂不支持」。
+设计上刻意留出扩展点（可替换的传输层、`instance.create` 派生），但暂不实现拦截器、取消等 axios 高级特性——详见文末「暂不支持」。
 
 ```moonbit nocheck
 ///|
@@ -56,6 +56,7 @@ import {
 |---|---|---|
 | `url` / `http_method` / `data` | `valueFromConfig2` | **只取请求级**。默认值里的同名字段被丢弃，即使请求没提供也不回退 |
 | `base_url` / `timeout` / `response_encoding` | `defaultToConfig2` | 请求级优先，缺省则回退默认值 |
+| `max_redirects` | `defaultToConfig2`（axios 没登记，走默认的深合并） | 请求级优先，缺省则回退默认值（内置 **5**）；`0` 表示不跟随 |
 | `params` | `mergeDeepProperties` | 按 JSON 对象逐键递归合并；数组**整体替换而非拼接** |
 | `auth` | `mergeDeepProperties` | 逐字段合并：默认值给 `username`、请求给 `password`，两者都在 |
 | `headers` | caseless 深合并 | 头名大小写不敏感；请求级同名头覆盖默认值，默认值独有的头保留 |
@@ -79,10 +80,13 @@ import {
 3. `base_url` + `url` 拼成完整地址，再追加序列化后的 query
 4. 三层头拍平成一份（`common` < 按方法 < 请求级平铺）
 5. 取请求体：`Config::serialize_body()` 给出字节与**建议**的 `Content-Type`（四种形态见下文「请求体」）；有 `auth` 则补 `Authorization`
-6. 交给传输层发送（`timeout > 0` 时套超时），并把响应体读到 EOF
-7. 用 `validate_status` 校验状态码，失败则抛 `HttpError`
+6. 交给传输层发送（`timeout > 0` 时套超时）；3xx 且带 `Location` 时**自动跟随重定向**，最多 `max_redirects` 跳
+7. 把响应体读到 EOF
+8. 用 `validate_status` 校验状态码，失败则抛 `HttpError`
 
-第 3～7 步的实现分别在 [`src/url/`](src/url/)、[`src/util/`](src/util/) 与 [`src/client.mbt`](src/client.mbt) 里：拼地址/头/body 与判定是纯函数（`util`），把它们拼成 `Response`、翻译错误是根包与门面类型接壤的那一层。纯函数那部分可以脱离网络单独测试。第 6 步里「读全量」是 `request` 的选择，不需要完整响应体时改用 [`Client::stream`](#流式响应与-sse) 或 [`Client::sse`](#流式响应与-sse)；响应体到手之后怎么读，由你在 `Response` 上选 `text()` / `bytes()` / `json()`（见下文「响应体怎么读」）。
+第 3～8 步的实现分别在 [`src/url/`](src/url/)、[`src/util/`](src/util/) 与 [`src/client.mbt`](src/client.mbt) 里：拼地址/头/body 与判定是纯函数（`util`），把它们拼成 `Response`、翻译错误是根包与门面类型接壤的那一层。纯函数那部分可以脱离网络单独测试。第 6 步的重定向跟随规则（哪些状态码跟、下一跳的方法 / body / 凭据怎么变）见 [`docs/08-redirects.md`](docs/08-redirects.md)；第 7 步里「读全量」是 `request` 的选择，不需要完整响应体时改用 [`Client::stream`](#流式响应与-sse) 或 [`Client::sse`](#流式响应与-sse)；响应体到手之后怎么读，由你在 `Response` 上选 `text()` / `bytes()` / `json()`（见下文「响应体怎么读」）。
+
+**重定向默认跟随**：`max_redirects` 缺省是 5（axios 请求配置文档里的默认值，每实例 / 每请求都能改），`Client::request`、`Client::stream`、`Client::sse` 三个入口都跟。跟到超限抛 `TooManyRedirects`（错误里带着最后那个 3xx 响应）；把上限设成 `0` 就完全不跟随，3xx 原样落到状态码校验手里（默认规则判失败，响应在错误上可读）。跨 host 跟随时会丢掉 `Authorization` / `Cookie` 之类的凭据。
 
 失败时抛出的 `HttpError` 会带上**已经收到的响应**：响应头到手之后才可能开始读响应体，所以读取阶段的任何失败（超时、断连）都不等于「什么都没收到」——状态行、响应头与失败前读到的部分正文都会挂在错误上，见[错误处理](#错误处理)。
 
@@ -292,7 +296,8 @@ try {
 | `Network` | `ERR_NETWORK` | 连接失败、DNS 解析失败、TLS 握手失败；读响应体中途连接被重置 |
 | `Timeout` | `ECONNABORTED` | 超过 `timeout`（axios 默认也用 `ECONNABORTED`），含读响应体中途的等待超时 |
 | `InvalidUrl` | `ERR_INVALID_URL` | 既没有 `url` 也没有可用的 `base_url` |
-| `NotSupported` | `ERR_NOT_SUPPORT` | 传输层无法完成该请求；`sse` 拿到的响应不是事件流 |
+| `NotSupported` | `ERR_NOT_SUPPORT` | 传输层无法完成该请求（例如重定向到非 http(s) 协议）；`sse` 拿到的响应不是事件流 |
+| `TooManyRedirects` | `ERR_FR_TOO_MANY_REDIRECTS` | 重定向次数超过 `max_redirects`（默认 5）；错误里带着最后那个 3xx 响应 |
 
 ## 包结构
 
@@ -303,10 +308,10 @@ moonhttp/
 └── src/                     业务代码全部在 src/ 下（根目录只放模块元数据与文档）
     ├── (根包)               门面 + 编排：Client / create / request / stream / sse
     │                        / Response / StreamResponse / SseStream / HttpError
-    ├── config/              配置形状、Method、内置默认值、with_* 构建器、合并契约、请求体序列化
+    ├── config/              配置形状、Method、内置默认值、with_* 构建器、合并契约、请求体序列化、重定向的下一跳规则
     ├── headers/             大小写不敏感的 Headers
     ├── sse/                 SSE 事件解析（纯逻辑：吃字节、吐事件）
-    ├── url/                 绝对地址判定、拼接、params 序列化
+    ├── url/                 绝对地址判定、拼接、params 序列化、Location 的相对解析
     ├── util/                纯函数层：拼请求、解码、Content-Type 与状态码判定
     ├── transport/           Transport trait + AsyncHttpTransport + MockTransport
     └── cmd/main/            可运行示例
@@ -328,7 +333,8 @@ moonhttp/
 
 - `get` / `post` / `put` / `delete` / `head` / `options` / `patch` 等快捷方法（都是 `request` 的薄封装，见「后续扩展」）
 - 拦截器（`interceptors`）、取消（`CancelToken` / `signal`）
-- 自动跟随重定向（`maxRedirects`）、代理（`proxy`）
+- 代理（`proxy`）
+- 重定向的 `beforeRedirect` 回调与自定义敏感头名单（`sensitiveHeaders`）：跟随规则固定，见 [`docs/08-redirects.md`](docs/08-redirects.md)
 - 上传进度（`onUploadProgress`）：请求体是一次性字节，不支持流式上传（表单含文件时整块驻留内存）
 - 下载进度回调（`onDownloadProgress`）：没有回调字段，但流式路径下按 `read_some` 每块大小累加即可自己统计
 - SSE 自动重连：事件里带了 `id` / `retry`（重连所需的全部状态），但没有按 `retry` 间隔自动重订阅、也不自动带 `Last-Event-ID`——重连策略交给上层
@@ -346,6 +352,7 @@ moonhttp/
 - `Headers` 内部以小写保存头名（写入时的原始拼写会被记住并用于输出），但不支持 axios 用 `false` 表示「禁止被同名默认值覆盖」的哨兵值。
 - 响应体没有默认解码的字段：`Response` 只保存原始字节，`text()`（按 `response_encoding` 解码）、`bytes()`（精确字节）、`json()`（解码后 `@json.parse`）由你显式选。axios 的 `res.data` 是 `any`，靠 `responseType` / `transformResponse` / `forcedJSONParsing` 自动解析；本项目不做那一套，`json()` 不看 `Content-Type`、失败抛 `@json.ParseError`。二进制内容用 `bytes()`（或改走 `Client::stream`）。
 - 没有可变的全局默认值。axios 的全局 `axios.defaults` 在本项目里对应 `@config.defaults()`（固定的内置默认值）；要定制请用 `create(...)` 或 `client.create(...)` 派生。
+- 重定向（`maxRedirects`）默认 5 跳（axios 请求配置文档的默认值；它底层 follow-redirects 自己兜底是 21，文档与实现并不一致，本项目取文档口径）。四处与 axios 不同：超限错误的 `code` 同名但**带最后那个 3xx 响应**（axios 的错误里没有响应）；`response.config` 是**最后一跳**的配置（axios 是最初的配置，最终地址只在 `response.request` 上）；`timeout` 是**每一跳各算一份**（axios 是整条链一个计时器）；负数上限按「不跟随」处理。完整规则与差异表见 [`docs/08-redirects.md`](docs/08-redirects.md)。
 
 ### 后续扩展
 

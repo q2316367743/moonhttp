@@ -74,6 +74,11 @@ pub fn declares_event_stream(headers : Headers) -> Bool {
 /// - 内置默认值是 `200 <= status < 300`，只认 2xx，
 ///   所以 3xx 也算失败——这与 axios 一致（它不把重定向当成功）。
 ///
+/// 注意判定发生在**自动跟随重定向之后**（跟随在 `client.mbt` 的
+/// `Client::send_following_redirects` 里，见 docs/08-redirects.md），
+/// 所以走到这里的 3xx 只有两种来源：`max_redirects <= 0` 关掉了跟随，
+/// 或者 3xx 没有可用的 `Location`。
+///
 /// 流式路径（`Client::stream`）复用这个判定：那时响应体还没读，
 /// 不能先造出 `Response` 再校验，所以判定本身必须是纯的。
 pub fn status_allowed(status : Int, config : Config) -> Bool {

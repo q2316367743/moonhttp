@@ -28,11 +28,11 @@
 3. **拼完整地址**：`build_full_path(base_url, url, allow_absolute_urls)`，再 `build_url(url, params)` 追加 query。
 4. **拍平头**：`flatten_headers(common_headers, method_headers, headers, method)`，优先级 `common` < 按方法 < 请求级平铺。
 5. **取请求体**：`Config::serialize_body()` 给出字节与**建议**的 `Content-Type`（序列化在 `config` 包内完成，见 `07-request-body.md`），有 `auth` 则补 `Authorization`。补默认头一律用 `Headers::set_if_absent`，用户显式设置的同名头永远优先。
-6. **发送**：交给 `Transport::send`（契约见 `05-transport.md`）。失败映射见 `04-errors.md`。
+6. **发送**：交给 `Transport::send`（契约见 `05-transport.md`）。失败映射见 `04-errors.md`。收到 3xx 且带 `Location` 时**自动跟随重定向**（最多 `max_redirects` 跳，默认 5），一直跟到最后一跳——这段循环在 `Client::send_following_redirects`，规则见 `08-redirects.md`。
 7. **读出响应体**：把响应体读到 EOF，字节原样放进 `Response`（解码不在这里，见下）。
 8. **校验状态码**：`validate_status` 不通过则抛 `HttpError`。
 
-第 1–5 步是「拼出一份能发出去的请求」，与读不读响应体无关。第 6 步起有三种**读法**，各有自己的入口与返回类型：
+第 1–5 步是「拼出一份能发出去的请求」，与读不读响应体无关。第 6 步包含自动跟随重定向（`request` 与两个流式入口共用同一段循环，所以上行地址、方法与头在跟随后的形态完全一致）；第 6 步起有三种**读法**，各有自己的入口与返回类型：
 
 | 入口 | 第 6 步之后 | 返回 | 适用 |
 |---|---|---|---|
@@ -55,7 +55,7 @@
 等价于 axios 的 `/^([a-z][a-z\d+\-.]*:)?\/\//i`：
 
 - `https://a.com/x`、`http://a.com` → 绝对；
-- `//cdn.example.com/x` → **算绝对地址**（scheme 部分可选，这是 axios 正则的真实行为）；
+- `//cdn.example.com/x`、`//cdn.example.com:8080/x` → **算绝对地址**（scheme 部分可选，这是 axios 正则的真实行为；端口那个冒号属于 authority，不改变判定）；
 - `localhost:8080/x` → **不算**（冒号后不是 `//`），会正常和 `base_url` 拼接；
 - `/users`、`users`、`./users` → 不算。
 
@@ -158,5 +158,7 @@ urlencoded 的括号约定）见 `07-request-body.md`。
 - `validate_status` 为 `None` → 一律放行（axios 里 `!validateStatus` 的效果）；
 - 内置默认值是 `200 <= status < 300`，**3xx 也算失败**（axios 不把重定向当成功）；
 - 失败时按 axios 的分档给错误码：4xx → `BadRequest`，其余（含 5xx）→ `BadResponse`。
+
+3xx 只在**没有被自动跟随**时才会走到这里，两种情况：`max_redirects <= 0`（显式关掉跟随），或 3xx 没有可用的 `Location`（缺失、空白，或解析不出绝对地址）。那时默认规则把它判成 `BadResponse`，响应（含 `Location`）挂在错误上；要自己处理重定向就用 `with_validate_status(...)` 放行 3xx。跟随规则与上限见 `08-redirects.md`。
 
 校验失败抛出的错误里带着完整响应，调用方可以读服务端返回的错误详情。

@@ -8,6 +8,8 @@ test "is_absolute_url recognises schemes" {
   assert_true(@url.is_absolute_url("HTTPS://example.com"))
   // 协议相对地址：axios 的正则里 scheme 可选，所以这也算绝对地址
   assert_true(@url.is_absolute_url("//cdn.example.com/lib.js"))
+  // 带端口的协议相对地址同样是绝对地址（那个冒号属于端口，不属于 scheme）
+  assert_true(@url.is_absolute_url("//cdn.example.com:8080/lib.js"))
 }
 
 ///|

@@ -12,7 +12,13 @@ pub fn encode_component(StringView) -> String
 
 pub fn is_absolute_url(StringView) -> Bool
 
+pub fn resolve_url(String, String) -> String?
+
 pub fn serialize_params(Json) -> String
+
+pub fn url_authority(String) -> String?
+
+pub fn url_scheme(String) -> String?
 
 // Errors
 

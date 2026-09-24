@@ -82,9 +82,15 @@ pub fn Client::defaults(self : Client) -> Config {
 /// 1. 合并配置（实例默认值在下、本次请求配置在上）；
 /// 2. 确定请求方法；
 /// 3. 拼接完整地址并追加 query、拍平头、序列化 body；
-/// 4. 交给传输层发送；
+/// 4. 交给传输层发送，需要时自动跟随重定向（最多 `max_redirects` 跳）；
 /// 5. 把响应体读到 EOF（读全量才有完整的响应体）；
 /// 6. 校验状态码。
+///
+/// 重定向默认跟随：`max_redirects` 缺省是 5（axios 请求配置文档里的默认值），
+/// 3xx 且带 `Location` 时自动跟过去，下一跳的地址 / 方法 / body / 凭据怎么变
+/// 见 `@config.Config::next_redirect`（规则对齐 follow-redirects）。
+/// 跟到超限抛 `ErrorCode::TooManyRedirects`；把上限设成 0 则完全不跟随，
+/// 3xx 原样落到状态码校验手里。
 ///
 /// 与 axios 的一处刻意差异：这里**不解析 JSON、也不预先解码**。响应体以原始
 /// 字节交出去，读法由调用方选：`Response::text()`（按 `response_encoding` 解码）、
@@ -113,12 +119,9 @@ pub async fn Client::request(
   let merged = merged.with_method(
     @util.resolve_method(merged.http_method, self.defaults.http_method),
   )
-  // 3. 地址、头、body
-  let prepared = prepare_request(merged)
-  // 4. 发送：这一步失败说明响应头还没到手，错误里没有响应可挂。
-  let raw = self.transport.send(prepared) catch {
-    error => raise transport_error(error, merged, None)
-  }
+  // 3、4. 拼地址 / 头 / body 并发送，中间需要跟随重定向时自动跟。
+  //    拿回来的是**最后一跳**的响应与产出它的配置。
+  let (raw, merged) = self.send_following_redirects(merged)
   // 5. 把响应体读到 EOF——读全量才有完整的响应体。读取阶段失败
   //    （超时、断连）时响应头早已到手，把状态行、响应头与**读到的部分**
   //    一起挂到错误上，失败现场才不会只剩一个错误码。
@@ -148,7 +151,10 @@ pub async fn Client::request(
 
 ///|
 /// 两个流式入口（`stream` / `sse`）共用的前半段：
-/// 合并配置 → 定方法 → 拼地址与头 → 发送 → 校验状态码。
+/// 合并配置 → 定方法 → 拼地址与头 → 发送（含自动跟随重定向）→ 校验状态码。
+///
+/// 重定向的处理与 `request` 完全一致（同一段循环，连上限与错误都一样）：
+/// 跟到 3xx 的最后一跳为止，交出去的 `config` 也是**最后一跳**的配置。
 ///
 /// 状态码校验规则与 `request` 完全一致（默认只放行 2xx）。校验不通过时
 /// 会把错误响应体读全（错误响应通常很短）再抛 `HttpError`——错误里仍然
@@ -166,10 +172,7 @@ async fn Client::open_stream(
   let merged = merged.with_method(
     @util.resolve_method(merged.http_method, self.defaults.http_method),
   )
-  let prepared = prepare_request(merged)
-  let raw = self.transport.send(prepared) catch {
-    error => raise transport_error(error, merged, None)
-  }
+  let (raw, merged) = self.send_following_redirects(merged)
   if !@util.status_allowed(raw.status, merged) {
     // 错误体也要读全；读到一半失败（超时、断连）时把已读到的部分挂到
     // 错误上——那部分通常正是服务端写下的原因，比一个光秃秃的超时有用。
@@ -282,7 +285,7 @@ pub fn default_client() -> Client {
 }
 // ---------------------------------------------------------------------------
 // 2. 接壤层 —— 把 util 的纯函数结果拼成对外类型与对外错误
-//    （错误类型与传输层/状态码的抛错点在 http_error.mbt）
+//    以及「发送 + 跟随重定向」那段编排（错误类型与抛错点在 http_error.mbt）
 // ---------------------------------------------------------------------------
 
 ///|
@@ -305,6 +308,88 @@ fn prepare_request(
         None,
       )
   }
+}
+
+///|
+/// 发送一次请求，需要时自动跟随重定向；返回**最后一跳**的原始响应与产出它的配置。
+///
+/// 分工：跟不跟、下一跳长什么样是纯逻辑（`@config.Config::next_redirect`，
+/// 规则对齐 follow-redirects）；这里只做那层做不到的三件事：
+/// 1. **计数与上限**：最多跟 `max_redirects` 跳，第 `max_redirects + 1` 个
+///    重定向就抛 `TooManyRedirects`；
+/// 2. **释放连接**：跟随之前先关掉 3xx 的响应体——那段正文不要了，留着不读
+///    会漏一条没人管的连接（等价 follow-redirects 的 `response.destroy()`）；
+/// 3. **每跳的错误现场**：传输失败时用**这一跳**的配置翻译错误，
+///    与单跳时的规则一致。
+///
+/// `max_redirects <= 0` 时完全不跟随：3xx 原样返回，由状态码校验判定成败
+/// ——与 axios 的 `maxRedirects: 0` 一致（那种配置下它连 follow-redirects 都不进）。
+///
+/// 上限未设置时按 5 兜底：内置默认值里本来就有它，正常路径上合并结果总是 `Some`；
+/// 这里的兜底是留给「绕过 `defaults()` 直接用 util 层」的调用方的，
+/// 数值取 axios 请求配置文档里的默认值 5。
+///
+/// 与 axios 的一处有意不同：每一跳各自受 `timeout` 约束（与既有的「建连到响应头
+/// 整体一个时限、响应体每次读取一个时限」口径一致），所以整条链的最坏耗时是
+/// 「上限 × timeout」；axios 是整条链共用一个计时器。
+async fn Client::send_following_redirects(
+  self : Client,
+  merged : Config,
+) -> (@transport.RawResponse, Config) raise HttpError {
+  let limit = merged.max_redirects.unwrap_or(5)
+  let mut config = merged
+  let mut prepared = prepare_request(config)
+  // 发送：这一步失败说明响应头还没到手，错误里没有响应可挂。
+  let mut raw = self.transport.send(prepared) catch {
+    error => raise transport_error(error, config, None)
+  }
+  // 不跟随：3xx 原样交出去（默认的 2xx 校验会把它判成失败）。
+  if limit <= 0 {
+    return (raw, config)
+  }
+  let mut followed = 0
+  // 循环条件写成变量而不是 `while true`：函数要返回最后那一跳的响应与配置，
+  // 用条件退出才能让出口只有末尾那一处。
+  let mut following = true
+  while following {
+    match
+      config.next_redirect(
+        prepared.url,
+        raw.status,
+        raw.headers.get("Location"),
+      ) {
+      // 不是重定向（非 3xx / 没有 Location / Location 解析不出地址）就跟完了。
+      None => following = false
+      Some(next) => {
+        // 预算用完了重定向又来了一个：把最后这个 3xx 挂到错误上再抛。
+        if followed >= limit {
+          let (body, _failure) = raw.body.read_all_partial()
+          raise too_many_redirects_error(
+            limit,
+            config,
+            Some(
+              build_response(
+                raw.status,
+                raw.status_text,
+                raw.headers,
+                body,
+                config,
+              ),
+            ),
+          )
+        }
+        // 先释放这一跳的连接再发下一跳，否则每跟一次都漏一条连接。
+        raw.body.close()
+        followed = followed + 1
+        config = next
+        prepared = prepare_request(config)
+        raw = self.transport.send(prepared) catch {
+          error => raise transport_error(error, config, None)
+        }
+      }
+    }
+  }
+  (raw, config)
 }
 
 ///|
