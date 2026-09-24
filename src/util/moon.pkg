@@ -8,6 +8,7 @@
 // 失败用 `Option` 表达（与 `url` 包的 `build_full_path` 一致），
 // 由根包翻译成 `HttpError` 与 `ErrorCode`——本包不认识错误体系。
 import {
+  "moonbitlang/core/buffer",
   "moonbitlang/core/encoding/ascii",
   "moonbitlang/core/encoding/base64",
   "moonbitlang/core/encoding/utf16",

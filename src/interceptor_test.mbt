@@ -1,5 +1,6 @@
 // 拦截器的用例：请求侧的改写与顺序（LIFO）、响应侧的改写与顺序（FIFO）、
-// 被拦下的请求、错误处理器重试，以及「整条重定向链只跑一次」这条关键差异。
+// 被拦下的请求、错误处理器重试、响应体后处理（`with_json` 与三条配方），
+// 以及「整条重定向链只跑一次」这条关键差异。
 //
 // 全部走 MockTransport：拦截器的效果都落在「最终发出去的 `PreparedRequest`」上，
 // Mock 正好能断言那一层（改重定向、重试这类需要多份响应的用响应队列）。
@@ -103,7 +104,7 @@ async test "response interceptors run first-registered-first" {
 }
 
 ///|
-/// 四个改写入口都返回**新**响应（原响应不受影响），读法跟着新字节走：
+/// 改写入口都返回**新**响应（原响应不受影响），读法跟着新字节走：
 /// `text()` / `bytes()` / `content_length()` 读到的都是改写后的内容。
 /// 响应头是整体替换（不是合并），且不会被 body 改写悄悄改掉。
 ///
@@ -391,4 +392,133 @@ async test "derived clients inherit interceptors" {
   let sent = mock.last_request().unwrap()
   assert_eq(sent.url, "https://api.example.com/users")
   assert_eq(sent.headers.get("X-Token"), Some("abc"))
+}
+
+// ---------------------------------------------------------------------------
+// 响应体后处理：解析 → 处理 → 写回
+//
+// 这是响应拦截器在 axios 里最常干的事（`transformResponse` 里那句 `res.data = ...`）。
+// 本项目不自动解析，所以「解析」这一步由拦截器自己调 `json()`（失败抛
+// `@json.ParseError`，拦截器签名只收 `HttpError`，所以要用 `try ... catch` 收掉），
+// 「写回」走 `Response::with_json`（载荷）或 `with_text`（原文）。
+// 三条配方出现在 `docs/11-interceptors.md`，这里就是它们的可编译版本。
+// ---------------------------------------------------------------------------
+
+///|
+/// `with_json` 把载荷写成**规范 JSON 文本**（紧凑、无多余空白），
+/// 三个读法读到的都是新字节；原响应是独立的值，不受改写影响。
+async test "with_json writes canonical JSON back into a new response" {
+  let mut original = ""
+  let interceptors = @moonhttp.Interceptors::new().use_response(response => {
+    original = response.text()
+    response.with_json({ "a": [true, "x"] })
+  })
+  let (client, _mock) = client_with_interceptors(
+    raw_response(200, "OK", "{ 'a' : [ true , \"x\" ] }"),
+    interceptors,
+  )
+  let response = client.request(@moonhttp.Config::new("/a"))
+  assert_eq(original, "{ 'a' : [ true , \"x\" ] }")
+  let expected = "{\"a\":[true,\"x\"]}"
+  assert_eq(response.text(), expected)
+  assert_eq(response.bytes(), @utf8.encode(expected))
+  assert_eq(response.content_length(), expected.length())
+  assert_eq(response.json(), { "a": [true, "x"] })
+}
+
+///|
+/// 配方一 · **规范化**：服务端把 JSON 当文本发（空白、单引号之类不规范），
+/// 拦截器解析后写回规范文本。调用方 `json()` 拿到的还是那份载荷，
+/// 但 `text()` / `bytes()` 已经是规范形式——下游按文本处理时才有一致的样。
+///
+/// 解析失败**原样放过**：这里不把「正文不是 JSON」升级成 `HttpError`
+/// （那是调用方 `json()` 的事，见 `Response::json` 的口径），所以拦截器不必
+/// 给这类失败编错误码。这也是配方三的写法。
+async test "recipe: an interceptor can normalize a JSON body" {
+  let interceptors = @moonhttp.Interceptors::new().use_response(response => {
+    let data : Json? = Some(response.json()) catch { _ => None }
+    match data {
+      Some(value) => response.with_json(value)
+      None => response
+    }
+  })
+  let (client, _mock) = client_with_interceptors(
+    raw_response(200, "OK", "{ \"name\" : \"alice\" }"),
+    interceptors,
+  )
+  let response = client.request(@moonhttp.Config::new("/a"))
+  assert_eq(response.text(), "{\"name\":\"alice\"}")
+}
+
+///|
+/// 配方二 · **去字段 / 脱敏**：`Json::transform` 配 `@json.Replacer::exclude`
+/// 递归地摘掉指定键，再用 `with_json` 写回——就是「json 去掉一些参数后返回」
+/// 这条 axios 用法在本项目的落法（axios 里直接改 `res.data` 再返回）。
+async test "recipe: an interceptor can strip fields from a JSON body" {
+  let interceptors = @moonhttp.Interceptors::new().use_response(response => {
+    let data : Json? = Some(response.json()) catch { _ => None }
+    match data {
+      Some(value) =>
+        response.with_json(value.transform(@json.Replacer::exclude(["token"])))
+      None => response
+    }
+  })
+  let (client, _mock) = client_with_interceptors(
+    raw_response(
+      200, "OK", "{\"user\":{\"name\":\"alice\",\"token\":\"t-123\"},\"token\":\"top\"}",
+    ),
+    interceptors,
+  )
+  let response = client.request(@moonhttp.Config::new("/a"))
+  assert_eq(response.json(), { "user": { "name": "alice" } })
+  // `find` 返回 None 表示整个正文里都不再有 token 这个键
+  assert_eq(response.text().find("token"), None)
+}
+
+///|
+/// 配方三 · **非 JSON 原样放过**：解析失败就把响应原样交出去，不抛错。
+/// 与「响应体不自动解析、解析错误不进 `HttpError`」是同一件事的两面：
+/// 拦截器不做格式裁判，判断「这到底是不是 JSON」留给知道上下文的那一层。
+async test "recipe: a body that is not JSON passes through untouched" {
+  let interceptors = @moonhttp.Interceptors::new().use_response(response => {
+    let data : Json? = Some(response.json()) catch { _ => None }
+    match data {
+      Some(value) => response.with_json(value)
+      None => response
+    }
+  })
+  let (client, _mock) = client_with_interceptors(
+    raw_response(200, "OK", "<html>not json</html>"),
+    interceptors,
+  )
+  let response = client.request(@moonhttp.Config::new("/a"))
+  assert_eq(response.text(), "<html>not json</html>")
+  let parsed : Json? = Some(response.json()) catch { _ => None }
+  assert_eq(parsed, None)
+}
+
+///|
+/// 错误路径同样能改写正文：非 2xx 时 `error.response()` 上有完整响应，
+/// 处理器可以把它降级成正常响应、顺手把服务端的 HTML 错误页换成统一的 JSON——
+/// 下游就只需要认识一种错误形状。这条只有 `with_json` 才写得顺。
+async test "on_rejected can rewrite the error body as JSON" {
+  let interceptors = @moonhttp.Interceptors::new().use_response(
+    response => response,
+    on_rejected=error => {
+      match error.response() {
+        Some(response) =>
+          response
+          .with_status(200)
+          .with_json({ "error": { "status": response.status } })
+        None => raise error
+      }
+    },
+  )
+  let (client, _mock) = client_with_interceptors(
+    raw_response(404, "NotFound", "<html>nope</html>"),
+    interceptors,
+  )
+  let response = client.request(@moonhttp.Config::new("/a"))
+  assert_eq(response.status, 200)
+  assert_eq(response.text(), "{\"error\":{\"status\":404}}")
 }

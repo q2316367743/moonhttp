@@ -30,16 +30,46 @@ pub fn decode_body(body : Bytes, encoding : ResponseEncoding) -> String {
 }
 
 ///|
-/// 把文本按 **UTF-8** 编成响应体字节，`decode_body` 的反方向。
+/// 把文本按**指定编码**编成响应体字节，`decode_body` 的反方向。
 ///
-/// 写入方向固定 UTF-8，与请求侧的 `with_data_from_str` 同口径：
-/// `response_encoding` 管的是「读出来的文本怎么解」，不管「写进去的文本怎么编」
-/// ——一个配置项同时隐式控制两个方向，只会让「换了编码结果对不上」变得难查。
-/// 要别的编码，自己编好字节再走 `Response::with_body`。
+/// 与解码方向用**同一个编码**：写回的东西要能被同一个调用方按同一套规则读回来，
+/// 编码口径读写不一致，改写过的响应与原文就会对不上。latin1 那条最能说明代价：
+/// `é`（`0xE9`）写成 UTF-8 是 `0xC3 0xA9`，调用方再按 latin1 读回来变成 `Ã©`——
+/// 而这类腐化只在非 UTF-8 客户端里出现，最难查。
+/// 请求侧 `with_data_from_str` 固定 UTF-8 不构成反例：那边没有「读方向」这个
+/// 配置项，服务端按什么解由请求头说了算。
 ///
-/// 谁在用：`Response::with_text`（响应拦截器改写响应体时）。
-pub fn encode_body(text : String) -> Bytes {
-  @utf8.encode(text)
+/// 编码一律 lossy：该编码装不下的码元写成一个 `?`（`0x3F`），不抛错——与解码
+/// 方向「非法字节解成替换字符」同一口径。ascii 那条尤其要注意：core 的
+/// `@ascii.encode` 遇到非 ASCII 会 panic，写回要的是 lossy，所以自己逐码元写。
+/// 要精确字节走 `Response::with_body`。
+///
+/// 谁在用：`Response::with_text` / `Response::with_json`（响应拦截器改写响应体时）。
+pub fn encode_body(text : String, encoding : ResponseEncoding) -> Bytes {
+  match encoding {
+    Utf8 => @utf8.encode(text)
+    Latin1 => encode_single_byte(text, 0xFF)
+    Ascii => encode_single_byte(text, 0x7F)
+    Utf16le => @utf16.encode(text, endianness=@utf16.Endian::Little)
+  }
+}
+
+///|
+/// 单字节编码（latin1 / ascii）的 lossy 编码器：**逐 UTF-16 码元**写一个字节，
+/// 超出上限的写 `?`（所以代理对会写成两个 `?`）。与 `decode_body` 里 latin1
+/// 那条自写的解码循环对称。
+fn encode_single_byte(text : String, max_code_unit : Int) -> Bytes {
+  let buf = @buffer.Buffer::Buffer(size_hint=text.length())
+  for code_unit in text.code_units() {
+    buf.write_byte(
+      if code_unit.to_int() <= max_code_unit {
+        code_unit.to_byte()
+      } else {
+        b'?'
+      },
+    )
+  }
+  buf.to_bytes()
 }
 
 ///|

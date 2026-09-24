@@ -14,7 +14,7 @@ pub fn declares_event_stream(@headers.Headers) -> Bool
 
 pub fn decode_body(Bytes, @config.ResponseEncoding) -> String
 
-pub fn encode_body(String) -> Bytes
+pub fn encode_body(String, @config.ResponseEncoding) -> Bytes
 
 pub fn resolve_method(@config.Method?, @config.Method?) -> @config.Method
 

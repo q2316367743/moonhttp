@@ -237,7 +237,7 @@ let client = @moonhttp.Client::new(
     // 请求侧：发送前改配置（加认证头 / 改地址 / 给所有请求注入公共 body 字段）
     .use_request(config => config.with_header("X-Token", token))
     // 响应侧：拿到响应后做点什么，原样返回就只是观察。
-    // 要改就用 with_status / with_headers / with_body / with_text（都返回新响应）
+    // 要改就用 with_status / with_headers / with_body / with_text / with_json（都返回新响应）
     .use_response(response => {
       println("响应状态：\{response.status}")
       response
@@ -256,7 +256,8 @@ let client = @moonhttp.Client::new(
 - **请求拦截器抛错 = 这次请求不发出**（用 `HttpError::new(message, code, config)` 造错误），错误按 axios 的语义先流进响应侧错误处理器，而不是直接抛给调用方。
 - **一次 `request` 只跑一遍**：跟 5 跳重定向也只跑一次（拦截器在重定向循环之外），认证头不会被重复注入、重试也不会被放大成「跳数 × 重试次数」。
 - **覆盖范围**：三个入口（`request` / `stream` / `sse`）都过请求拦截器；响应拦截器只作用于 `Client::request`——两个流式入口的「响应」是还没读的字节流，改写与重试都没有明确语义。
-- **两条边界**：改响应体不会同步 `Content-Length` 头（响应头是服务端写下的原文）；**不能凭空造一个响应**，只能改写手上已有的响应、重发请求、或返回之前存下来的响应（做缓存正好够用）。
+- **响应体后处理**（axios 里写在 `transformResponse` 的那类事，本项目由响应拦截器承担）：`json()` 解析 → 处理 → `with_json` 写回，比如「规范正文」或「去掉 `token` 字段」。`json()` 抛的是 `@json.ParseError`，而拦截器只允许抛 `HttpError`，所以解析要用 `try ... catch` 收掉；三条可编译的配方在 [`docs/11-interceptors.md`](docs/11-interceptors.md)。
+- **两条边界**：改响应体不会同步 `Content-Length` 头（响应头是服务端写下的原文）；**不能凭空造一个响应**，只能改写手上已有的响应、重发请求、或返回之前存下来的响应（做缓存正好够用）。写 `with_text` / `with_json` 时按 `response_encoding` 编码，与 `text()` / `json()` 的读方向对称（`with_text(response.text())` 恒等）。
 - **闭包要写箭头形式**（`config => ...`）或显式标注 `async fn`：MoonBit 的效果推断只认箭头语法，**具名同步函数不能直接传**（`(Config) -> Config` 与 `async (Config) -> Config raise HttpError` 是两个类型）。
 - 拦截器链用**值语义**构建（`use_*` 返回新值，别丢掉返回值），传给 `Client::new` 之后视作冻结；`client.create(...)` 派生的实例**继承**这份链（axios 的 `axios.create()` 不继承）。
 
@@ -444,7 +445,7 @@ moonhttp/
 - 重定向的 `beforeRedirect` 回调与自定义敏感头名单（`sensitiveHeaders`）：跟随规则固定，见 [`docs/08-redirects.md`](docs/08-redirects.md)
 - **请求体流式上传（`data` 是 Reader / 生成器）**：请求体仍是一次性字节——表单含文件时整块驻留内存，库也不读盘（文件按「字节 + 文件名」传入）。**计划下一期实现**：需要一个挂在连接上的可写流，让调用方一段段喂数据。进度回调不依赖它，已经可用（见「上传与下载进度」）
 - SSE 自动重连：事件里带了 `id` / `retry`（重连所需的全部状态），但没有按 `retry` 间隔自动重订阅、也不自动带 `Last-Event-ID`——重连策略交给上层
-- 请求/响应转换器（`transformRequest` / `transformResponse`）：请求体固定为四种形态（`with_data_from_str` / `with_data_from_json` / `with_data_from_form` / `with_data_from_urlencoded`，见「请求体」），响应体交出去的是原始字节，要文本/对象分别用 `text()` / `json()`（见「响应体怎么读」）
+- 请求/响应转换器（`transformRequest` / `transformResponse`）**不做成独立配置项**：请求体固定为四种形态（`with_data_from_str` / `with_data_from_json` / `with_data_from_form` / `with_data_from_urlencoded`，见「请求体」），响应体交出去的是原始字节，要文本/对象分别用 `text()` / `json()`（见「响应体怎么读」）。要「发请求前换 body」「拿到响应后改正文」就在两段拦截器里做——它们是这两个 hook 的超集（还能改 URL / 方法 / 头 / 状态码），配方见 [`docs/11-interceptors.md`](docs/11-interceptors.md)
 - `withCredentials` / `xsrfCookieName` / `xsrfHeaderName`（本项目不管理 cookie）
 - 响应 cookie：底层的响应 cookie 单独存放，没有并入 `headers`，所以读不到 `Set-Cookie`
 - 连接复用：每次请求新建连接
@@ -461,7 +462,7 @@ moonhttp/
 - 没有可变的全局默认值。axios 的全局 `axios.defaults` 在本项目里对应 `@config.defaults()`（固定的内置默认值）；要定制请用 `create(...)` 或 `client.create(...)` 派生。
 - 重定向（`maxRedirects`）默认 5 跳（axios 请求配置文档的默认值；它底层 follow-redirects 自己兜底是 21，文档与实现并不一致，本项目取文档口径）。四处与 axios 不同：超限错误的 `code` 同名但**带最后那个 3xx 响应**（axios 的错误里没有响应）；`response.config` 是**最后一跳**的配置（axios 是最初的配置，最终地址只在 `response.request` 上）；`timeout` 是**每一跳各算一份**（axios 是整条链一个计时器）；负数上限按「不跟随」处理。完整规则与差异表见 [`docs/08-redirects.md`](docs/08-redirects.md)。
 - 代理有五处与 axios 不同：**不读** `http_proxy` / `https_proxy` / `no_proxy` 环境变量；没有 `proxy: false` 这类「按请求关掉」的写法；http 目标也走 CONNECT 隧道（axios 对 http 目标用「请求行里放完整地址」的经典写法）；用户在 `headers` 里自定义的 `Proxy-Authorization` 在有代理时只发给代理、不会随请求穿过隧道发给源站；`protocol` 是枚举 `ProxyProtocol` 而不是字符串。差异表见 [`docs/09-proxy.md`](docs/09-proxy.md)。
-- 拦截器有六处与 axios 不同：没有 `eject` / `clear` / `runWhen`；请求拦截器不提供「错误处理器」那一半（`use_request` 只有一个处理器，因为请求侧还没来得及产生 I/O 错误）；响应拦截器只作用于 `Client::request`（两个流式入口不过响应链）；`Response` 只能改写、不能凭空合成（axios 里返回普通对象即可）；`client.create(...)` 派生的实例**继承**拦截器（axios 的 `axios.create()` 造出的是没有拦截器的新实例）；拦截器与「重定向的每一跳」无关——整条链只跑一次（axios 也是，因为它跟随重定向发生在适配器内部）。差异表见 [`docs/11-interceptors.md`](docs/11-interceptors.md)。
+- 拦截器有七处与 axios 不同：没有 `eject` / `clear` / `runWhen`；请求拦截器不提供「错误处理器」那一半（`use_request` 只有一个处理器，因为请求侧还没来得及产生 I/O 错误）；响应拦截器只作用于 `Client::request`（两个流式入口不过响应链）；`Response` 只能改写、不能凭空合成（axios 里返回普通对象即可）；`client.create(...)` 派生的实例**继承**拦截器（axios 的 `axios.create()` 造出的是没有拦截器的新实例）；拦截器与「重定向的每一跳」无关——整条链只跑一次（axios 也是，因为它跟随重定向发生在适配器内部）；axios 的 `transformRequest` / `transformResponse` 不做成独立 hook，由两段拦截器承担（它们是超集，但改写要落回字节——`Response` 里只有字节，没有 `data` 那样的任意值）。差异表见 [`docs/11-interceptors.md`](docs/11-interceptors.md)。
 
 ### 后续扩展
 

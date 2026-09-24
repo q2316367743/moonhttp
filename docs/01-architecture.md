@@ -21,7 +21,7 @@ moonhttp/
     ├── headers/                 大小写不敏感的 Headers
     ├── sse/                     SSE 事件解析（纯逻辑：吃字节、吐事件）
     ├── url/                     绝对地址判定、拼接、params 序列化、Location 的相对解析
-    ├── util/                    纯函数层：拼请求、解码、Content-Type 与状态码判定
+    ├── util/                    纯函数层：拼请求、编解码、Content-Type 与状态码判定
     ├── transport/               传输层：trait + 真实实现 + Mock + 响应体流
     └── cmd/main/                可运行示例（真实网络）
 ```
@@ -43,7 +43,7 @@ moonhttp/
 
 也就是说，只要 `HttpError` 定义在子包里，`catch { @moonhttp.HttpError(info) => ... }` 这个写法就必然失效（只能改成 `catch { error => error.code() / error.message() }` 这种访问器写法，要解构就得额外 `import @moonhttp/client`）。`http_error.mbt` 里把它声明成 `pub(all) suberror` 就是为了让调用方能解构，这个代价换一个「根包更干净」不值得——**所以不要再尝试把这些代码搬进子包**（拆文件是可以的，见下）。
 
-**能干净独立出去的是「签名里不出现门面类型」的纯逻辑**——`sse/` 就是这么出去的（`config` / `headers` / `url` 同理），根包里的纯函数同理，它们现在都在 `util/` 包里：`resolve_method` / `basic_auth` / `build_prepared_request` / `decode_body` / `media_type` / `declares_event_stream` / `status_allowed`。
+**能干净独立出去的是「签名里不出现门面类型」的纯逻辑**——`sse/` 就是这么出去的（`config` / `headers` / `url` 同理），根包里的纯函数同理，它们现在都在 `util/` 包里：`resolve_method` / `basic_auth` / `build_prepared_request` / `decode_body` / `encode_body` / `media_type` / `declares_event_stream` / `status_allowed`。
 
 判据落在**签名**上，不是「感觉像工具函数」：只要返回 `Response` 或抛 `HttpError`，就必须留在根包——`util` 一旦反过来依赖根包就成环。所以 `prepare_request` / `build_response` 留在 `client.mbt`，`transport_error` / `status_error` / `status_error_code` / `validate_response` 与错误类型一起待在 `http_error.mbt`，它们正是「与门面类型接壤」的那一层；`util` 的准入条件写在 `src/util/moon.pkg` 里，往里加东西前先看那一条。
 
@@ -53,7 +53,7 @@ moonhttp/
 
 **根包有四个源文件**：`client.mbt`（`Client` + 三个入口 + 接壤层）、`http_error.mbt`（错误类型与所有抛错点）、`facade.mbt`（对外响应类型与再导出）、`interceptors.mbt`（拦截器链，`client.mbt` 在管线两端调它）。四者都用上了 RL-04 为根包文件开出的例外（≤ 1000 行，需在文件头声明）。
 
-**同包拆文件是免费的**：同目录 = 同包，拆文件既不成环、也不影响 `pub` / `priv` 的可见性，`.mbti` 一个字都不会变——所以「文件太长」永远可以靠拆文件解决，不必动包结构。跨包才有代价（`HttpError` 就是被这一条钉在根包里的，理由见上）。**例外只给根包**：子包仍守 300 行（`util/` 两个文件各不足 100 行，`config` / `sse` / `transport` 里的文件超了就必须拆）。
+**同包拆文件是免费的**：同目录 = 同包，拆文件既不成环、也不影响 `pub` / `priv` 的可见性，`.mbti` 一个字都不会变——所以「文件太长」永远可以靠拆文件解决，不必动包结构。跨包才有代价（`HttpError` 就是被这一条钉在根包里的，理由见上）。**例外只给根包**：子包仍守 300 行（`util/` 两个文件各不足 300 行，`config` / `sse` / `transport` 里的文件超了就必须拆）。
 
 ## 依赖方向（无环）
 

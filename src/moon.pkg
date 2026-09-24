@@ -33,13 +33,14 @@ import {
 // 只出现在 src/transport/ 里，这正是 docs/README.md 那条分层约束要的效果。
 // `util` 在黑盒测试里直接 import：代理凭据落在哪个请求上属于拼装层的契约，
 // 除了端到端用例，还要有一条不走网络的断言。
-// core/json 不在测试清单里：`Response::json()` 已经把它包在生产代码里，
-// 用例断言的是门面的返回值，不需要再直接调 `@json`。
+// core/json 给「响应体后处理」那几条用例用（`@json.Replacer::exclude`）；
+// 其余用例断言的是门面的返回值，不需要直接调 `@json`。
 import {
   "moonbitlang/async",
   "moonbitlang/async/http",
   "moonbitlang/async/socket",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
   "q2316367743/moonhttp/transport",
   "q2316367743/moonhttp/util",
 } for "test"

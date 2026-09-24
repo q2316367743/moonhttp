@@ -85,6 +85,7 @@ pub fn Response::text(Self) -> String
 pub fn Response::to_repr(Self) -> @debug.Repr
 pub fn Response::with_body(Self, Bytes) -> Self
 pub fn Response::with_headers(Self, @headers.Headers) -> Self
+pub fn Response::with_json(Self, Json) -> Self
 pub fn Response::with_status(Self, Int) -> Self
 pub fn Response::with_text(Self, String) -> Self
 

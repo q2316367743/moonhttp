@@ -11,7 +11,7 @@
 | `src/config/form.mbt` | 表单的 `multipart/form-data` 编码（详见 `07-request-body.md`） |
 | `src/config/progress.mbt` | 进度回调的 `ProgressEvent` / `ProgressCallback` 与两个 `with_on_*` 构建器（详见 `10-progress.md`） |
 | `src/util/request.mbt` | 请求侧的纯函数：`resolve_method`、`build_prepared_request`（地址、头、body 的拼装）与只给它用的 `basic_auth` |
-| `src/util/response.mbt` | 响应侧的纯函数：`decode_body`、`declares_event_stream`（与只给它用的 `media_type`）、`status_allowed` |
+| `src/util/response.mbt` | 响应侧的纯函数：`decode_body`（读）、`encode_body`（写，响应拦截器改写响应体用）、`declares_event_stream`（与只给它用的 `media_type`）、`status_allowed` |
 | `src/client.mbt` | 与门面类型接壤的那两个函数：`prepare_request`（把纯函数的 `None` 翻译成 `InvalidUrl` 错误）、`build_response` |
 | `src/http_error.mbt` | 错误类型 `ErrorCode` / `ErrorInfo` / `HttpError` 与所有抛错点：`transport_error`、状态码分档 `status_error_code` / `status_error` / `validate_response` |
 | `src/url/combine.mbt` | 绝对地址判定、`combine_urls`、`build_full_path` |
@@ -207,7 +207,9 @@ urlencoded 的括号约定）见 `07-request-body.md`。
 
 **为什么没有默认解码的 `data` 字段**：`Response` 一旦预先解好文本，就等于替调用方选定了读法——二进制内容被无声地解成一堆替换字符、大响应体被白白解码一次；`data` 与 `raw` 两份状态并存时，「哪个才是真的」也会成为每次读响应时的额外问题。方法入口把选择权交回去，代价只是一次显式调用。
 
-**为什么不自动解析 JSON**（axios 的 `responseType` / `transformResponse` 在本项目没有对应物）：`123`、`true`、`"x"` 这些**纯文本本身就是合法 JSON 文本**，靠 `Content-Type` 猜也不可靠（服务端经常不声明或声明错，axios 的 `Auto` 就是在这上面打补丁）。在 TS 里 `any` 把这件事掩盖了，在静态类型下只能把结果塞进变体里让每个调用点 match——要 JSON 的常见场景反而更麻烦，猜错时（文本被解成数字）仍是静默的。所以 `json()` **必须显式调用**，它内部的顺序是「按 `response_encoding` 解码 → `@json.parse`」，解析失败抛 `@json.ParseError`（带出错位置），**不是 `HttpError`**：能拿到 `Response` 说明 HTTP 这一层已经成功，把两类问题混进同一套错误码只会让分类变模糊。要文本要字节、或想自己 `@json.parse(response.text())`，都仍然可以。判断「这到底是不是 JSON」这件事，交给知道上下文的那一层。
+**为什么不自动解析 JSON**（axios 的 `responseType` 在本项目没有对应物；`transformResponse` 的落点是响应拦截器，见 `11-interceptors.md` 的「axios 的 `transformRequest` / `transformResponse` 在这里对应什么」）：`123`、`true`、`"x"` 这些**纯文本本身就是合法 JSON 文本**，靠 `Content-Type` 猜也不可靠（服务端经常不声明或声明错，axios 的 `Auto` 就是在这上面打补丁）。在 TS 里 `any` 把这件事掩盖了，在静态类型下只能把结果塞进变体里让每个调用点 match——要 JSON 的常见场景反而更麻烦，猜错时（文本被解成数字）仍是静默的。所以 `json()` **必须显式调用**，它内部的顺序是「按 `response_encoding` 解码 → `@json.parse`」，解析失败抛 `@json.ParseError`（带出错位置），**不是 `HttpError`**：能拿到 `Response` 说明 HTTP 这一层已经成功，把两类问题混进同一套错误码只会让分类变模糊。要文本要字节、或想自己 `@json.parse(response.text())`，都仍然可以。判断「这到底是不是 JSON」这件事，交给知道上下文的那一层。
+
+写回方向**与读方向同一个编码**：`Response::with_text` / `with_json`（响应拦截器改写响应体用的入口）都按 `response_encoding` 编码，所以 `with_text(response.text())` 是恒等的；哪个编码装不下的码元写成一个 `?`。入口清单与边界见 `11-interceptors.md`。
 
 这张表只在 `Client::request` 上生效——`stream` 交的是原始字节流（`read_all()` 返回 `Bytes`），`sse` 按规范固定 UTF-8 解析事件：流式入口连 `Response` 都没有，解码不是它们的事。实例默认值里带着 `response_encoding` 时，这两个入口照样可用。
 

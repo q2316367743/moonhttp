@@ -17,7 +17,7 @@
 //
 // 文件内的分区（顺序无关，用区块注释标出）：
 //   1. 再导出           —— pub using 各子包的类型
-//   2. Response         —— 读全量得到的响应（含 2.1 的四个改写入口，供响应拦截器）
+//   2. Response         —— 读全量得到的响应（含 2.1 的五个改写入口，供响应拦截器）
 //   3. StreamResponse   —— 原始字节流响应（下载）
 //   4. SseStream        —— 按事件读的 SSE 响应
 // ============================================================================
@@ -121,7 +121,7 @@ pub fn Response::bytes(self : Response) -> Bytes {
 /// 解码是按需做的：`Response` 里只有字节、不缓存文本，调几次就解几次。
 /// 同一份响应要反复读文本时（例如在循环里），自己解一次存起来更划算。
 pub fn Response::text(self : Response) -> String {
-  @util.decode_body(self.raw, self.config.response_encoding.unwrap_or(Utf8))
+  @util.decode_body(self.raw, self.body_encoding())
 }
 
 ///|
@@ -157,17 +157,29 @@ pub fn Response::content_length(self : Response) -> Int {
   self.raw.length()
 }
 
+///|
+/// 响应体的编码：读（`text()` / `json()`）与写（`with_text` / `with_json`）
+/// 共用同一个表达式，几处一旦漂移，写回的东西就与读回来的东西对不上。
+/// `None` 时的 UTF-8 兜底与 `defaults()` 里显式设的默认值一致。
+fn Response::body_encoding(self : Response) -> @config.ResponseEncoding {
+  self.config.response_encoding.unwrap_or(Utf8)
+}
+
 // ---------------------------------------------------------------------------
 // 2.1 Response 的改写入口 —— 供响应拦截器使用
 //
 // 响应拦截器拿到的 `Response` 必须是**能改的**，否则它就只是个旁观的日志钩子：
 // 拆业务信封（`{ code, data }` → data）、把服务端写错的状态码归一、返回上一份
-// 缓存的响应，都要经由这四个方法。四个都是「返回新响应」而非就地改
+// 缓存的响应，都要经由这五个方法。五个都是「返回新响应」而非就地改
 // （`Response` 与 `Config` 一样是不可变值）。
 //
-// 四个方法都**不改响应头**：`Content-Length` 是服务端写下的原文，本项目从不
+// 五个方法都**不改响应头**：`Content-Length` 是服务端写下的原文，本项目从不
 // 改写它，所以换过 body 之后头与 `bytes().length()` 可能对不上——要一致就自己
 // 用 `with_headers` 一起换。
+//
+// 写文本 / 写 JSON 的两个（`with_text` / `with_json`）按 `config.response_encoding`
+// 编码，与 `text()` / `json()` 的读方向对称：`with_text(response.text())` 对四种
+// 编码都是恒等的。要别的编码自己编好字节走 `with_body`。
 // ---------------------------------------------------------------------------
 
 ///|
@@ -196,14 +208,33 @@ pub fn Response::with_body(self : Response, body : Bytes) -> Response {
 }
 
 ///|
-/// 换一份响应体文本（按 **UTF-8** 编码），返回新响应。
+/// 换一份响应体文本，返回新响应。编码按 `config.response_encoding`（未设置时
+/// 按 UTF-8），与 `text()` 的读方向同一个编码——`with_text(response.text())`
+/// 因此是恒等的，改写不会把非 UTF-8 的正文写坏（latin1 的 `é` 写回去还是
+/// `0xE9`，详细理由见 `@util.encode_body`）。
 ///
-/// 是 `with_body` 的文本版：要写的本来就是个 `String`（或
-/// `Json::stringify()` 的结果）时用它，免得为一个编码调用去 import 编码包。
-/// 编码固定 UTF-8，与请求侧的 `with_data_from_str` 同口径
-/// （`response_encoding` 只管读、不管写，理由见 `@util.encode_body`）。
+/// 该编码装不下的码元写成一个 `?`（不抛错，与解码的 lossy 口径一致）。
+/// 要精确字节、或要一份别的编码的正文，用 `with_body` 自己编。
 pub fn Response::with_text(self : Response, body : String) -> Response {
-  { ..self, raw: @util.encode_body(body), }
+  { ..self, raw: @util.encode_body(body, self.body_encoding()), }
+}
+
+///|
+/// 换一份响应体**载荷**（`Json`），返回新响应：先 `stringify()` 成规范 JSON
+/// 文本，再按 `config.response_encoding` 编成字节（与 `with_text` 同一口径）。
+///
+/// 这是「响应后处理」的写回入口，对应 axios 的 `transformResponse` 里那句
+/// `res.data = ...`：解析用 `json()`，处理完用这个方法写回，调用方再读到的
+/// 就是处理过的载荷。JSON 是静态类型下「任意数据」的落点，所以这一条比
+/// `with_text` 更贴这种用法。
+///
+/// 两个语义要注意：
+/// - 写回的是**载荷**，也就是一份 JSON 文档：`Json::String("x")` 写成 `"x"`
+///   （带引号），不是裸的 `x`。要写原文用 `with_text`。
+/// - `stringify()` 的输出是紧凑形式（无缩进、无多余空白），所以「只把正文规范化
+///   一遍」也是它的合法用法。
+pub fn Response::with_json(self : Response, data : Json) -> Response {
+  { ..self, raw: @util.encode_body(data.stringify(), self.body_encoding()), }
 }
 
 // ---------------------------------------------------------------------------

@@ -40,7 +40,9 @@ pub type RequestInterceptor = async (Config) -> Config raise HttpError
 ///
 /// 只在 `Client::request` 上跑：`stream` / `sse` 的「响应」是还没读的字节流，
 /// 改写与重试都没有明确语义（读法由入口决定是本项目已有的口径）。改写响应用
-/// `Response::with_status` / `with_headers` / `with_body` / `with_text`。
+/// `Response::with_status` / `with_headers` / `with_body` / `with_text` / `with_json`；
+/// 「解析 → 处理 → 写回」的配方（`json()` 抛 `@json.ParseError`，要用 `try ... catch`
+/// 收掉）见 `docs/11-interceptors.md`。
 pub type ResponseInterceptor = async (Response) -> Response raise HttpError
 
 ///|

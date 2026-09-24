@@ -119,3 +119,77 @@ async test "json decodes with the configured encoding first" {
   )
   assert_eq(response.json(), { "name": "café" })
 }
+
+///|
+/// 写回按**同一个**编码编码，与 `text()` / `json()` 的读方向对称：
+/// `with_text(response.text())` 对四种编码都是恒等的。
+///
+/// latin1 的 `0xE9`（`é`）写回去必须还是 `0xE9`。若照 UTF-8 写就变成
+/// `0xC3 0xA9`，调用方再按 latin1 读回来是 `Ã©`——改写过的响应与原文对不上，
+/// 这类腐化只在非 UTF-8 客户端里出现，最难查。
+async test "latin1 rewrite round trips through the same encoding" {
+  let (client, _) = client_with(byte_response(None, b"caf\xe9"))
+  let response = client.request(
+    @moonhttp.Config::new("/x").with_response_encoding(
+      @moonhttp.ResponseEncoding::Latin1,
+    ),
+  )
+  assert_eq(response.text(), "café")
+  let rewritten = response.with_text(response.text())
+  assert_eq(rewritten.bytes(), b"caf\xe9")
+  assert_eq(rewritten.text(), "café")
+}
+
+///|
+/// latin1 / ascii 装不下的码元按 lossy 写成一个 `?`（`0x3F`），不抛错——
+/// 与解码方向「非法字节解成替换字符」同一口径。注意是**逐 UTF-16 码元**写，
+/// 所以 BMP 之外的字符（代理对）会写成两个 `?`。
+///
+/// ascii 这条还有一层：core 的 `@ascii.encode` 遇到非 ASCII 会 panic，
+/// 写回要的是 lossy，所以这个编码器是自己写的。
+async test "latin1 and ascii rewrites replace what they cannot represent" {
+  let (client, _) = client_with(byte_response(None, b"ok"))
+  let latin1 = client.request(
+    @moonhttp.Config::new("/x").with_response_encoding(
+      @moonhttp.ResponseEncoding::Latin1,
+    ),
+  )
+  assert_eq(latin1.with_text("中").bytes(), b"?")
+  assert_eq(latin1.with_text("😀").bytes(), b"??")
+  let ascii = client.request(
+    @moonhttp.Config::new("/x").with_response_encoding(
+      @moonhttp.ResponseEncoding::Ascii,
+    ),
+  )
+  assert_eq(ascii.with_text("ok").bytes(), b"ok")
+  assert_eq(ascii.with_text("é").bytes(), b"?")
+}
+
+///|
+/// utf-16le 同样读写对称：`中`（`2D 4E`）解出来再写回去还是两个字节。
+async test "utf-16le rewrite keeps two byte code units" {
+  let (client, _) = client_with(byte_response(None, b"\x2d\x4e\x87\x65"))
+  let response = client.request(
+    @moonhttp.Config::new("/x").with_response_encoding(
+      @moonhttp.ResponseEncoding::Utf16le,
+    ),
+  )
+  assert_eq(response.text(), "中文")
+  assert_eq(response.with_text(response.text()).bytes(), b"\x2d\x4e\x87\x65")
+}
+
+///|
+/// `with_json` 与 `with_text` 同一口径：`stringify()` 出来的规范 JSON 文本
+/// 按 `response_encoding` 编成字节，所以 latin1 客户端里非 ASCII 值仍是
+/// latin1 字节（`é` → `0xE9`），调用方 `json()` 读回来还是那个值。
+async test "with_json writes back in the configured encoding" {
+  let (client, _) = client_with(byte_response(None, b"{}"))
+  let response = client.request(
+    @moonhttp.Config::new("/x").with_response_encoding(
+      @moonhttp.ResponseEncoding::Latin1,
+    ),
+  )
+  let rewritten = response.with_json({ "name": "café" })
+  assert_eq(rewritten.bytes(), b"{\"name\":\"caf\xe9\"}")
+  assert_eq(rewritten.json(), { "name": "café" })
+}
