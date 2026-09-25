@@ -31,7 +31,7 @@ pub async fn Client::options(self : Client, url : String, config? : Config) -> R
 2. **动词永远赢**。`config` 里的 `with_method(...)`、乃至实例默认方法（`client.create(Config::default().with_method(...))`）都盖不掉「`api.get(...)` 一定是 GET」。理由：方法名就是调用方最明确的意图，让它被更远处的配置改写会得到「名字与行为不符」的代码。反过来说，不走快捷方法的老写法（`api.request(Config::default())`）仍然照旧回退到实例默认方法。
 3. **不给 `config` 时**按 `Config::new(url)` 起步，等价于「只有 url 的一份请求级配置」。最省事的调用因此是 `api.delete("/users/1")`。
 
-除此之外**没有任何新语义**：实例默认值（`base_url` / 公共头 / `timeout` / `max_redirects`）、三层头拍平、`params` / `params_serializer`、两段拦截器、自动重定向、进度回调、取消、状态码校验全部还是 `Client::request` 那一套。这就是「薄封装」的判据——**改 `request` 的语义时不需要同步 `shortcuts.mbt`**，反之实现里出现第二份管线逻辑就是走错了方向。
+除此之外**没有任何新语义**：实例默认值（`base_url` / 公共头 / `timeout` / `max_redirects`）、三层头拍平、`params` / `params_serializer`、拦截器（两段链 + 两条错误链）、自动重定向、进度回调、取消、状态码校验全部还是 `Client::request` 那一套。这就是「薄封装」的判据——**改 `request` 的语义时不需要同步 `shortcuts.mbt`**，反之实现里出现第二份管线逻辑就是走错了方向。
 
 ## 用法
 

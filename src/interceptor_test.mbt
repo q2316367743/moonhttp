@@ -1,6 +1,7 @@
 // 拦截器的用例：请求侧的改写与顺序（LIFO）、响应侧的改写与顺序（FIFO）、
-// 被拦下的请求、错误处理器重试、响应体后处理（`with_json` 与三条配方），
-// 以及「整条重定向链只跑一次」这条关键差异。
+// 被拦下的请求、**错误按来源分流**（请求侧 / 响应侧两条错误链）、错误处理器
+// 重试、响应体后处理（`with_json` 与三条配方），以及「整条重定向链只跑一次」
+// 这条关键差异。
 //
 // 全部走 MockTransport：拦截器的效果都落在「最终发出去的 `PreparedRequest`」上，
 // Mock 正好能断言那一层（改重定向、重试这类需要多份响应的用响应队列）。
@@ -296,22 +297,22 @@ async test "streaming entries run request interceptors only" {
 }
 
 ///|
-/// 被请求拦截器拦下的错误会流到**响应侧**错误处理器（axios 的 promise 链就是
-/// 这样：请求拦截器抛错后，链上的 rejected 处理器照常收到它）。
+/// 被请求拦截器拦下的错误走**请求侧**错误处理器：它返回一个响应就表示这次失败
+/// 就地救回来，作为 `request` 的结果返回。
 ///
-/// 这条语义支撑着一个实用写法——「缓存命中就不发请求」：请求拦截器发现有缓存
-/// 就抛错拦下，错误处理器认出这个错误、把闭包里存着的那份响应还回去。
-/// （代价是错误里没有响应可参考，只能靠错误本身认路。）
-async test "an aborted request flows into the response error handler" {
+/// 这条语义支撑着「缓存命中就不发请求」：请求拦截器发现有缓存就抛错拦下，
+/// 错误处理器把闭包里存着的那份响应还回去——比放在响应侧干净，不必再靠错误
+/// 消息认路（请求阶段与响应阶段的失败是两条链，见 `docs/11-interceptors.md`）。
+async test "an aborted request is rescued by the request error handler" {
   let mock = @transport.MockTransport::new(
     raw_response(200, "OK", "from server"),
   )
   let transport : &@transport.Transport = mock
   let mut cached : @moonhttp.Response? = None
-  let interceptors = @moonhttp.Interceptors::new()
-    .use_request(config => {
+  let interceptors = @moonhttp.Interceptors::new().use_request(
+    config => {
       match cached {
-        // 命中缓存：不发这次请求，用一个错误把「拦下」传给响应侧。
+        // 命中缓存：不发这次请求，用一个错误把「拦下」交给请求侧错误处理器。
         Some(_) =>
           raise @moonhttp.HttpError::new(
             "cache-hit",
@@ -320,13 +321,15 @@ async test "an aborted request flows into the response error handler" {
           )
         None => config
       }
-    })
-    .use_response(response => response, on_rejected=error => {
-      match (error.message(), cached) {
-        ("cache-hit", Some(response)) => response
-        _ => raise error
+    },
+    on_rejected=error => {
+      match cached {
+        Some(response) => response
+        // 用例里缓存必然已经存下；兜底分支保持「不处理」的语义
+        None => raise error
       }
-    })
+    },
+  )
   let client = @moonhttp.Client::new(transport~, interceptors~)
   // 第一次：缓存是空的，正常发出去并存下响应
   cached = Some(client.request(@moonhttp.Config::new("/a")))
@@ -335,6 +338,206 @@ async test "an aborted request flows into the response error handler" {
   let second = client.request(@moonhttp.Config::new("/a"))
   assert_eq(second.text(), "from server")
   assert_eq(mock.request_count(), 1)
+}
+
+///|
+/// 传输失败（连不上、超时）走**请求侧**错误处理器，响应侧的错误处理器一次都
+/// 不跑——「错误按来源分流」是本项目与 axios 的 promise 链有意不同的一处。
+///
+/// 处理器返回的是一份**以前存下来的**响应（本项目造不出全新的 `Response`），
+/// 所以这时 `request` 是成功的；`error.config()` 上仍是这次失败的配置。
+async test "a transport failure goes to the request error handler" {
+  // 先正常发一次，拿到一份「以前存下来的」响应
+  let (plain, _ok_mock) = client_with_interceptors(
+    raw_response(200, "OK", "cached"),
+    @moonhttp.Interceptors::new(),
+  )
+  let cached = plain.request(@moonhttp.Config::new("/cached"))
+  let mock = @transport.MockTransport::failing(
+    @transport.TransportError::Network("connection refused"),
+  )
+  let transport : &@transport.Transport = mock
+  let seen : Array[@moonhttp.ErrorCode] = []
+  let mut response_rejects = 0
+  let interceptors = @moonhttp.Interceptors::new()
+    .use_request(config => config, on_rejected=error => {
+      seen.push(error.code())
+      cached
+    })
+    .use_response(response => response, on_rejected=error => {
+      response_rejects = response_rejects + 1
+      raise error
+    })
+  let client = @moonhttp.Client::new(transport~, interceptors~)
+  let response = client.request(@moonhttp.Config::new("/a"))
+  assert_eq(seen, [@moonhttp.ErrorCode::Network])
+  assert_eq(response.text(), "cached")
+  // 确实发过一次（失败的是传输层，不是被拦下）
+  assert_eq(mock.request_count(), 1)
+  // 关键：请求阶段的失败不会流到响应侧错误处理器
+  assert_eq(response_rejects, 0)
+}
+
+///|
+/// 请求侧错误链的顺序与正常链**同向**：后注册先跑。先注册的处理器只有在更晚
+/// 注册的那个不接（`raise`）时才轮到——错误在链上往外走，每个处理器都可以
+/// 换一个错误继续传（这里原样传，所以最后抛出的还是超时）。
+async test "request error handlers run last-registered-first" {
+  let mock = @transport.MockTransport::failing(
+    @transport.TransportError::Timeout,
+  )
+  let transport : &@transport.Transport = mock
+  let mut trace = ""
+  let interceptors = @moonhttp.Interceptors::new()
+    .use_request(config => config, on_rejected=error => {
+      trace = trace + "A"
+      raise error
+    })
+    .use_request(config => config, on_rejected=error => {
+      trace = trace + "B"
+      raise error
+    })
+  let client = @moonhttp.Client::new(transport~, interceptors~)
+  let error = interceptor_error(client, @moonhttp.Config::new("/a"))
+  assert_eq(trace, "BA")
+  assert_eq(error.code(), @moonhttp.ErrorCode::Timeout)
+}
+
+///|
+/// 分流的另一半：**状态码失败不进请求侧**。
+///
+/// 边界靠管线位置划、不靠错误码：错误码同是 `BadRequest`，请求拦截器里抛的
+/// 走请求侧（上面那条「缓存命中」用例），服务端 401 的走响应侧。
+async test "a status failure never reaches the request error handler" {
+  let mut request_rejects = 0
+  let mut response_rejects = 0
+  let interceptors = @moonhttp.Interceptors::new()
+    .use_request(config => config, on_rejected=error => {
+      request_rejects = request_rejects + 1
+      raise error
+    })
+    .use_response(response => response, on_rejected=error => {
+      response_rejects = response_rejects + 1
+      raise error
+    })
+  let (client, _mock) = client_with_interceptors(
+    raw_response(401, "Unauthorized", "nope"),
+    interceptors,
+  )
+  let error = interceptor_error(client, @moonhttp.Config::new("/a"))
+  assert_eq(error.code(), @moonhttp.ErrorCode::BadRequest)
+  assert_eq(request_rejects, 0)
+  assert_eq(response_rejects, 1)
+}
+
+///|
+/// 取消也是请求阶段的失败，走请求侧错误处理器（`ERR_CANCELED` 与 4xx / 5xx
+/// 分开是既有口径）。处理器通常该原样抛出去——取消是调用方自己要的结果，
+/// 不该被「救回」——所以接不接由处理器里的 `error.is_cancelled()` 决定。
+async test "cancellation goes to the request error handler" {
+  let mock = @transport.MockTransport::new(raw_response(200, "OK", "ok"))
+  let transport : &@transport.Transport = mock
+  let token = @moonhttp.CancelToken::new()
+  token.cancel(message="进入管线之前就取消")
+  let mut request_rejects = 0
+  let mut response_rejects = 0
+  let interceptors = @moonhttp.Interceptors::new()
+    .use_request(config => config, on_rejected=error => {
+      request_rejects = request_rejects + 1
+      raise error
+    })
+    .use_response(response => response, on_rejected=error => {
+      response_rejects = response_rejects + 1
+      raise error
+    })
+  let client = @moonhttp.Client::new(transport~, interceptors~)
+  let error = interceptor_error(
+    client,
+    @moonhttp.Config::new("/a").with_cancel_token(token),
+  )
+  assert_true(error.is_cancelled())
+  assert_eq(error.message(), "进入管线之前就取消")
+  assert_eq(request_rejects, 1)
+  assert_eq(response_rejects, 0)
+  // 预检查挡在传输层之前：一次都没发出去
+  assert_eq(mock.request_count(), 0)
+}
+
+///|
+/// 救回的响应**不再经过响应侧链**：响应侧管的是「服务端这次返回的响应」，
+/// 救回的却是缓存里存的、或处理器自己合成的，两段链各管一段。要让它也走一遍
+/// 响应改写，在处理器里自己调改写函数。
+async test "a rescued response skips the response chain" {
+  let (plain, _mock) = client_with_interceptors(
+    raw_response(200, "OK", "cached"),
+    @moonhttp.Interceptors::new(),
+  )
+  let cached = plain.request(@moonhttp.Config::new("/cached"))
+  let mut response_runs = 0
+  let interceptors = @moonhttp.Interceptors::new()
+    .use_request(
+      config => {
+        raise @moonhttp.HttpError::new(
+          "拦下",
+          @moonhttp.ErrorCode::BadRequest,
+          config,
+        )
+      },
+      on_rejected=_error => cached,
+    )
+    .use_response(response => {
+      response_runs = response_runs + 1
+      response.with_text(response.text() + "!")
+    })
+  let (client, mock) = client_with_interceptors(
+    raw_response(200, "OK", "from server"),
+    interceptors,
+  )
+  let response = client.request(@moonhttp.Config::new("/a"))
+  // 拿到的就是那份缓存响应，没被响应侧加工成 "cached!"
+  assert_eq(response.text(), "cached")
+  assert_eq(response_runs, 0)
+  assert_eq(mock.request_count(), 0)
+}
+
+///|
+/// 请求侧错误处理器只在 `Client::request` 上跑：两个流式入口交出去的是还没读的
+/// 字节流，「救回一个 `Response`」在那里没有落点，被拦下时照旧直接抛。
+async test "streaming entries skip the request error handler" {
+  let mock = @transport.MockTransport::new(sse_response("data: hi\n\n"))
+  let transport : &@transport.Transport = mock
+  let mut rejects = 0
+  let interceptors = @moonhttp.Interceptors::new().use_request(
+    config => {
+      raise @moonhttp.HttpError::new(
+        "拦下",
+        @moonhttp.ErrorCode::BadRequest,
+        config,
+      )
+    },
+    on_rejected=error => {
+      rejects = rejects + 1
+      raise error
+    },
+  )
+  let client = @moonhttp.Client::new(transport~, interceptors~)
+  let stream_error = try {
+    ignore(client.stream(@moonhttp.Config::new("/stream")))
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(stream_error.unwrap().message(), "拦下")
+  let sse_error = try {
+    ignore(client.sse(@moonhttp.Config::new("/sse")))
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_eq(sse_error.unwrap().message(), "拦下")
+  // 两个入口都没有给错误处理器机会，请求也一次都没发出去
+  assert_eq(rejects, 0)
+  assert_eq(mock.request_count(), 0)
 }
 
 ///|

@@ -9,13 +9,13 @@
 //   - `util/`          —— 纯逻辑：拼请求、解码、Content-Type 与状态码判定
 //   - `http_error.mbt` —— 错误类型与抛错点
 //   - `facade.mbt`     —— 对外响应类型与再导出
-//   - `interceptors.mbt` —— 拦截器链（本文件在管线的两端调用它）
+//   - `interceptors.mbt` —— 拦截器链与两条错误链（本文件在管线的两端调用它）
 // 本文件剩下的 `fn` 都是包私有的，没有一个是公开 API。
 //
 // 文件内的分区（顺序无关，用区块注释标出）：
 //   1. Client 与它的入口   —— request / stream / sse + 两个工厂
-//   2. 接壤层              —— 合并配置、派发一次请求（两段拦截器夹着它）、
-//                             拼请求、拼 Response
+//   2. 接壤层              —— 合并配置、派发一次请求（请求链在它之前、状态码校验
+//                             与响应链在它之后）、拼请求、拼 Response
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -104,7 +104,15 @@ pub fn Client::defaults(self : Client) -> Config {
 /// 7. 校验状态码；
 /// 8. 响应拦截器：**先注册先跑**，正常路径改响应、错误路径救错或重试。
 ///
-/// 两段拦截器与重定向的相对位置是关键：整条重定向链只跑**一次**拦截器
+/// 失败按来源分流到两条错误链（这是与 axios 的 promise 链**有意不同**的一处，
+/// 理由见 `docs/11-interceptors.md`）：
+/// - 第 1~6 步的失败——被请求拦截器拦下、配置拼不出请求、连不上、超时、被取消、
+///   重定向超限、读响应体失败——交给**请求侧**错误处理器，它可以返回一个响应把
+///   这次失败救回来；
+/// - 第 7 步的失败（状态码没通过校验）交给**响应侧**错误处理器，错误里带着完整
+///   响应，重试、降级、改写成统一形状都写在那里。
+///
+/// 拦截器与重定向的相对位置是关键：整条重定向链只跑**一次**拦截器
 /// （axios 的适配器内部跟随重定向，拦截器在它上层，两边一致）。理由与「为什么
 /// 不把拦截器做成传输层中间件」见 `docs/11-interceptors.md`。
 ///
@@ -126,7 +134,7 @@ pub fn Client::defaults(self : Client) -> Config {
 /// 失败不等于「什么都没收到」：响应头到手之后才失败的请求（读响应体的中途
 /// 超时、连接被重置），错误里会带上**已经收到的响应**——状态行、响应头与
 /// 读到的部分正文，从 `HttpError::response()` 取。连响应头都没到手时，
-/// 错误里没有响应。两类失败都会先经过响应拦截器的错误路径（重试的落点）。
+/// 错误里没有响应。两类失败都会先经过请求侧的错误处理器（重试的落点）。
 ///
 /// 取消走配置里的 `cancel_token`（`Config::with_cancel_token`，对应 axios 的
 /// `cancelToken`）：请求进入管线前 token 已经取消时什么都不做，进行中的取消会
@@ -136,30 +144,39 @@ pub fn Client::defaults(self : Client) -> Config {
 ///
 /// 不想读全响应体时用另外两个入口：大文件下载用 `Client::stream`（原始字节流），
 /// SSE 用 `Client::sse`（事件流）。读不读、按什么单位读，由入口决定而不是配置；
-/// 它们只过请求拦截器，不过响应拦截器。
+/// 它们**只过请求拦截器**：响应侧链与请求侧错误处理器都不跑——两者要交出去的
+/// 都是一份 `Response`，而这两个入口手里是还没读的字节流，救回没有落点。
 pub async fn Client::request(
   self : Client,
   config : Config,
 ) -> Response raise HttpError {
-  // 1、2. 合并配置、定方法；紧接着做取消预检查：token 在请求进入管线之前就已
-  //      取消时，这次请求**什么都不做**——不发任何 I/O，也不跑请求拦截器
-  //      （拦截器可能带副作用）。检查放在这一层而不是只放在传输层，是为了让
-  //      「取消」的语义与传输实现无关：Mock 传输层没有可中断的 I/O，但
-  //      「已取消的 token 让请求立刻失败」照样成立。
-  let merged = self.merged_config(config)
-  check_cancelled(merged)
-  // 3. 请求拦截器。被拦下时这次请求不发出，错误按 axios 的 promise 链语义
-  //    交给响应侧错误处理器——所以这里不抛错，交给下面的 run_response 收口。
-  let outcome = match self.interceptors.run_request(merged) {
-    // 4~7. 发送、跟重定向、读全量、校验状态码
-    Ok(config) =>
-      Ok(self.dispatch_request(config)) catch {
-        error => Err(error)
-      }
-    Err(error) => Err(error)
+  // 1~7. 请求阶段：合并配置 → 取消预检查 → 请求拦截器 → 派发（发送、跟重定向、
+  //      读全量、拼响应）。这一段里出的任何错都算**请求阶段的失败**，收进 `stage`
+  //      交给请求侧错误处理器；拿回来的响应这时还没校验状态码。
+  let stage : Result[Response, HttpError] = try {
+    // 1、2. 合并配置、定方法；紧接着做取消预检查：token 在请求进入管线之前就已
+    //      取消时，这次请求**什么都不做**——不发任何 I/O，也不跑请求拦截器
+    //      （拦截器可能带副作用）。检查放在这一层而不是只放在传输层，是为了让
+    //      「取消」的语义与传输实现无关：Mock 传输层没有可中断的 I/O，但
+    //      「已取消的 token 让请求立刻失败」照样成立。
+    let merged = self.merged_config(config)
+    check_cancelled(merged)
+    // 3. 请求拦截器。被拦下时这次请求不发出，错误交给请求侧错误处理器
+    //    ——所以这里不抛错，交给下面的分支收口。
+    match self.interceptors.run_request(merged) {
+      Err(error) => Err(error)
+      // 4~7. 发送、跟重定向、读全量、拼响应（状态码校验不在这里）
+      Ok(config) => Ok(self.dispatch_request(config))
+    }
+  } catch {
+    error => Err(error)
   }
-  // 8. 响应拦截器：正常路径改响应，错误路径救错 / 重试（重试就是在这里再发一次）
-  self.interceptors.run_response(outcome)
+  match stage {
+    // 请求阶段的失败：请求侧错误处理器（返回响应 = 就地救回，否则抛出）
+    Err(error) => self.interceptors.run_request_errors(error)
+    // 8. 响应阶段：状态码校验；9. 响应拦截器（正常路径改响应，错误路径救错 / 重试）
+    Ok(response) => self.interceptors.run_response(validate_response(response))
+  }
 }
 
 ///|
@@ -192,10 +209,11 @@ fn check_cancelled(config : Config) -> Unit raise HttpError {
 
 ///|
 /// 发送一次请求并把响应读全：拼地址 / 头 / body → 发送（含自动跟随重定向）
-/// → 读全量 → 拼 `Response` → 校验状态码。位置对应 axios 的 `dispatchRequest`。
+/// → 读全量 → 拼 `Response`。位置对应 axios 的 `dispatchRequest`。
 ///
-/// 进来的配置必须是**已经过请求拦截器**的（`Client::request` 负责把两段拦截器
-/// 摆在它两侧），本函数只管「发」。
+/// 进来的配置必须是**已经过请求拦截器**的（`Client::request` 负责把请求链摆在
+/// 它之前），本函数只管「发」。**不校验状态码**：校验留在 `Client::request` 里，
+/// 这样「请求阶段的失败」与「状态码失败」才能分流到两条错误链。
 async fn Client::dispatch_request(
   self : Client,
   merged : Config,
@@ -222,16 +240,10 @@ async fn Client::dispatch_request(
       )
     None => ()
   }
-  // 校验状态码（解码不在这里：响应体以原始字节交出去，读法由调用方选）
-  let response = build_response(
-    raw.status,
-    raw.status_text,
-    raw.headers,
-    body,
-    merged,
-  )
-  validate_response(response)
-  response
+  // 校验状态码**不在这里**：交给 `Client::request`——那里才知道这次失败该走
+  // 请求侧还是响应侧的错误处理器（解码也不在这里：响应体以原始字节交出去，
+  // 读法由调用方选）
+  build_response(raw.status, raw.status_text, raw.headers, body, merged)
 }
 
 ///|

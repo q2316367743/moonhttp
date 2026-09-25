@@ -359,9 +359,15 @@ fn too_many_redirects_error(
 }
 
 ///|
-/// 校验响应状态码；不通过就抛出带响应的错误。
-fn validate_response(response : Response) -> Unit raise HttpError {
-  if !@util.status_allowed(response.status, response.config) {
-    raise status_error(response.status, response.config, response)
+/// 校验响应状态码：通过就把响应交出去，不通过就给出带响应的错误。
+///
+/// 返回 `Result` 而不是抛错：这个结果**就是**响应侧链的输入——`Client::request`
+/// 拿到它直接交给 `Interceptors::run_response`，于是「状态码失败」与「请求阶段的
+/// 失败」在调用点一眼分得开（后者走请求侧错误处理器，见 `docs/11-interceptors.md`）。
+fn validate_response(response : Response) -> Result[Response, HttpError] {
+  if @util.status_allowed(response.status, response.config) {
+    Ok(response)
+  } else {
+    Err(status_error(response.status, response.config, response))
   }
 }

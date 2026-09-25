@@ -139,7 +139,7 @@ res.is_success()     // 状态码是不是 2xx
 
 ### 拦截器
 
-请求侧在发送前改配置，响应侧在拿到响应后改响应、或在失败时救错与重试。拦截器挂在**实例**上：
+请求侧在发送前改配置，响应侧在拿到响应后改响应；两侧各有一个错误处理器，**按失败来源分流**——请求阶段的失败（被拦下、连不上、超时、被取消、重定向超限）走请求侧，状态码没通过校验（默认 2xx 以外的响应）走响应侧。拦截器挂在**实例**上：
 
 ```moonbit nocheck
 let plain = @moonhttp.Client::new() // 给重试用的裸实例：不带这层拦截器，天然不会无限递归
@@ -147,16 +147,20 @@ let client = @moonhttp.Client::new(
   interceptors~ = @moonhttp.Interceptors::new()
     // 请求侧：发送前改配置（加认证头、改地址、给所有请求注入公共 body 字段）
     .use_request(config => config.with_header("X-Token", "secret"))
+    // 请求侧的错误路径：网络类失败的重试写这（下面两处是同一个写法，写在哪一侧
+    // 决定它会看到哪一类失败）
+    .use_request(config => config, on_rejected=error => plain.request(error.config()))
     // 响应侧：原样返回就只是观察；要改就用 with_status / with_headers / with_body / with_text / with_json
     .use_response(response => response)
-    // 响应侧的错误路径：非 2xx、超时、断连都会走到这里——统一错误处理与重试写在这
+    // 响应侧的错误路径：只有「请求成功、状态码不是 2xx」会走到这——按状态码分支的重试与降级写这
     .use_response(response => response, on_rejected=error => plain.request(error.config())),
 )
 ```
 
 - 顺序：请求侧**后注册先跑**（LIFO）、响应侧**先注册先跑**（FIFO），两个方向相反。
+- 错误处理器返回一个 `Response` 就是「这次失败救回来了」（它直接成为 `request` 的结果），返回不了就 `raise error` 继续往外抛。
 - 拦截器拿到的配置是合并后的；`client.create(...)` 派生的实例会继承这份链。
-- 一次请求只跑一遍：跟 5 跳重定向也只跑一次。响应侧只作用于 `Client::request`，两个流式入口不过响应链。
+- 一次请求只跑一遍：跟 5 跳重定向也只跑一次。两个错误处理器与响应链都只作用于 `Client::request`——两个流式入口只过请求拦截器。
 - 闭包要写箭头形式（`config => ...`）或显式标 `async fn`——效果推断只认箭头语法，具名同步函数传不进去。
 
 ### 取消请求

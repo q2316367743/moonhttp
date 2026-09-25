@@ -76,7 +76,7 @@ pub struct Interceptors {
   // private fields
 }
 pub fn Interceptors::new() -> Self
-pub fn Interceptors::use_request(Self, async (@config.Config) -> @config.Config raise HttpError) -> Self
+pub fn Interceptors::use_request(Self, async (@config.Config) -> @config.Config raise HttpError, on_rejected? : async (HttpError) -> Response raise HttpError) -> Self
 pub fn Interceptors::use_response(Self, async (Response) -> Response raise HttpError, on_rejected? : async (HttpError) -> Response raise HttpError) -> Self
 
 pub(all) struct Response {
@@ -149,6 +149,8 @@ pub using @config {type ProgressEvent}
 pub using @config {type Proxy}
 
 pub using @config {type ProxyProtocol}
+
+pub type RequestErrorHandler = async (HttpError) -> Response raise HttpError
 
 pub type RequestInterceptor = async (@config.Config) -> @config.Config raise HttpError
 

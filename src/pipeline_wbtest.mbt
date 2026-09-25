@@ -15,8 +15,8 @@ test "validate_response lets everything through without a rule" {
     config: Config::default(),
     raw: b"",
   }
-  // 不抛错即为通过
-  validate_response(response)
+  // 放行即 Ok（不抛错、也不变成错误）
+  assert_true(validate_response(response) is Ok(_))
 }
 
 ///|

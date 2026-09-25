@@ -299,13 +299,15 @@ async test "cancel interrupts a redirect chain on a later hop" {
 }
 
 ///|
-/// 取消与「重试」的关系：重试配方就是拿 `error.config()` 再调一次
+/// 顺带说明「取消之后重试」为什么安全：重试配方就是拿 `error.config()` 再调一次
 /// `Client::request`，而那次调用会走取消预检查——配置里带着同一个 token，
 /// 所以已经取消的 token 让重试**立刻失败、不产生第二次请求**，
 /// 不会把处理器里的无脑重试变成一串真实 I/O。
 ///
-/// 这条也是「响应侧错误处理器对取消一视同仁」的说明：取消错误照样进
-/// `on_rejected`（与 axios 一致），挡重复投递的是预检查，不是特判。
+/// 注意这次取消是重试那一步（响应侧处理器内部）自己撞上预检查的结果，它直接
+/// 抛给了调用方；管线里发生的取消则走**请求侧**错误处理器（取消是请求阶段的
+/// 失败，见 `src/interceptor_test.mbt` 的 "cancellation goes to the request
+/// error handler"）。挡重复投递的一直是预检查，不是错误处理器里的特判。
 async test "a retry after cancel fails fast without another request" {
   let mock = @transport.MockTransport::new(
     raw_response(500, "InternalServerError", "boom"),

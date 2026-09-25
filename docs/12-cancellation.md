@@ -132,8 +132,10 @@ TransportError::Cancelled  →  ErrorCode::Cancelled  →  "ERR_CANCELED"
 than a timeout when it lands first` 钉着）。`timeout` 的语义没有因为取消改变：仍然是「建连
 到响应头整体一个时限 + 响应体每次读取一个时限」。
 
-**与拦截器**：取消错误**照常流经响应侧错误处理器**（与 axios 一致，也符合本项目「所有失败
-过同一个漏斗」的口径），不做特判。给重试写法的建议很直接：重试配方是拿 `error.config()`
+**与拦截器**：取消是**请求阶段**的失败，走**请求侧**错误处理器（`RequestErrorHandler`）——
+与本项目「错误按来源分流」的口径一致（见 `11-interceptors.md`），不做特判。想把它当正常收场
+处理，在处理器的开头写 `if error.is_cancelled() { raise error }` 原样抛出即可。
+给重试写法的建议很直接：重试配方是拿 `error.config()`
 再调一次 `Client::request`，而那次调用会走**预检查**——token 已经取消，于是重试**立刻失败、
 不产生第二次请求**，不会把无脑重试变成一串真实 I/O（用例 `a retry after cancel fails fast
 without another request` 钉着）。想在重试前判断，看 `error.is_cancelled()`。

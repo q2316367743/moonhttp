@@ -1,17 +1,20 @@
 ///|
 /// 示例：拦截器（`Interceptors`）。
 ///
-/// 两段链的形状与 axios 一致：
+/// 四条链的形状与 axios 大体一致（**错误按来源分流**是本项目的差异）：
 /// - 请求侧 `Config -> Config`，**后注册先跑（LIFO）**，用来补头、补参数、拦下请求；
-/// - 响应侧 `Response -> Response`，**先注册先跑（FIFO）**，用来观察、改写、
-///   救错（`on_rejected` 是重试的落点）。
+/// - 请求侧错误处理器 `HttpError -> Response`，**后注册先跑（LIFO）**，接住被拦下、
+///   连不上、超时、取消、重定向超限——网络类重试的落点；
+/// - 响应侧 `Response -> Response`，**先注册先跑（FIFO）**，用来观察、改写；
+/// - 响应侧错误处理器，接住**只有**状态码没通过校验（默认非 2xx）的失败，
+///   降级与按状态码重试的落点。
 ///
 /// 五段：
 /// 1. 请求拦截器补 `Authorization: token`（echo server 回显收到的头当证据）；
 /// 2. 注册顺序：请求侧 LIFO、响应侧 FIFO；
 /// 3. 响应拦截器改写响应体 JSON（`with_json`）与响应头（`with_headers`）；
-/// 4. 请求拦截器抛错中止请求，`on_rejected` 接住；
-/// 5. 覆盖范围：`stream` 只走请求侧（响应侧只作用于 `Client::request`）。
+/// 4. 请求拦截器抛错中止请求，**请求侧**错误处理器接住并救回；
+/// 5. 覆盖范围：`stream` 只走请求侧链（两个错误处理器与响应侧都只在 `Client::request` 上）。
 ///
 /// 用 `moon run src/main/interceptors` 执行。本包只是示例，不随模块发布。
 async fn main {
@@ -22,7 +25,7 @@ async fn main {
     inject_token(base)
     chain_order(base)
     rewrite_response(base)
-    abort_and_reject(base)
+    abort_and_rescue(base)
     stream_scope(base)
   }
 }
@@ -215,60 +218,93 @@ async fn rewrite_response(base : String) -> Unit {
 }
 
 ///|
-/// 4. 请求拦截器抛错中止请求，`on_rejected` 接住。
+/// 4. 请求拦截器抛错中止请求，由**请求侧**错误处理器接住并救回。
 ///
-/// 请求侧拦下请求时，错误**不会**直接抛给调用方，而是先流入响应侧的错误处理器
-/// （与 axios 的 promise 链一致）——那里正是「拿旧 token 换一次新 token 再重试」
-/// 的落点；没有 `on_rejected` 时才原样抛给调用方。
-async fn abort_and_reject(base : String) -> Unit {
-  println("== 4. 请求拦截器中止请求 + on_rejected 接住 ==")
-  let rejects : Array[String] = []
+/// 错误按来源分流：被拦下、连不上、超时、取消、重定向超限都归**请求侧**错误处理器
+/// （理由见 docs/11-interceptors.md），响应侧错误处理器只在「请求成功、但状态码不是
+/// 2xx」时被调用。这里演示最实用的那条——**返回之前存下来的响应**：拦截器发现请求里
+/// 没有 `X-Api-Key` 就拦下，错误处理器把上一次成功拿到的响应还回去，调用方看到的是成功。
+/// （本项目造不出一个全新的 `Response`，救回只能用存下来的、或错误里那份。）
+async fn abort_and_rescue(base : String) -> Unit {
+  println(
+    "== 4. 请求拦截器中止请求 + 请求侧错误处理器救回 ==",
+  )
+  let request_rejects : Array[String] = []
+  let response_rejects : Array[String] = []
+  let mut cached : @moonhttp.Response? = None
   let client = @moonhttp.Client::new(
     config=@moonhttp.Config::default().with_base_url(base),
     interceptors=@moonhttp.Interceptors::new()
-      .use_request(config => {
-        let key = config.headers
-          .unwrap_or(@moonhttp.Headers::new())
-          .get("X-Api-Key")
-        match key {
-          Some(_) => config
-          None =>
-            raise @moonhttp.HttpError::new(
-              "缺少 X-Api-Key，拦下这次请求",
-              @moonhttp.ErrorCode::BadRequest,
-              config,
-            )
-        }
-      })
+      .use_request(
+        config => {
+          let key = config.headers
+            .unwrap_or(@moonhttp.Headers::new())
+            .get("X-Api-Key")
+          match key {
+            Some(_) => config
+            None =>
+              raise @moonhttp.HttpError::new(
+                "缺少 X-Api-Key，拦下这次请求",
+                @moonhttp.ErrorCode::BadRequest,
+                config,
+              )
+          }
+        },
+        on_rejected=error => {
+          request_rejects.push(error.message())
+          println(
+            "  [请求侧 on_rejected] 收到：\{error.code()} / \{error.message()}",
+          )
+          match cached {
+            Some(response) => {
+              println(
+                "  返回上一次存下的响应（这次请求根本没发出去）",
+              )
+              response
+            }
+            None => raise error
+          }
+        },
+      )
       .use_response(response => response, on_rejected=error => {
-        rejects.push(error.message())
-        println("  [on_rejected] 收到：\{error.code()} / \{error.message()}")
-        // 这里可以返回一个「兜底响应」把错误救回来；示例选择继续抛出去
+        response_rejects.push(error.message())
+        println(
+          "  [响应侧 on_rejected] 收到：\{error.code()} / \{error.message()}",
+        )
         raise error
       }),
   )
+  // 第一次不带 X-Api-Key：被拦下，缓存还是空的，救不回来，错误原样抛给调用方
   let _ = try {
     ignore(client.request(@moonhttp.Config::new("/whoami")))
     println("没抛错（不应该）")
   } catch {
     error => println("调用方拿到：\{error.code()} / \{error.message()}")
   }
-  println("on_rejected 被调用次数 = \{rejects.length()}")
+  // 带上 X-Api-Key：拦下的条件不成立，正常发出去，把响应存下来当「缓存」
   let ok = client.request(
     @moonhttp.Config::new("/whoami").with_header("X-Api-Key", "k-1"),
   )
+  cached = Some(ok)
   println(
-    "带上 X-Api-Key 之后 = \{ok.status}（拦下的条件不成立就放行）\n",
+    "带上 X-Api-Key 之后 = \{ok.status}（拦下的条件不成立就放行）",
+  )
+  // 再不带：这次被拦下，但错误处理器手里有缓存，救回成一个成功响应
+  let rescued = client.request(@moonhttp.Config::new("/whoami"))
+  println(
+    "第二次不带 key = \{rescued.status}（被拦下后由请求侧错误处理器救回）",
+  )
+  println(
+    "两侧 on_rejected 次数 = \{request_rejects.length()} / \{response_rejects.length()}（后者是 0：状态码没失败，响应侧不该被调用）\n",
   )
 }
 
 ///|
-/// 5. 覆盖范围：`stream` / `sse` 只过请求侧，响应侧只作用于 `Client::request`。
-///
-/// 因为响应侧要拿 `Response`（读全量之后的形状），而流式入口把响应体留给调用方
-/// 自己读（见 docs/11-interceptors.md）。
+/// 5. 覆盖范围：`stream` / `sse` 只过**请求拦截器**——两个错误处理器与响应侧都只在
+/// `Client::request` 上，因为它们的落点都是一份 `Response`（读全量之后的形状），
+/// 而流式入口把响应体留给调用方自己读（见 docs/11-interceptors.md）。
 async fn stream_scope(base : String) -> Unit {
-  println("== 5. 覆盖范围：stream 只走请求侧 ==")
+  println("== 5. 覆盖范围：stream 只走请求侧链 ==")
   let client = @moonhttp.Client::new(
     config=@moonhttp.Config::default().with_base_url(base),
     interceptors=@moonhttp.Interceptors::new()
