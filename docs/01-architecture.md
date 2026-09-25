@@ -14,7 +14,7 @@ moonhttp/
     ├── http_error.mbt           错误契约：ErrorCode / ErrorInfo / HttpError 与**所有**抛错点
     ├── facade.mbt               门面层：Response / StreamResponse / SseStream 等
     │                            对外响应类型 + pub using 再导出
-    ├── interceptors.mbt         拦截器链：Interceptors + 请求侧 / 响应侧两条链的驱动
+    ├── interceptors.mbt         拦截器：Interceptors（注册 / 同名替换 / 按名移除）+ 三条链的驱动
     ├── shortcuts.mbt            快捷方法：七个动词对 request 的薄封装（见 14-shortcut-methods.md）
     ├── *_test.mbt               根包黑盒测试（用 MockTransport 跑整条管线）
     ├── *_wbtest.mbt             根包白盒测试（覆盖只能从包内部触达的分支）
@@ -54,7 +54,7 @@ moonhttp/
 
 `build_prepared_request` 是这条判据下唯一需要改造才搬得动的：它原来用 `raise HttpError` 报「地址不可用」，搬进 `util` 后改成返回 `Option`（`None` = 地址不可用），由根包的 `prepare_request` 翻译成 `InvalidUrl` 错误——错误码与文案属于对外契约，留在根包。这与 `@url.build_full_path` 返回 `Option`、根包负责报错的分工完全一致。
 
-**根包有五个源文件**：`client.mbt`（`Client` + 三个入口 + 接壤层）、`http_error.mbt`（错误类型与所有抛错点）、`facade.mbt`（对外响应类型与再导出）、`interceptors.mbt`（拦截器链，`client.mbt` 在管线两端调它）、`shortcuts.mbt`（七个动词的快捷方法，转调 `Client::request`，见 `14-shortcut-methods.md`）。前四个都用上了 RL-04 为根包文件开出的例外（≤ 1000 行，需在文件头声明）；`shortcuts.mbt` 不足 300 行，用不上例外。
+**根包有五个源文件**：`client.mbt`（`Client` + 三个入口 + 接壤层）、`http_error.mbt`（错误类型与所有抛错点）、`facade.mbt`（对外响应类型与再导出）、`interceptors.mbt`（拦截器的注册 / 同名替换 / 按名移除与三条链，`client.mbt` 在管线两端调它）、`shortcuts.mbt`（七个动词的快捷方法，转调 `Client::request`，见 `14-shortcut-methods.md`）。前四个都用上了 RL-04 为根包文件开出的例外（≤ 1000 行，需在文件头声明；`interceptors.mbt` 是加了具名注册与按名移除之后越过 300 行的）；`shortcuts.mbt` 不足 300 行，用不上例外。
 
 **同包拆文件是免费的**：同目录 = 同包，拆文件既不成环、也不影响 `pub` / `priv` 的可见性，`.mbti` 一个字都不会变——所以「文件太长」永远可以靠拆文件解决，不必动包结构。跨包才有代价（`HttpError` 就是被这一条钉在根包里的，理由见上）。**例外只给根包**：子包仍守 300 行（`util/` 两个文件各不足 300 行，`config` / `sse` / `transport` 里的文件超了就必须拆）。
 

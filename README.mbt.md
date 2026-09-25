@@ -162,6 +162,7 @@ let client = @moonhttp.Client::new(
 - 拦截器拿到的配置是合并后的；`client.create(...)` 派生的实例会继承这份链。
 - 一次请求只跑一遍：跟 5 跳重定向也只跑一次。两个错误处理器与响应链都只作用于 `Client::request`——两个流式入口只过请求拦截器。
 - 闭包要写箭头形式（`config => ...`）或显式标 `async fn`——效果推断只认箭头语法，具名同步函数传不进去。
+- 给一条起名（`use_request(f, name="auth")`）就**可寻址**：同名再注册**替换原位**（换 token 源不必先撤再注册），`remove_request("auth")` 按名撤下，名字没注册过返回 `None`。撤下发生在**建实例之前**——要给某个实例少挂一条，就把裁过的链交给它：`Client::new(interceptors~ = base.remove_response("unwrap").unwrap())`。语义细则见 [docs/11](docs/11-interceptors.md)。
 
 ### 取消请求
 
@@ -292,7 +293,7 @@ println(mock.last_request().unwrap().url) // 已经拼好 base_url 与 query 的
 - **SSE 自动重连**：`id` / `retry` 已经作为持久状态带出来了，按 `retry` 间隔重订阅留给上层；计划内置。
 - **响应体自动解析**：读法由你在 `text()` / `bytes()` / `json()` 里显式选；静态类型下「猜内容类型」需要先重新设计响应类型的形态。
 - **`transformRequest` / `transformResponse`**：不做成独立配置项——请求体固定为四种形态，响应体读法在 `Response` 上，要「发请求前换 body」「拿到响应后改正文」就在两段拦截器里做。
-- **拦截器的** `eject` / `clear` / `runWhen`：撤下一个拦截器就重新构建一份 `Interceptors` 值。
+- **拦截器的** `runWhen`（按条件跳过）与 `synchronous`（批量注册）：条件写在拦截器体内 `if` 即可，批量注册用链式 `use_*`。（`eject` 的等价物是具名注册 + `remove_request` / `remove_response`，见上面「拦截器」一节；`clear` 不算缺口——那等于从 `Interceptors::new()` 起步。）
 - **重定向的** `beforeRedirect` 回调与自定义敏感头名单。
 - **代理的** SOCKS 支持、`http_proxy` / `no_proxy` 环境变量，以及按请求关掉代理的开关（显式 `with_proxy` 已支持）。
 - **单条头的多值**：一个头名只能对应一个字符串值。

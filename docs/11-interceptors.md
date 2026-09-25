@@ -1,7 +1,9 @@
 # 11 拦截器
 
 对应 axios 的 `interceptors.request` / `interceptors.response`：**请求侧改配置 / 救错 + 响应侧改响应 / 救错**
-的四段式，挂在**实例**上（`Client::new(interceptors~)`），不是请求级配置。
+的四段式，挂在**实例**上（`Client::new(interceptors~)`），不是请求级配置。注册时可以给每条起名（`name?`），
+名字让链**可寻址**：同名再注册替换原位、`remove_request` / `remove_response` 按名撤下——这是
+`Client::create` 整份继承拦截器时唯一能表达「这个实例少挂一条」的手段（见「具名注册与按名移除 / 替换」）。
 
 拦截器是 axios 高级特性里离「中间件」最近的一个，但本项目**没有做洋葱模型**：洋葱的优势场景是
 transport 装饰器式架构（一个中间件同时看得到往返两侧），而本项目的管线是分阶段的、三个入口返回三种
@@ -13,11 +15,11 @@ transport 装饰器式架构（一个中间件同时看得到往返两侧），�
 
 | 文件 | 职责 |
 |---|---|
-| `src/interceptors.mbt` | 四个函数类型的别名、`Interceptors`（收集与注册）、三条链的驱动（顺序与错误流转） |
+| `src/interceptors.mbt` | 四个函数类型的别名、`Interceptors`（注册、同名替换、按名移除）、三条链的驱动（顺序与错误流转） |
 | `src/client.mbt` | `Client::request` 把请求链、请求错误链、状态码校验、响应链串成一条管线；`Client::open_stream` 只串请求链；`Client::new` / `create` |
 | `src/facade.mbt` | `Response` 的五个改写入口（`with_status` / `with_headers` / `with_body` / `with_text` / `with_json`） |
 | `src/http_error.mbt` | `HttpError::new`：包外第一次能构造错误，供请求拦截器主动中止；`validate_response`（返回 `Result`，是响应侧链的输入） |
-| `src/interceptor_test.mbt` | 端到端用例：改写、两侧顺序、被拦下、**错误分流**、重试、缓存命中、重定向只跑一次、流式入口 |
+| `src/interceptor_test.mbt` | 端到端用例：改写、两侧顺序、被拦下、**错误分流**、重试、缓存命中、重定向只跑一次、流式入口、具名注册与按名移除 / 同名替换 |
 
 ## 数据结构
 
@@ -27,14 +29,18 @@ pub type RequestErrorHandler  = async (HttpError) -> Response raise HttpError
 pub type ResponseInterceptor  = async (Response) -> Response raise HttpError
 pub type ResponseErrorHandler = async (HttpError) -> Response raise HttpError
 
-pub struct Interceptors {   // 私有字段：两段链，各自成对存放
-  // requests  : Array[RequestInterceptor  × RequestErrorHandler]
-  // responses : Array[ResponseInterceptor × ResponseErrorHandler]
+pub struct Interceptors {   // 私有字段：两段链，各自成对存放；名字存在每一对上
+  // requests  : Array[{ on_fulfilled : RequestInterceptor,  on_rejected : RequestErrorHandler,  name : String? }]
+  // responses : Array[{ on_fulfilled : ResponseInterceptor, on_rejected : ResponseErrorHandler, name : String? }]
 }
 
 pub fn Interceptors::new() -> Interceptors
-pub fn Interceptors::use_request(Self, RequestInterceptor, on_rejected? : RequestErrorHandler) -> Interceptors
-pub fn Interceptors::use_response(Self, ResponseInterceptor, on_rejected? : ResponseErrorHandler) -> Interceptors
+pub fn Interceptors::use_request(Self, RequestInterceptor, on_rejected? : RequestErrorHandler,
+                                 name? : StringView) -> Interceptors
+pub fn Interceptors::use_response(Self, ResponseInterceptor, on_rejected? : ResponseErrorHandler,
+                                  name? : StringView) -> Interceptors
+pub fn Interceptors::remove_request(Self, name : StringView) -> Interceptors?
+pub fn Interceptors::remove_response(Self, name : StringView) -> Interceptors?
 ```
 
 两个错误处理器的签名**完全相同**（`HttpError -> Response`），分开命名是为了让两段链各自自解释、
@@ -42,8 +48,9 @@ pub fn Interceptors::use_response(Self, ResponseInterceptor, on_rejected? : Resp
 
 五个必须知道的口径：
 
-- **注册是值语义、链式的**：`use_*` 不改自己，返回追加后的新值（与 `FormData::append_text` 一致）。
-  传给 `Client::new` 之后视作冻结。
+- **注册与移除都是值语义、链式的**：`use_*` / `remove_*` 都不改自己，返回改动后的新值（与
+  `FormData::append_text` 一致）。传给 `Client::new` 之后视作冻结——实例拿的是当时那份值，
+  之后的注册与移除都不影响它，`Client` 上也没有回读 / 改写的口。
 - **`use_*` 的两个处理器是一对**，位置关系是语义的一部分（对应 axios 的 `use(f, r)`），但两对的
   规则不同：请求侧的错误处理器接的是**被本拦截器或更晚注册的拦截器拦下**以及**派发阶段的失败**
   （请求侧正常链是 LIFO，所以最晚注册的那个最先看到错误）；响应侧的错误处理器接住的是**排在它
@@ -51,7 +58,8 @@ pub fn Interceptors::use_response(Self, ResponseInterceptor, on_rejected? : Resp
   ——那种错误交给更晚注册的错误处理器（promise 链里 `then(f, r)` 的 `r` 只接「进入这一对之前」已是
   失败的情况，`src/interceptor_test.mbt` 的 "an error from a fulfilled handler goes to the next pair"
   钉着）。
-- **不写 `on_rejected`** 等于「不管错误、原样往外传」。调用时得写标签：`use_request(f, on_rejected=r)`
+- **不写 `on_rejected`** 等于「不管错误、原样往外传」；**不写 `name`** 等于无名注册（撤不下来）。
+  两个都是可选参数，调用时得写标签：`use_request(f, on_rejected=r)`、`use_request(f, name="auth")`
   ——可选参数不能按位置传（实测）。
 - **闭包必须是箭头形式或显式标注 async**：MoonBit 的效果推断只认箭头语法，写 `config => ...`
   或 `async fn(config) -> Config raise HttpError { ... }`。**具名同步函数不能直接传**——
@@ -59,6 +67,57 @@ pub fn Interceptors::use_response(Self, ResponseInterceptor, on_rejected? : Resp
   `Expr Type Mismatch`），要包一层 `config => f(config)`。
 - **拦截器里不能写 `assert_eq`**：链的签名只允许抛 `HttpError`，而 `assert_eq` 抛的是别的错误类型。
   断言写在拦截器外面，把要观察的东西记到闭包外的变量里再断言（实测）。
+
+## 具名注册与按名移除 / 替换
+
+`use_*` 的 `name?` 给这一对处理器起个名字，名字让这条**可寻址**：
+
+```moonbit
+let base = @moonhttp.Interceptors::new()
+  .use_request(config => config.with_header("X-Token", token), name="auth")
+  .use_request(config => config.with_header("X-Trace", id))    // 无名：撤不下来
+  .use_response(rewrite, name="rewrite")
+
+let trimmed = base.remove_response("rewrite").unwrap()          // Interceptors?
+let swapped = base.use_request(newTokenSource, name="auth")     // 替换原位
+```
+
+四条语义：
+
+- **同名替换原位**：同名再注册换掉旧的那对，**位置不变**——链的组成与 LIFO / FIFO 顺序都不动，
+  于是「换 token 源」「换一版实现」是一行，不必「先撤下再注册」。同一侧内因此不存在同名两条，
+  `remove_*` 撤哪个没有歧义（「同一侧内名字唯一」是 `use_*` 维护的不变量）。
+- **名字没注册过 → `None`**：不 panic，也不静默当成撤成功。拼错的名字立刻可见，不会留下
+  「拦截器其实还在跑」这类查不出来的 bug；返回 `None` 时原值一个元素都不动。
+- **两侧命名空间独立**：`remove_request("auth")` 不碰响应侧的同名那条——各扫各的数组。
+- **名字按原样精确匹配**：不 trim、不折叠大小写。这与 `Headers::set` 的规范化不同是有意的：
+  头名要上线且大小写不敏感，而拦截器的名字永不上线，「两个写法指向同一个键」只会是看不见的行为。
+
+名字是**字符串弱契约**：拼错不会静态报错，只有 `remove_*` 的 `None` 会告诉你，所以建议把名字放进
+常量（`let AUTH = "auth"`）。无名注册的那几条撤不下来——要撤就得在注册时起名。整段清空也不提供：
+那等于从 `Interceptors::new()` 起步，跟「新造一份」没有区别。
+
+**撤下发生在建实例之前**：`Interceptors` 是值，实例拿到的是当时那份，注册 / 移除都不影响它。
+所以这个能力的实际用途是**「一份共享的基础链按客户端裁剪」**：
+
+```moonbit
+// app 级共享的基础链
+let base = @moonhttp.Interceptors::new()
+  .use_request(auth, name="auth")
+  .use_request(trace, name="trace")
+  .use_response(unwrap_json, name="unwrap")
+
+// 上传客户端不要 JSON 改写；轮询客户端不要逐请求日志
+let uploader = @moonhttp.Client::new(interceptors~ = base.remove_response("unwrap").unwrap())
+let poller = @moonhttp.Client::new(interceptors~ = base.remove_request("trace").unwrap())
+```
+
+这在 `Client::create` 上尤其要紧：派生实例**整份继承**拦截器（见下表），裁剪是唯一能表达
+「这个派生实例少挂一条」的手段。反过来，链只在建实例处就地写一次、也不给别人复用，就不需要起名，
+也不需要移除——把要的那几条写出来即可。
+
+对应 axios 的 `eject(id)`：axios 用 `use` 返回的**数字 id** 寻址，这里用注册时给的**名字**
+（下标在条件注册下会漂，名字不会）；同名替换原位则是 axios 没有的一档。
 
 ## 执行顺序
 
@@ -352,7 +411,10 @@ gaato/http 那类实现把中间件做成 `Transport` 的装饰器，在本项�
 
 | 项 | axios | 本项目 |
 |---|---|---|
-| 注册形状 | `axios.interceptors.request.use(f, r)` 返回 id，可 `eject` | `Interceptors::use_request` / `use_response` 链式构建，无 `eject` |
+| 注册形状 | `axios.interceptors.request.use(f, r)` 返回数字 id，可 `eject(id)`；同名注册只是又追加一条 | `Interceptors::use_request` / `use_response` 链式构建；具名注册可 `remove_request(name)` / `remove_response(name)` 撤下，**同名再注册替换原位**（axios 没有这一档）。寻址用名字而不是数字 id（见上） |
+| 未注册名字的移除 | `eject` 一个不存在的 id 是**静默无动作**（`if (handlers[id])`） | 返回 `None`——拼错的名字立刻可见（不 panic，也不当成撤成功） |
+| 整段清空 | `interceptors.request.clear()` | 从 `Interceptors::new()` 起步：同一件事，不需要再多一个口 |
+| 链的组合 | 只有实例上的可变 `interceptors`（`eject` 改的是实例本身） | 值语义：同一份链可共享、裁剪后交给多个实例（见「具名注册与按名移除 / 替换」） |
 | `transformRequest` / `transformResponse` | 独立的 hook，可注册多个、按序跑，`data` 是 `any` | **不做独立 hook**：由两段拦截器承担（超集，能改的更多），改写要落回字节（见上） |
 | 请求侧错误处理器 | 有（成对给），但**接不到派发失败**（`dispatchRequest` 的 rejected 是 `undefined`） | 有：接住**请求阶段的一切失败**，含连不上、超时、取消、重定向超限、读体失败 |
 | 错误分流 | 一条 promise 链：网络错误落**响应侧** rejected | **按来源分流**：请求阶段落请求侧、状态码落响应侧（见上） |
@@ -369,8 +431,9 @@ gaato/http 那类实现把中间件做成 `Transport` 的装饰器，在本项�
 
 - **洋葱模型 / 中间件链**：理由见上。真要「单个函数同时观察往返两侧」或「多次调用下游」，
   本版本没有对应能力。
-- **`eject` / `clear` / 按条件跳过（`runWhen`）**：注册发生在建实例之前，撤下一个拦截器直接
-  重新构建 `Interceptors` 值即可。
+- **`runWhen`（按条件跳过）与 `synchronous`（批量注册）**：条件写在拦截器体内 `if` 即可；批量注册
+  用链式 `use_*` 已经够顺。（`eject` 已支持，见「具名注册与按名移除 / 替换」；`clear` 不是缺口
+  ——它等于从 `Interceptors::new()` 起步。）
 - **请求错误处理器「返回 config 继续跑链」**：返回 `Response` 已经覆盖重试（在处理器里自己发）
   与救回两种用法，多一套「返回 config」的语义只会让同一件事有两个写法。
 - **流式入口的响应拦截 / 错误处理**：返回类型不是 `Response`，救回没有落点（见上表）。
@@ -402,5 +465,12 @@ gaato/http 那类实现把中间件做成 `Transport` 的装饰器，在本项�
    必须按 `config.response_encoding` 编码**（共用 `Response::body_encoding`）：读方向在 `text()` /
    `json()`、写方向在 `encode_body`，三处一旦漂移，非 UTF-8 客户端里改写过的响应就会与读法对不上
    ——`src/encoding_test.mbt` 的 "…rewrite round trips through the same encoding" 钉着这条。
-5. **`Interceptors` 的字段是私有的、注册是值语义**：别改成就地 push（会让共享了同一个值的两个实例
-   互相影响），也别把它挪进 `config` 包（会成环）。
+5. **`Interceptors` 的字段是私有的，注册 / 替换 / 移除一律值语义**：别改成就地 push 或就地删
+   （会让共享了同一个值的两个实例互相影响），也别把它挪进 `config` 包（会成环）。注册与移除的
+   校验（名字唯一性靠「同名替换原位」维持、未命中返回 `None`、名字按原样精确匹配）都留在
+   `src/interceptors.mbt` 内，`client.mbt` 不参与其中任何一环——那份值交到实例手上时已经自洽。
+   `a named request interceptor can be removed by name`、`re-registering the same name replaces
+   the pair in place`、`removing an interceptor leaves the original set alone` 钉着这几条。
+6. **具名注册的默认行为不能变**：`name` 是**追加在最后**的可选参数，省略时的行为必须与具名之前
+   完全一致（链尾追加、无名可查不到）；把 `name` 提到 `on_rejected` 前面、或让它有默认名字，
+   都会静默改变既有调用点的语义。

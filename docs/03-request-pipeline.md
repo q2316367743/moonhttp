@@ -5,7 +5,7 @@
 | 文件 | 职责 |
 |---|---|
 | `src/client.mbt` | `Client::request` / `Client::stream` / `Client::sse` 的编排：合并 → 定方法 → 取消预检查 → 请求拦截器 → 发送 →（读全量 / 交还流）→ 校验 → 响应拦截器；失败按来源分流到请求侧 / 响应侧两条错误链 |
-| `src/interceptors.mbt` | 拦截器与两条错误链：`Interceptors`（注册）、`run_request` / `run_request_errors` / `run_response`（顺序与错误流转，详见 `11-interceptors.md`） |
+| `src/interceptors.mbt` | 拦截器与两条错误链：`Interceptors`（注册、同名替换、按名移除，全部发生时都还没进管线，见 `11-interceptors.md`）、`run_request` / `run_request_errors` / `run_response`（顺序与错误流转） |
 | `src/shortcuts.mbt` | 七个动词的快捷方法（`get` / `post` / …）：补 `url` 与动词后转调 `Client::request`，没有自己的管线（详见 `14-shortcut-methods.md`） |
 | `src/config/merge.mbt` | 合并契约：四种策略、`merge_config`、`flatten_headers`（为什么在 `config` 包见 `02-config-merge.md`） |
 | `src/config/body.mbt` | 请求体的四种形态与序列化：`serialize_body`（字节 + 建议的 `Content-Type`） |

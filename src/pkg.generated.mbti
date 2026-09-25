@@ -76,8 +76,10 @@ pub struct Interceptors {
   // private fields
 }
 pub fn Interceptors::new() -> Self
-pub fn Interceptors::use_request(Self, async (@config.Config) -> @config.Config raise HttpError, on_rejected? : async (HttpError) -> Response raise HttpError) -> Self
-pub fn Interceptors::use_response(Self, async (Response) -> Response raise HttpError, on_rejected? : async (HttpError) -> Response raise HttpError) -> Self
+pub fn Interceptors::remove_request(Self, StringView) -> Self?
+pub fn Interceptors::remove_response(Self, StringView) -> Self?
+pub fn Interceptors::use_request(Self, async (@config.Config) -> @config.Config raise HttpError, on_rejected? : async (HttpError) -> Response raise HttpError, name? : StringView) -> Self
+pub fn Interceptors::use_response(Self, async (Response) -> Response raise HttpError, on_rejected? : async (HttpError) -> Response raise HttpError, name? : StringView) -> Self
 
 pub(all) struct Response {
   status : Int

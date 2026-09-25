@@ -725,3 +725,213 @@ async test "on_rejected can rewrite the error body as JSON" {
   assert_eq(response.status, 200)
   assert_eq(response.text(), "{\"error\":{\"status\":404}}")
 }
+
+///|
+/// 具名注册是**可寻址**的：按名撤下请求侧的一条，撤下的不再跑，剩下的相对位置一点
+/// 不动（仍然后注册先跑）。无名注册的那几条不受影响，也撤不下来——它们不在命名
+/// 空间里，要去掉只能重建一份值。
+async test "a named request interceptor can be removed by name" {
+  let mut trace = ""
+  let interceptors = @moonhttp.Interceptors::new()
+    .use_request(
+      config => {
+        trace = trace + "A|"
+        config
+      },
+      name="a",
+    )
+    .use_request(config => {
+      trace = trace + "#|"
+      config
+    })
+    .use_request(
+      config => {
+        trace = trace + "C|"
+        config
+      },
+      name="c",
+    )
+  let trimmed = interceptors.remove_request("a").unwrap()
+  let (client, _mock) = client_with_interceptors(
+    raw_response(200, "OK", "{}"),
+    trimmed,
+  )
+  ignore(client.request(@moonhttp.Config::new("/a")))
+  // 剩下 [无名, c]，后注册先跑：c → 无名
+  assert_eq(trace, "C|#|")
+}
+
+///|
+/// 响应侧同规则，FIFO 顺序里剩下的相对位置不变。
+async test "a named response interceptor can be removed by name" {
+  let mut trace = ""
+  let interceptors = @moonhttp.Interceptors::new()
+    .use_response(
+      response => {
+        trace = trace + "A|"
+        response.with_text(response.text() + "A")
+      },
+      name="a",
+    )
+    .use_response(
+      response => {
+        trace = trace + "B|"
+        response.with_text(response.text() + "B")
+      },
+      name="b",
+    )
+  let trimmed = interceptors.remove_response("a").unwrap()
+  let (client, _mock) = client_with_interceptors(
+    raw_response(200, "OK", "x"),
+    trimmed,
+  )
+  let response = client.request(@moonhttp.Config::new("/a"))
+  assert_eq(trace, "B|")
+  assert_eq(response.text(), "xB")
+}
+
+///|
+/// 移除同样只动这一份值（与 `use_*` 同一个值语义口径）：撤下后的那份里没有它，
+/// 而**原值里那条还在**——拿原值跑一次仍然会跑。所以「撤下」是派生出新值，
+/// 不是改掉已经交给实例的那份链。
+async test "removing an interceptor leaves the original set alone" {
+  let mut trace = ""
+  let base = @moonhttp.Interceptors::new().use_request(
+    config => {
+      trace = trace + "A|"
+      config
+    },
+    name="a",
+  )
+  let trimmed = base.remove_request("a").unwrap()
+  let (client, _mock) = client_with_interceptors(
+    raw_response(200, "OK", "{}"),
+    base,
+  )
+  ignore(client.request(@moonhttp.Config::new("/a")))
+  assert_eq(trace, "A|")
+  let (trimmed_client, _mock2) = client_with_interceptors(
+    raw_response(200, "OK", "{}"),
+    trimmed,
+  )
+  ignore(trimmed_client.request(@moonhttp.Config::new("/a")))
+  // 撤下后的那份里没有它：这一次没有再留下痕迹
+  assert_eq(trace, "A|")
+}
+
+///|
+/// 名字没注册过时返回 `None`：不 panic，也不静默当成撤成功——`None` 就是「这个名字
+/// 不在这一侧的链上」，拼错了立刻看得见，不会留下「拦截器其实还在跑」的隐蔽 bug。
+///
+/// 空名字不是「无名」的别名：无名注册用的是 `None`（压根不在命名空间里），
+/// 空串只是又一个没注册过的键。
+async test "removing a name that was never registered returns none" {
+  let interceptors = @moonhttp.Interceptors::new().use_request(config => config)
+  assert_true(interceptors.remove_request("nope") is None)
+  assert_true(interceptors.remove_response("nope") is None)
+  assert_true(interceptors.remove_request("") is None)
+}
+
+///|
+/// 同名再注册是**替换原位**，不是追加：链上不会出现同名两条，位置（于是 LIFO
+/// 顺序）也不变。
+///
+/// 用例把「原位」与「删旧的再追加」的区别做出来：若实现是后者，`mid` 的新实现会排到
+/// `tail` 后面，trace 就成了 `mid-new|tail|outer|`。
+async test "re-registering the same name replaces the pair in place" {
+  let mut trace = ""
+  let interceptors = @moonhttp.Interceptors::new()
+    .use_request(
+      config => {
+        trace = trace + "outer|"
+        config
+      },
+      name="outer",
+    )
+    .use_request(
+      config => {
+        trace = trace + "mid-old|"
+        config
+      },
+      name="mid",
+    )
+    .use_request(
+      config => {
+        trace = trace + "tail|"
+        config
+      },
+      name="tail",
+    )
+    .use_request(
+      config => {
+        trace = trace + "mid-new|"
+        config
+      },
+      name="mid",
+    )
+  let (client, _mock) = client_with_interceptors(
+    raw_response(200, "OK", "{}"),
+    interceptors,
+  )
+  ignore(client.request(@moonhttp.Config::new("/a")))
+  // 旧实现被换掉（没有两条 mid），位置还在中间：后注册先跑 → tail → mid-new → outer
+  assert_eq(trace, "tail|mid-new|outer|")
+}
+
+///|
+/// 两侧的命名空间互相独立：撤请求侧的 `same` 不动响应侧的同名那条。名字只在各自
+/// 那一侧里寻址，`remove_request` / `remove_response` 各扫各的数组。
+async test "request and response names live in separate namespaces" {
+  let mut trace = ""
+  let interceptors = @moonhttp.Interceptors::new()
+    .use_request(
+      config => {
+        trace = trace + "req|"
+        config
+      },
+      name="same",
+    )
+    .use_response(
+      response => {
+        trace = trace + "res|"
+        response
+      },
+      name="same",
+    )
+  let trimmed = interceptors.remove_request("same").unwrap()
+  let (client, _mock) = client_with_interceptors(
+    raw_response(200, "OK", "{}"),
+    trimmed,
+  )
+  ignore(client.request(@moonhttp.Config::new("/a")))
+  assert_eq(trace, "res|")
+}
+
+///|
+/// 名字指向**一整对**处理器，不是只指正常那条（注册时成对给，与 axios 的
+/// `use(f, r)` 同一个形状）：撤下之后错误处理器一并消失，状态码失败重新变成抛错。
+async test "a name covers the whole pair including the error handler" {
+  let interceptors = @moonhttp.Interceptors::new().use_response(
+    response => response,
+    on_rejected=error => {
+      match error.response() {
+        Some(response) => response.with_status(200)
+        None => raise error
+      }
+    },
+    name="rescue",
+  )
+  let (rescued_client, _mock) = client_with_interceptors(
+    raw_response(503, "ServiceUnavailable", "down"),
+    interceptors,
+  )
+  let rescued = rescued_client.request(@moonhttp.Config::new("/a"))
+  assert_eq(rescued.status, 200)
+  let trimmed = interceptors.remove_response("rescue").unwrap()
+  let (plain_client, _mock2) = client_with_interceptors(
+    raw_response(503, "ServiceUnavailable", "down"),
+    trimmed,
+  )
+  let error = interceptor_error(plain_client, @moonhttp.Config::new("/a"))
+  assert_eq(error.code(), @moonhttp.ErrorCode::BadResponse)
+}

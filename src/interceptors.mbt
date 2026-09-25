@@ -1,4 +1,12 @@
 // ============================================================================
+// AGENTS.md RL-04 例外声明
+//
+// 本文件是拦截器的**唯一**落点：注册（含具名）、按名移除与三条链的驱动都在这里，
+// 名字唯一性这类校验也收在此处——`client.mbt` 只消费一份已经自洽的 `Interceptors`
+// 值，不参与注册或移除的任何一环。加入具名注册与按名移除后文件超过 300 行，按
+// RL-04 为「根包文件」开出的例外处理——上限 1000 行。也不拆成 `interceptors/`
+// 子包：`Response` / `HttpError` 定义在根包，反向引用会成环。
+//
 // 拦截器：请求侧（改配置 / 救错）与响应侧（改响应 / 救错）的四段式
 //
 // 对应 axios 的 `interceptors.request` / `interceptors.response`，顺序规则逐条对齐：
@@ -15,7 +23,7 @@
 //
 // 文件内的分区（顺序无关，用区块注释标出）：
 //   1. 四个函数类型   —— 拦截器 / 错误处理器的契约
-//   2. Interceptors   —— 收集与注册（链式、值语义）
+//   2. Interceptors   —— 注册、同名替换与按名移除（链式、值语义）
 //   3. 三条链的驱动   —— 顺序与错误流转（包私有，由 `client.mbt` 调）
 // ============================================================================
 
@@ -84,7 +92,10 @@ pub type ResponseInterceptor = async (Response) -> Response raise HttpError
 pub type ResponseErrorHandler = async (HttpError) -> Response raise HttpError
 
 // ---------------------------------------------------------------------------
-// 2. Interceptors —— 收集与注册
+// 2. Interceptors —— 注册、同名替换与按名移除
+//
+// 「同一侧内名字唯一」是这一节维护的**不变量**：带名字的注册要么追加、要么原地换掉
+// 同名那条，于是 `remove_*` 撤哪个没有歧义。查找规则与辅助函数都是私有的，不外泄。
 // ---------------------------------------------------------------------------
 
 ///|
@@ -95,6 +106,8 @@ pub type ResponseErrorHandler = async (HttpError) -> Response raise HttpError
 priv struct RequestPair {
   on_fulfilled : RequestInterceptor
   on_rejected : RequestErrorHandler
+  /// 注册时给的名字，`None` = 无名注册（事后撤不下来）
+  name : String?
 }
 
 ///|
@@ -107,21 +120,37 @@ priv struct RequestPair {
 priv struct ResponsePair {
   on_fulfilled : ResponseInterceptor
   on_rejected : ResponseErrorHandler
+  /// 注册时给的名字，`None` = 无名注册（事后撤不下来）
+  name : String?
 }
 
 ///|
 /// 拦截器的集合，对应 axios 实例上的 `interceptors`。
 ///
-/// 链式构建、**值语义**：`use_*` 不改自己，而是返回追加后的新值（与
-/// `FormData::append_text` 同一口径——数组是共享的，就地改会让别的集合跟着变）。
-/// 传给 `Client::new` 之后视作冻结。
+/// 链式构建、**值语义**：`use_*` 与 `remove_*` 都不改自己，而是返回改动后的新值
+/// （与 `FormData::append_text` 同一口径——数组是共享的，就地改会让别的集合跟着变）。
+/// 传给 `Client::new` 之后视作冻结：实例拿的是当时那份值，之后的注册与移除都不会
+/// 影响到它——所以要给某个实例换链，就是换一份值重建（没有实例级的读写口）。
+///
+/// 注册时可以给一条起名（`use_request(f, name="auth")`）：名字让这条**可寻址**
+/// ——同名再注册替换原位、`remove_request(name)` 按名撤下，用途是「一份共享的基础链
+/// 按客户端裁剪」，这是 `Client::create` 整份继承拦截器时唯一能表达「少挂一条」的
+/// 手段。无名注册的撤不下来，撤链要走名字。
 ///
 /// ```moonbit nocheck
 /// let client = @moonhttp.Client::new(
 ///   interceptors=@moonhttp.Interceptors::new()
-///     .use_request(config => config.with_header("X-Token", token))
+///     .use_request(config => config.with_header("X-Token", token), name="auth")
 ///     .use_response(response => response.with_text(unwrap(response.text()))),
 /// )
+///
+/// // 共享一份基础链，按客户端裁剪：不必把链再抄一遍，基础链演进时也不会漂
+///
+/// let base = @moonhttp.Interceptors::new()
+///   .use_request(config => config.with_header("X-Token", token), name="auth")
+///   .use_response(rewrite_json, name="rewrite")
+///
+/// let trimmed = base.remove_response("rewrite").unwrap()
 /// ```
 pub struct Interceptors {
   priv requests : Array[RequestPair]
@@ -135,43 +164,157 @@ pub fn Interceptors::new() -> Interceptors {
 }
 
 ///|
-/// 追加一对请求处理器：正常处理器**后注册先跑**（axios 的请求拦截器是 LIFO），
+/// 按名字找请求处理器在链上的下标；没有这个名字返回 `None`。
+///
+/// 私有：名字的唯一性与查找规则都收在本文件内，包外只需要「注册」与「按名移除」
+/// 两个动作，不需要认识下标（下标在条件注册下会漂，这正是寻址走名字的原因）。
+/// 名字按原样精确匹配——不做 trim、不折叠大小写：拦截器的名字永不上线，
+/// 规范化只会带来「两个写法指向同一个键」这种看不见的行为。
+fn request_index_of(requests : Array[RequestPair], name : String) -> Int? {
+  for i = 0; i < requests.length(); i = i + 1 {
+    match requests[i].name {
+      Some(existing) => if existing == name { return Some(i) }
+      None => ()
+    }
+  }
+  None
+}
+
+///|
+/// 按名字找响应处理器在链上的下标；没有这个名字返回 `None`。与请求侧同规则，
+/// 两侧各扫各的数组（命名空间独立）。
+fn response_index_of(responses : Array[ResponsePair], name : String) -> Int? {
+  for i = 0; i < responses.length(); i = i + 1 {
+    match responses[i].name {
+      Some(existing) => if existing == name { return Some(i) }
+      None => ()
+    }
+  }
+  None
+}
+
+///|
+/// 注册一对请求处理器：正常处理器**后注册先跑**（axios 的请求拦截器是 LIFO），
 /// 错误处理器与它同向（请求侧的两条链只有一个方向，见 `docs/11-interceptors.md`）。
 ///
 /// `on_rejected` 省略表示「这个拦截器不管错误」，错误继续交给更早注册的错误处理器
-/// （与 axios 里不写第二个参数同义）。它是可选参数，调用时得写标签：
-/// `.use_request(f, on_rejected=r)`——可选参数不能按位置传（实测）。
+/// （与 axios 里不写第二个参数同义）。
+///
+/// `name` 省略 = 无名注册：链尾追加，事后撤不下来（要能撤就得现在起名）。给了名字
+/// 则这条**可寻址**：同名再注册**替换原位**——位置不变，LIFO 顺序照旧，所以同一侧
+/// 内不存在同名两条；`remove_request(name)` 按名撤下。名字只在请求侧内唯一，与响应侧
+/// 互不相干。
+///
+/// 两个可选参数调用时都得写标签（可选参数不能按位置传，实测）：
+/// `.use_request(f, on_rejected=r)` / `.use_request(f, name="auth")`。
 pub fn Interceptors::use_request(
   self : Interceptors,
   on_request : RequestInterceptor,
   on_rejected? : RequestErrorHandler,
+  name? : StringView,
 ) -> Interceptors {
   let on_rejected = match on_rejected {
     Some(handler) => handler
     None => error => raise error
   }
+  // copy 后再改：数组可能属于别的集合（比如一份共享的基础链），就地改会让它跟着变。
   let requests = self.requests.copy()
-  requests.push({ on_fulfilled: on_request, on_rejected, })
+  match name {
+    None =>
+      requests.push({ on_fulfilled: on_request, on_rejected, name: None, })
+    Some(value) => {
+      let key = value.to_owned()
+      // 显式标注：两个 pair 的字段名同形，字面量单看无法判断是哪一种。
+      let pair : RequestPair = {
+        on_fulfilled: on_request,
+        on_rejected,
+        name: Some(key),
+      }
+      match request_index_of(requests, key) {
+        Some(index) => requests[index] = pair
+        None => requests.push(pair)
+      }
+    }
+  }
   { requests, responses: self.responses, }
 }
 
 ///|
-/// 追加一对响应处理器：**先注册先跑**（axios 的响应拦截器是 FIFO）。
+/// 注册一对响应处理器：**先注册先跑**（axios 的响应拦截器是 FIFO）。
 ///
 /// `on_rejected` 省略表示「这个拦截器不管错误」，错误继续交给更晚注册的错误
 /// 处理器（与 axios 里不写第二个参数同义）。
+///
+/// `name` 与请求侧同规则：省略 = 无名（撤不下来，FIFO 顺序里照常跑），给了名字则
+/// 同名替换原位、可用 `remove_response(name)` 撤下；名字只在响应侧内唯一。
 pub fn Interceptors::use_response(
   self : Interceptors,
   on_fulfilled : ResponseInterceptor,
   on_rejected? : ResponseErrorHandler,
+  name? : StringView,
 ) -> Interceptors {
   let on_rejected = match on_rejected {
     Some(handler) => handler
     None => error => raise error
   }
+  // copy 后再改：数组可能属于别的集合，就地改会让它跟着变。
   let responses = self.responses.copy()
-  responses.push({ on_fulfilled, on_rejected, })
+  match name {
+    None => responses.push({ on_fulfilled, on_rejected, name: None, })
+    Some(value) => {
+      let key = value.to_owned()
+      // 显式标注：两个 pair 的字段名同形，字面量单看无法判断是哪一种。
+      let pair : ResponsePair = { on_fulfilled, on_rejected, name: Some(key), }
+      match response_index_of(responses, key) {
+        Some(index) => responses[index] = pair
+        None => responses.push(pair)
+      }
+    }
+  }
   { requests: self.requests, responses, }
+}
+
+///|
+/// 按名撤下一个请求拦截器，返回**新的集合**；这个名字没注册过时返回 `None`。
+///
+/// 名字没对上就返回 `None`，不 panic，也不静默当成撤成功：拼错的名字必须立刻可见，
+/// 否则「拦截器其实还在跑」是查不出来的那类 bug。`None` 时一个元素都不动，
+/// 原集合可以照用。
+///
+/// 对应 axios 的 `eject(id)`，差别在寻址方式：axios 用 `use` 返回的数字 id，这里用注册
+/// 时给的名字——下标在条件注册下会漂，名字不会。无名注册的那几条撤不下来，要撤就得在
+/// 注册时起名；撤下只影响这份值，已经交给 `Client::new` 的实例不受影响。
+pub fn Interceptors::remove_request(
+  self : Interceptors,
+  name : StringView,
+) -> Interceptors? {
+  let key = name.to_owned()
+  match request_index_of(self.requests, key) {
+    None => None
+    Some(index) => {
+      let requests = self.requests.copy()
+      ignore(requests.remove(index))
+      Some({ requests, responses: self.responses, })
+    }
+  }
+}
+
+///|
+/// 按名撤下一个响应拦截器，返回**新的集合**；这个名字没注册过时返回 `None`。
+/// 语义与 `remove_request` 相同，只是落在响应侧（FIFO 顺序里剩下的相对位置不变）。
+pub fn Interceptors::remove_response(
+  self : Interceptors,
+  name : StringView,
+) -> Interceptors? {
+  let key = name.to_owned()
+  match response_index_of(self.responses, key) {
+    None => None
+    Some(index) => {
+      let responses = self.responses.copy()
+      ignore(responses.remove(index))
+      Some({ requests: self.requests, responses, })
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

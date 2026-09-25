@@ -9,12 +9,13 @@
 /// - 响应侧错误处理器，接住**只有**状态码没通过校验（默认非 2xx）的失败，
 ///   降级与按状态码重试的落点。
 ///
-/// 五段：
+/// 六段：
 /// 1. 请求拦截器补 `Authorization: token`（echo server 回显收到的头当证据）；
 /// 2. 注册顺序：请求侧 LIFO、响应侧 FIFO；
 /// 3. 响应拦截器改写响应体 JSON（`with_json`）与响应头（`with_headers`）；
 /// 4. 请求拦截器抛错中止请求，**请求侧**错误处理器接住并救回；
-/// 5. 覆盖范围：`stream` 只走请求侧链（两个错误处理器与响应侧都只在 `Client::request` 上）。
+/// 5. 覆盖范围：`stream` 只走请求侧链（两个错误处理器与响应侧都只在 `Client::request` 上）；
+/// 6. 具名注册：同名再注册**替换原位**、`remove_request` 按名撤下（建实例之前）。
 ///
 /// 用 `moon run src/main/interceptors` 执行。本包只是示例，不随模块发布。
 async fn main {
@@ -27,6 +28,7 @@ async fn main {
     rewrite_response(base)
     abort_and_rescue(base)
     stream_scope(base)
+    named_and_removed(base)
   }
 }
 
@@ -321,6 +323,50 @@ async fn stream_scope(base : String) -> Unit {
   let body = stream.read_all()
   println(
     "流式读到的正文 = \{head_text(@utf8.decode_lossy(body), 120)}（请求侧的头照样发了）",
+  )
+  println("")
+}
+
+///|
+/// 6. 具名注册：带名字的那条是**可寻址**的——同名再注册替换原位（位置与 LIFO 顺序
+/// 都不变），`remove_request(name)` 按名撤下。撤下的效果只有 echo server 的回显能证明。
+///
+/// 注意撤下发生在**建实例之前**：拦截器进了实例就冻结，要给某个实例换链就是换一份
+/// 值重建（没有实例级读写口）。「一份共享的基础链 + 按客户端裁剪」正是这个形状的
+/// 用途——`Client::create` 会整份继承拦截器，裁剪是唯一能表达「少挂一条」的手段。
+async fn named_and_removed(base : String) -> Unit {
+  println("== 6. 具名注册、同名替换原位、按名撤下 ==")
+  // 一份共享的基础链：可寻址的两条起名，不需要寻址的直接无名
+  let shared = @moonhttp.Interceptors::new()
+    .use_request(config => config.with_header("X-Demo", "v1"), name="demo")
+    .use_request(config => config.with_header("X-Trace", "on"))
+  let defaults = @moonhttp.Config::default().with_base_url(base)
+  let client = @moonhttp.Client::new(config=defaults, interceptors=shared)
+  let first = client.request(@moonhttp.Config::new("/whoami"))
+  println(
+    "基础链回显：X-Demo = \{echo_field(first, "x_demo")}、X-Trace = \{echo_field(first, "x_trace")}",
+  )
+  // 同名替换原位：换实现不换位置，不必「先撤下再注册」
+  let replaced = @moonhttp.Client::new(
+    config=defaults,
+    interceptors=shared.use_request(
+      config => config.with_header("X-Demo", "v2"),
+      name="demo",
+    ),
+  )
+  let second = replaced.request(@moonhttp.Config::new("/whoami"))
+  println(
+    "同名再注册（替换原位）：X-Demo = \{echo_field(second, "x_demo")}",
+  )
+  // 按名撤下：拿新的一份值重建实例（原值不受影响）
+  let trimmed = shared.remove_request("demo").unwrap()
+  let trimmed_client = @moonhttp.Client::new(
+    config=defaults,
+    interceptors=trimmed,
+  )
+  let third = trimmed_client.request(@moonhttp.Config::new("/whoami"))
+  println(
+    "按名撤下 demo 后：X-Demo = \{echo_field(third, "x_demo")}、X-Trace = \{echo_field(third, "x_trace")}（无名那条撤不下来）",
   )
   println("")
 }
