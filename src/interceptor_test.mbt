@@ -25,9 +25,10 @@ fn client_with_interceptors(
 async fn interceptor_error(
   client : @moonhttp.Client,
   config : @moonhttp.Config,
+  signal? : @moonhttp.AbortSignal,
 ) -> @moonhttp.HttpError {
   let error = try {
-    ignore(client.request(config))
+    ignore(client.request(config, signal?))
     None
   } catch {
     error => Some(error)
@@ -437,8 +438,8 @@ async test "a status failure never reaches the request error handler" {
 async test "cancellation goes to the request error handler" {
   let mock = @transport.MockTransport::new(raw_response(200, "OK", "ok"))
   let transport : &@transport.Transport = mock
-  let token = @moonhttp.CancelToken::new()
-  token.cancel(message="进入管线之前就取消")
+  let controller = @moonhttp.AbortController::new()
+  controller.abort(reason="进入管线之前就取消")
   let mut request_rejects = 0
   let mut response_rejects = 0
   let interceptors = @moonhttp.Interceptors::new()
@@ -453,7 +454,8 @@ async test "cancellation goes to the request error handler" {
   let client = @moonhttp.Client::new(transport~, interceptors~)
   let error = interceptor_error(
     client,
-    @moonhttp.Config::new("/a").with_cancel_token(token),
+    @moonhttp.Config::new("/a"),
+    signal=controller.signal(),
   )
   assert_true(error.is_cancelled())
   assert_eq(error.message(), "进入管线之前就取消")

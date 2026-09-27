@@ -114,3 +114,24 @@ async test "shortcuts share the error path" {
   assert_eq(error.response().unwrap().status, 404)
   assert_eq(error.response().unwrap().text(), "{\"error\": \"nope\"}")
 }
+
+///|
+/// 取消信号原样透传给 `request`：`api.get(url, signal=...)` 与
+/// `client.request(config, signal=...)` 是同一件事——已经取消的信号让请求在
+/// 预检查处失败，一个字节都不发（信号不属于配置，只能按请求传，
+/// 见 `docs/12-cancellation.md`）。
+async test "shortcuts pass the signal through to the request entry" {
+  let (client, mock) = client_with(raw_response(200, "OK", "{}"))
+  let controller = @moonhttp.AbortController::new()
+  controller.abort(reason="别发了")
+  let error = try {
+    ignore(client.get("https://api.example.com/a", signal=controller.signal()))
+    None
+  } catch {
+    error => Some(error)
+  }
+  let error = error.unwrap()
+  assert_true(error.is_cancelled())
+  assert_eq(error.message(), "别发了")
+  assert_eq(mock.request_count(), 0)
+}

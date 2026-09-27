@@ -1,0 +1,8 @@
+// abort 包是取消原语的**独立叶子包**：不依赖本模块的任何包，也不碰 async 运行时，
+// 所以「谁能叫停、取消之后读到什么」能用纯同步用例钉死。
+//
+// 为什么独立成包而不是塞进 config：`AbortController` 先于任何 `Config` 存在
+// （它对应 JS 的原生对象），config / transport / 根包只是**使用**它的三方；
+// 与 headers / url 的做法一致——基础件独立成包，用到它的包各自 `pub using` 再导出。
+//
+// 依赖方向：abort → core。本文件没有 import 块，正是因为除 core 之外谁也不依赖。

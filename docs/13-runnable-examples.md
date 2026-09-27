@@ -59,11 +59,11 @@
 | HTTPS、109 MiB | 进度回调 | **崩溃（SIGSEGV）** |
 | HTTPS、109 MiB | 另一条协程 | 正常，报 `ERR_CANCELED` |
 
-机理（据 `src/transport/cancel.mbt` 与 moonbitlang/async 的取消语义推断）：`token.attach` 里登记的是 `task.cancel()`，而进度回调跑在**那个被取消的子任务内部**；此时取消信号只能在「本任务的下一个挂起点」投递（协程级取消的粘性状态），HTTPS 的读在这一路径上会走到 TLS 会话清理的坏状态。
+机理（据 `src/transport/abort.mbt` 与 moonbitlang/async 的取消语义推断）：`signal.attach` 里登记的是 `task.cancel()`，而进度回调跑在**那个被取消的子任务内部**；此时取消信号只能在「本任务的下一个挂起点」投递（协程级取消的粘性状态），HTTPS 的读在这一路径上会走到 TLS 会话清理的坏状态。
 
 绕法：**让取消由另一条协程发出**。`src/main/progress` 的「真实下载 + 5% 取消」就是用一个看门狗协程盯着进度数字来取消的；明文 HTTP（同文件的上传取消）照旧写在回调里，写法更像直觉。
 
-修法方向（未做）：在 `with_cancel_scope` 的登记里避免「自己取消自己」——例如把 `task.cancel()` 交给另一个任务执行，或让读取路径的「两次读取之间查 token」承担同任务内的取消。
+修法方向（未做）：在 `with_abort_scope` 的登记里避免「自己取消自己」——例如把 `task.cancel()` 交给另一个任务执行，或让读取路径的「两次读取之间查 `aborted()`」承担同任务内的取消。
 
 ### 2. HTTPS 上取消的错误分类会抖成 `ERR_NETWORK`
 
@@ -73,4 +73,4 @@
 
 绕法：示例照实打印（`src/main/progress` 在分类不是 `ERR_CANCELED` 时会多打一行说明）。
 
-修法方向（未做）：`read_or_fail` 的 catch-all 里先看一眼 token——`token.is_cancelled()` 成立就报 `Cancelled`，否则才报 `Network`（两行改动），并补一条 HTTPS 侧的用例。
+修法方向（未做）：`read_or_fail` 的 catch-all 里先看一眼信号——`signal.aborted()` 成立就报 `Cancelled`，否则才报 `Network`（两行改动），并补一条 HTTPS 侧的用例。

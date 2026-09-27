@@ -1,6 +1,6 @@
 # config —— 请求配置
 
-`Config` 描述「一个请求长什么样」：地址、方法、超时、请求头、查询参数、请求体、认证、代理、进度回调、取消句柄。实例默认值（`Client` 里那份）与本次请求的配置都是它，两者的合并规则也在本包（`merge_config`）。
+`Config` 描述「一个请求长什么样」：地址、方法、超时、请求头、查询参数、请求体、认证、代理、进度回调。实例默认值（`Client` 里那份）与本次请求的配置都是它，两者的合并规则也在本包（`merge_config`）。
 
 本包是**纯逻辑**包：不依赖 async 运行时，合并语义与请求体字节都能用同步测试钉死。依赖 `headers`（头集合）与 `url`（复用 query 序列化器），不反向依赖本模块的任何包。
 
@@ -86,7 +86,9 @@ let defaults = Config::default() // 从零起步
 |---|---|
 | `with_on_upload_progress(cb)` | 上传进度回调（同步、不抛错） |
 | `with_on_download_progress(cb)` | 下载进度回调 |
-| `with_cancel_token(CancelToken)` | 绑定取消句柄 |
+
+取消信号**不是配置字段**：它是三个入口（与七个快捷方法）的 `signal?` 参数，所以本包不认识它。
+用法与理由见 [docs/12](https://github.com/q2316367743/moonhttp/blob/master/docs/12-cancellation.md)。
 
 **响应处理**
 
@@ -113,7 +115,6 @@ let defaults = Config::default() // 从零起步
 | `Auth` | `{ username?, password? }`，Basic 凭据 |
 | `Proxy` / `ProxyProtocol` | `{ protocol?, host?, port?, auth? }`；`Proxy::is_usable()` 判断「配了代理但没给 host」 |
 | `FormData` / `FormValue` / `FormFile` | `new()` / `append_text(name, value)` / `append_file(name, filename, bytes, content_type?)` / `entries()` / `length()` |
-| `CancelToken` | `new()` / `cancel(message?)` / `is_cancelled()` / `reason()` / `attach(cb)` / `detach(id)` |
 | `ProgressEvent` / `ProgressCallback` | `{ loaded, total? }` + `progress()`（total 未知或为 0 时给 `None`） |
 | `SerializedBody` | `{ bytes?, content_type? }` |
 
@@ -133,7 +134,7 @@ let defaults = Config::default() // 从零起步
 | 字段 | 策略 |
 |---|---|
 | `url` / `http_method` / 请求体 | 只取请求级 |
-| `base_url` / `timeout` / `max_redirects` / `response_encoding` / 进度回调 / `cancel_token` | 请求级优先，缺省回退实例默认值 |
+| `base_url` / `timeout` / `max_redirects` / `response_encoding` / 进度回调 | 请求级优先，缺省回退实例默认值 |
 | `params` / `headers` / `auth` / `proxy` | 逐层深合并（数组整体替换，函数没法合并所以整体接管） |
 | `validate_status` / `params_serializer` | 请求级提供即整体接管 |
 

@@ -13,10 +13,10 @@ import {
 | 类型 | 内容 |
 |---|---|
 | `Transport`（trait） | 只有一个方法：`async fn send(Self, PreparedRequest) -> RawResponse raise TransportError` |
-| `PreparedRequest` | 方法、完整 URL、拍平后的头、body 字节、超时、代理端点、上传进度回调、取消句柄 |
+| `PreparedRequest` | 方法、完整 URL、拍平后的头、body 字节、超时、代理端点、上传进度回调、取消信号 |
 | `RawResponse` | 状态码、状态短语、响应头、响应体**流** `ResponseBody` |
 | `ProxyEndpoint` | `{ url, authorization? }`：隧道地址与 CONNECT 的凭据 |
-| `TransportError` | `Timeout` / `Network(String)` / `Unsupported(String)` / `Cancelled`；分类在根包翻译成 `HttpError` |
+| `TransportError` | `Timeout` / `Network(String)` / `Unsupported(String)` / `Cancelled(String?)`；分类在根包翻译成 `HttpError`，取消的载荷是取消理由 |
 
 ## `ResponseBody` 的读法
 
@@ -33,7 +33,7 @@ import {
 
 ## 两个实现
 
-- **`AsyncHttpTransport`**：真实实现，基于 `moonbitlang/async`。每次请求新建连接（不做连接复用），代理用 `CONNECT` 隧道、http 与 https 目标都一样；取消作用域也在本包（取消信号能打断挂起中的连接动作）。
+- **`AsyncHttpTransport`**：真实实现，基于 `moonbitlang/async`。每次请求新建连接（不做连接复用），代理用 `CONNECT` 隧道、http 与 https 目标都一样；取消作用域也在本包（`abort.mbt`：进入每一跳时先查 `aborted()` 挡住「两段 I/O 之间」的取消，再把中断手段登记到信号上，取消能打断挂起中的连接动作）。
 - **`MockTransport`**：测试用，不碰网络。记录收到的每一份请求（`received()` / `request_count()` / `last_request()`），返回预置响应（`new(response)` 或 `from_responses([...])`，取完之后一直复用最后一个），也可以固定失败（`failing(error)` / `with_failure(error)`）。
 
 ## 用法

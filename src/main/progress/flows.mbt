@@ -27,25 +27,27 @@ async fn real_download_cancel(group : @async.TaskGroup[Unit]) -> Unit {
   let client = @moonhttp.create(
     @moonhttp.Config::default().with_timeout(120_000),
   )
-  let token = @moonhttp.CancelToken::new()
+  let controller = @moonhttp.AbortController::new()
+  // 信号随请求走，观察方（看门狗、回调）都看它；叫停要拿控制器
+  let signal = controller.signal()
   // 进度回调与看门狗之间的共享状态（回调是 noraise 的，只写不读）
   let percent_seen = Array::make(1, 0)
   let finished = Array::make(1, false)
   group.spawn_bg(no_wait=true) <| () => {
     // 看门狗：请求还在跑、进度到了 5% 就取消。
     //
-    // 为什么不在进度回调里直接 `token.cancel()`：取消信号是投递到
+    // 为什么不在进度回调里直接 `controller.abort()`：取消信号是投递到
     // 「被取消任务的下一个挂起点」的，从该任务内部（回调就跑在它里面）取消时
     // 信号会落在下一个 I/O 的**入口**上——HTTPS 下载在这条路径上会让原生进程
     // 直接崩溃（明文 HTTP 不会，本示例第 4 段上传就是这么写的）。
     // 换一条协程来取消，信号落在「已经挂起的 I/O」上，走的是正常路径。
-    while !finished[0] && !token.is_cancelled() {
+    while !finished[0] && !signal.aborted() {
       @async.sleep(5)
       if percent_seen[0] >= cancel_at_percent {
         println(
           "  → 进度到 \{percent_seen[0]}% 了（看门狗协程发出取消）",
         )
-        token.cancel(message="下载到 5% 就停")
+        controller.abort(reason="下载到 5% 就停")
       }
     }
   }
@@ -53,13 +55,12 @@ async fn real_download_cancel(group : @async.TaskGroup[Unit]) -> Unit {
   let error = try {
     ignore(
       client.request(
-        @moonhttp.Config::new(big_file_url)
-        .with_cancel_token(token)
-        .with_on_download_progress(
+        @moonhttp.Config::new(big_file_url).with_on_download_progress(
           percent_printer("下载", 5, on_percent=fn(percent) {
             percent_seen[0] = percent
           }),
         ),
+        signal~,
       ),
     )
     None
@@ -110,7 +111,8 @@ async fn upload_cancel(
   println(
     "== 4. 上传 + 5% 中途取消（本机 server 慢读，制造背压）==",
   )
-  let token = @moonhttp.CancelToken::new()
+  let controller = @moonhttp.AbortController::new()
+  let signal = controller.signal()
   let started = @async.now()
   let error = try {
     ignore(
@@ -118,15 +120,15 @@ async fn upload_cancel(
         @moonhttp.Config::new("http://127.0.0.1:\{port}/upload")
         .with_method(@moonhttp.Method::Post)
         .with_data_from_str(payload)
-        .with_cancel_token(token)
         .with_on_upload_progress(
           percent_printer("上传", 5, on_percent=fn(percent) {
-            if percent >= cancel_at_percent && !token.is_cancelled() {
+            if percent >= cancel_at_percent && !signal.aborted() {
               println("  → 到 \{percent}% 了，取消")
-              token.cancel(message="上传到 5% 就停")
+              controller.abort(reason="上传到 5% 就停")
             }
           }),
         ),
+        signal~,
       ),
     )
     None

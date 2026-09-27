@@ -39,7 +39,7 @@ pub(all) enum ErrorCode {
   InvalidUrl
   /// 本地就失败了：配置有误，或用了传输层不支持的能力
   NotSupported
-  /// 被 `cancel_token` 取消：调用方主动中止，不是网络故障
+  /// 被取消信号叫停：调用方主动中止，不是网络故障
   Cancelled
   /// 重定向次数超过 `max_redirects`：多半是重定向成环，或上限设得太小
   TooManyRedirects
@@ -145,7 +145,7 @@ pub fn HttpError::code(self : HttpError) -> ErrorCode {
 ///
 /// 等价于 `error.code() is ErrorCode::Cancelled`，存在的意义是让调用点读起来
 /// 与 axios 的写法一致，也避免每次手写模式匹配。取消来自调用方自己的
-/// `CancelToken`（不是超时、不是网络错误），通常该安静地收场而不是报错。
+/// `AbortController`（不是超时、不是网络错误），通常该安静地收场而不是报错。
 ///
 /// ```moonbit nocheck
 /// client.request(config) catch {
@@ -280,30 +280,51 @@ fn transport_error(
         config,
         response,
       )
-    @transport.TransportError::Cancelled => cancelled_error(config, response)
+    @transport.TransportError::Cancelled(reason) =>
+      cancelled_error(config, reason, response)
   }
 }
 
 ///|
-/// 取消引起的失败：消息取 `cancel_token` 上的理由，没给理由就用默认文案。
+/// 取消引起的失败：消息取取消理由，没给理由就用默认文案。
 ///
-/// 两个入口共用它——传输层报 `TransportError::Cancelled` 时（取消落在某段
-/// I/O 上），以及上层进入管线时的预检查（token 在请求发出**之前**已经取消）。
+/// 两个入口共用它——传输层报 `TransportError::Cancelled(reason)` 时（取消落在某段
+/// I/O 上；理由随错误一起上来，因为信号不在配置里、上层无从自己去找），以及上层
+/// 进入管线时的预检查（入口传进来的信号在请求发出**之前**已经取消）。
 /// 放在一起是为了让「取消长什么样」只有一份定义。
 ///
 /// `response` 沿用「失败时带上已经收到的响应」那条规则：取消发生在响应头
 /// 到手之后时，状态行、响应头与已读到的字节照样挂上（与超时、断连一致）；
 /// 请求还没发出去就取消时是 `None`。
-fn cancelled_error(config : Config, response : Response?) -> HttpError {
-  let message = match config.cancel_token {
-    Some(token) =>
-      match token.reason() {
-        Some(reason) => reason
-        None => "请求已取消"
-      }
+fn cancelled_error(
+  config : Config,
+  reason : String?,
+  response : Response?,
+) -> HttpError {
+  make_error(cancelled_message(reason), ErrorCode::Cancelled, config, response)
+}
+
+///|
+/// 把 abort 包在边界上抛出的 `AbortError` 归一成同一种取消失败（`ERR_CANCELED`）。
+///
+/// 唯一的调用点是 `client.mbt` 的取消预检查：abort 包不能引用本包的 `HttpError`
+/// （会成环），所以 `throw_if_aborted` 抛它自己的类型，由本包在接壤处翻成统一
+/// 错误——使用者因此只会看到一种错误类型。载荷就是抛出时的 `signal.reason()`。
+///
+/// 错误里没有响应：预检查发生在任何 I/O 之前，这时确实一个字节都没发出去。
+fn abort_error(config : Config, reason : String?) -> HttpError {
+  cancelled_error(config, reason, None)
+}
+
+///|
+/// 取消理由 → 错误文案：没给理由就用默认文案。
+///
+/// 信号自己不编文案（`abort` 包里没有「请求已取消」这句话），文案只在本文件一处。
+fn cancelled_message(reason : String?) -> String {
+  match reason {
+    Some(reason) => reason
     None => "请求已取消"
   }
-  make_error(message, ErrorCode::Cancelled, config, response)
 }
 
 ///|

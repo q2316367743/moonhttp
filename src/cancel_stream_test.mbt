@@ -1,7 +1,7 @@
 // 取消在流式入口（`stream` / `sse`）与上传阶段的验收用例。
 //
 // 前两个入口的「读一块」都经过 `ResponseBody::read_some` / `read_until`，取消在那里
-// 有两个落点：读之前查 token（取消落在两次读取之间）、读之中打断挂起的 socket 动作。
+// 有两个落点：读之前查 aborted()（取消落在两次读取之间）、读之中打断挂起的 socket 动作。
 // 上传的落点在发送阶段（`write_body` 的每一块都跑在可被取消的子任务里）。
 //
 // 请求路径的用例在 `src/cancel_test.mbt`，句柄状态机在 `src/config/cancel_test.mbt`。
@@ -58,19 +58,21 @@ async fn deaf_server(group : @async.TaskGroup[Unit]) -> Int {
 async test "cancelling from the download progress callback stops the read" {
   @async.with_task_group() <| group => {
     let port = drip_server(group, 4, 100)
-    let token = @moonhttp.CancelToken::new()
+    let controller = @moonhttp.AbortController::new()
     let client = @moonhttp.Client::new()
     let seen : Array[Int] = [0]
     let error = try {
       ignore(
         client.request(
-          @moonhttp.Config::new("http://127.0.0.1:\{port}/drip")
-          .with_cancel_token(token)
-          .with_on_download_progress(fn(event) {
-            // 第一次回调就取消：后面的块不该再读
-            seen[0] = event.loaded
-            token.cancel(message="进度回调里取消")
-          }),
+          @moonhttp.Config::new("http://127.0.0.1:\{port}/drip").with_on_download_progress(fn(
+              event,
+            ) {
+              // 第一次回调就取消：后面的块不该再读
+              seen[0] = event.loaded
+              controller.abort(reason="进度回调里取消")
+            },
+          ),
+          signal=controller.signal(),
         ),
       )
       None
@@ -94,16 +96,15 @@ async test "cancelling from the download progress callback stops the read" {
 async test "cancel while consuming a stream reports cancelled instead of eof" {
   @async.with_task_group() <| group => {
     let port = drip_server(group, 4, 100)
-    let token = @moonhttp.CancelToken::new()
+    let controller = @moonhttp.AbortController::new()
     let client = @moonhttp.Client::new()
     let stream = client.stream(
-      @moonhttp.Config::new("http://127.0.0.1:\{port}/drip").with_cancel_token(
-        token,
-      ),
+      @moonhttp.Config::new("http://127.0.0.1:\{port}/drip"),
+      signal=controller.signal(),
     )
     // 先正常读到一块，确认取消打断的是「正在消费的流」而不是建连
     assert_true(stream.read_some().unwrap().length() > 0)
-    token.cancel(message="不读了")
+    controller.abort(reason="不读了")
     let error = try {
       ignore(stream.read_some())
       None
@@ -136,15 +137,14 @@ async test "cancel while consuming an sse stream reports cancelled" {
         conn..write_string("data: two\r\n\r\n").end_response()
       })
     }
-    let token = @moonhttp.CancelToken::new()
+    let controller = @moonhttp.AbortController::new()
     let client = @moonhttp.Client::new()
     let events = client.sse(
-      @moonhttp.Config::new("http://127.0.0.1:\{port}/events").with_cancel_token(
-        token,
-      ),
+      @moonhttp.Config::new("http://127.0.0.1:\{port}/events"),
+      signal=controller.signal(),
     )
     assert_eq(events.next_event().unwrap().data, "one")
-    token.cancel(message="不听了")
+    controller.abort(reason="不听了")
     let error = try {
       ignore(events.next_event())
       None
@@ -176,7 +176,7 @@ async test "cancelling from the upload progress callback stops the upload" {
       body.write_string(unit.to_string())
     }
     let payload = body.to_string()
-    let token = @moonhttp.CancelToken::new()
+    let controller = @moonhttp.AbortController::new()
     let client = @moonhttp.Client::new()
     let seen : Array[Int] = [0]
     let error = try {
@@ -184,11 +184,11 @@ async test "cancelling from the upload progress callback stops the upload" {
         client.request(
           @moonhttp.Config::new("http://127.0.0.1:\{port}/upload")
           .with_data_from_str(payload)
-          .with_cancel_token(token)
           .with_on_upload_progress(fn(event) {
             seen[0] = event.loaded
-            token.cancel(message="不传了")
+            controller.abort(reason="不传了")
           }),
+          signal=controller.signal(),
         ),
       )
       None
@@ -205,19 +205,19 @@ async test "cancelling from the upload progress callback stops the upload" {
 }
 
 ///|
-/// 预检查覆盖两个流式入口（它们共用 `Client::open_stream`）：已取消的 token
+/// 预检查覆盖两个流式入口（它们共用 `Client::open_stream`）：已取消的信号
 /// 让 `Client::stream` / `Client::sse` 在建连之前就失败，一个请求都不发出去。
 ///
 /// 与 `request` 的行为一致——「已取消的请求什么都不做」是三个入口共同的语义。
-async test "a cancelled token fails stream and sse before connecting" {
-  let token = @moonhttp.CancelToken::new()
-  token.cancel(message="提前取消")
+async test "an aborted signal fails stream and sse before connecting" {
+  let controller = @moonhttp.AbortController::new()
+  controller.abort(reason="提前取消")
   let mock = @transport.MockTransport::new(raw_response(200, "OK", "{}"))
   let transport : &@transport.Transport = mock
   let client = @moonhttp.Client::new(transport~)
   let stream_error = try {
     ignore(
-      client.stream(@moonhttp.Config::new("/bytes").with_cancel_token(token)),
+      client.stream(@moonhttp.Config::new("/bytes"), signal=controller.signal()),
     )
     None
   } catch {
@@ -226,7 +226,7 @@ async test "a cancelled token fails stream and sse before connecting" {
   assert_true(stream_error.unwrap().is_cancelled())
   let sse_error = try {
     ignore(
-      client.sse(@moonhttp.Config::new("/events").with_cancel_token(token)),
+      client.sse(@moonhttp.Config::new("/events"), signal=controller.signal()),
     )
     None
   } catch {

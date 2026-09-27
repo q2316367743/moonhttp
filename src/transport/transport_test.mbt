@@ -25,7 +25,7 @@ async test "mock transport records requests and serves queued responses" {
     timeout: None,
     proxy: None,
     on_upload_progress: None,
-    cancel_token: None,
+    signal: None,
   }
   let first = transport.send(request)
   assert_eq(first.body.read_all(), b"first")
@@ -53,7 +53,7 @@ async test "mock transport without responses fails loudly" {
     timeout: None,
     proxy: None,
     on_upload_progress: None,
-    cancel_token: None,
+    signal: None,
   }
   let error = try {
     ignore(transport.send(request))
@@ -80,7 +80,7 @@ async test "mock transport propagates configured failure" {
     timeout: Some(1000),
     proxy: None,
     on_upload_progress: None,
-    cancel_token: None,
+    signal: None,
   }
   let error = try {
     ignore(transport.send(request))
@@ -106,7 +106,7 @@ async test "async transport classifies unsupported protocols" {
     timeout: Some(1000),
     proxy: None,
     on_upload_progress: None,
-    cancel_token: None,
+    signal: None,
   }
   let error = try {
     ignore(transport.send(request))
@@ -139,7 +139,7 @@ async test "async transport classifies connection failures" {
     timeout: Some(3000),
     proxy: None,
     on_upload_progress: None,
-    cancel_token: None,
+    signal: None,
   }
   let error = try {
     ignore(transport.send(request))
@@ -173,7 +173,7 @@ async test "mock transport accessors" {
       timeout: None,
       proxy: None,
       on_upload_progress: None,
-      cancel_token: None,
+      signal: None,
     }),
   )
   assert_eq(mock.received().length(), 1)
@@ -199,7 +199,7 @@ async test "prepared request debug hides body content and proxy credentials" {
         authorization: Some("Basic dTpw"),
       }),
       on_upload_progress: Some(fn(_event) { () }),
-      cancel_token: None,
+      signal: None,
     },
     content=(
       #|<PreparedRequest:
@@ -211,7 +211,7 @@ async test "prepared request debug hides body content and proxy credentials" {
       #|    timeout: 5000,
       #|    proxy: <ProxyEndpoint: "http://proxy.example:8080">,
       #|    on_upload_progress: <fn>,
-      #|    cancel_token: <none>,
+      #|    signal: <none>,
       #|  }>
     ),
   )

@@ -1,4 +1,4 @@
-// stream.mbt 拆出来的另一半：响应体的**构造与释放**，以及挂在取消句柄上的那条
+// stream.mbt 拆出来的另一半：响应体的**构造与释放**，以及挂在取消信号上的那条
 // 「取消即关闭」登记。
 //
 // 为什么单独一个文件：AGENTS.md RL-04 对子包文件的上限是 300 行，加上取消之后
@@ -19,8 +19,8 @@ pub fn ResponseBody::from_bytes(data : Bytes) -> ResponseBody {
     total: Some(data.length()),
     // 内存体没有连接要释放，也就没有「取消即关闭」这回事：
     // 取消对它的影响由上层（请求进入管线时的预检查）表达。
-    cancel_token: None,
-    cancel_ticket: None,
+    signal: None,
+    signal_ticket: None,
   }
 }
 
@@ -30,26 +30,32 @@ pub fn ResponseBody::from_bytes(data : Bytes) -> ResponseBody {
 /// 交给响应体，读到 EOF 或 `close()` 时才会关闭。
 ///
 /// `total` 是响应头里的 `Content-Length`，取不到就是 `None`。
-/// `cancel_token` 是这次请求的取消句柄：给了它就同时登记「取消即关闭」——
+/// `signal` 是这次请求的取消信号：给了它就同时登记「取消即关闭」——
 /// 调用方取消之后往往就不再读了，没有这一步连接要拖到显式 `close()` 才释放。
-/// 已经取消的 token 会立刻触发这条登记，正好对应「拿到的流已经死了」
-/// （随后任何读取都会报 `Cancelled`，而不是安静地 EOF）。
+/// **进来就已经取消**的信号在这里显式处理：立刻关掉连接，正好对应「拿到的流
+/// 已经死了」（随后任何读取都会报 `Cancelled`，而不是安静地 EOF）。这份检查必须
+/// 自己写——信号上的登记在已取消时不会补触发，见 `src/abort/abort.mbt` 的 `attach`。
 fn ResponseBody::open(
   client : @http.Client,
   timeout : Int?,
   total : Int?,
-  cancel_token : CancelToken?,
+  signal : @abort.AbortSignal?,
 ) -> ResponseBody {
   let body : ResponseBody = {
     inner: BodyInner::Http(client),
     timeout,
     total,
-    cancel_token,
-    cancel_ticket: None,
+    signal,
+    signal_ticket: None,
   }
-  match cancel_token {
-    Some(token) =>
-      body.cancel_ticket = Some(token.attach(fn() { body.close() }))
+  match signal {
+    Some(signal) =>
+      if signal.aborted() {
+        body.close()
+      } else {
+        // 上面查过了，所以这里的登记一定拿到票号（`attach` 只在已取消时返回无票）。
+        body.signal_ticket = Some(signal.attach(fn() { body.close() }))
+      }
     None => ()
   }
   body
@@ -79,16 +85,16 @@ pub fn ResponseBody::close(self : ResponseBody) -> Unit {
     _ => ()
   }
   self.inner = BodyInner::Closed
-  // 注销挂到 token 上的那条「取消即关闭」：连接已经关了，再留着这条登记
-  // 只会让 token 一直握着这个响应体。取消触发的那个 close 也会走到这里——
+  // 注销挂到信号上的那条「取消即关闭」：连接已经关了，再留着这条登记
+  // 只会让信号一直握着这个响应体。取消触发的那个 close 也会走到这里——
   // 那时登记已经被整组取走，注销是个越界空操作（detach 容忍这一点）。
-  match self.cancel_ticket {
+  match self.signal_ticket {
     Some(ticket) =>
-      match self.cancel_token {
-        Some(token) => token.detach(ticket)
+      match self.signal {
+        Some(signal) => signal.detach(ticket)
         None => ()
       }
     None => ()
   }
-  self.cancel_ticket = None
+  self.signal_ticket = None
 }

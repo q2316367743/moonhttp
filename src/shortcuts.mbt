@@ -13,6 +13,10 @@
 //      都盖不掉「`api.get(...)` 一定是 GET」这件事；
 //   3. **不给 `config` 时**按「只有 url 的一份请求级配置」起步（`Config::new(url)`）。
 //
+// 取消信号（`signal?`）原样透传给 `request`：`api.get(url, signal=stop.signal())`
+// 与 `client.request(config, signal=...)` 是同一件事——信号不属于配置、只能按请求传
+// （见 `docs/12-cancellation.md`）。
+//
 // 请求体不进参数列表：它由 `config` 的 `with_data_from_*` 决定形态（四种形态
 // 一视同仁，见 `docs/07-request-body.md`）。也**没有** `stream` / `sse` 的快捷
 // 方法——那两个入口的返回类型不同，凑成 `get_stream` 之类只会污染 API。
@@ -25,31 +29,33 @@
 ///
 /// `config` 用 `config?` 透传（不是 `config~`）：可选参数的 `f(x?)` 形式才是
 /// 「把 `Config?` 原样转发下去」，写 `config~` 会因类型是 `Config` 而不是
-/// `Config?` 报错。
+/// `Config?` 报错。取消信号 `signal?` 同理原样透传。
 async fn Client::send_verb(
   self : Client,
   url : String,
   meth : @config.Method,
   config? : Config,
+  signal? : AbortSignal,
 ) -> Response raise HttpError {
   // 没给 config 就按「只有 url」起步；给了也照样把 url 覆盖上去——契约 1。
   let config = match config {
     Some(config) => config
     None => Config::new(url)
   }
-  self.request(config.with_url(url).with_method(meth))
+  self.request(config.with_url(url).with_method(meth), signal?)
 }
 
 ///|
 /// 一次 GET 请求。契约见文件头：`url` 赢过 `config.url`，动词赢过
 /// `config.http_method` 与实例默认方法，其余（实例默认值、拦截器、重定向、
-/// 进度、取消、状态码校验）与 `client.request(...)` 完全一致。
+/// 进度、取消信号 `signal`、状态码校验）与 `client.request(...)` 完全一致。
 pub async fn Client::get(
   self : Client,
   url : String,
   config? : Config,
+  signal? : AbortSignal,
 ) -> Response raise HttpError {
-  self.send_verb(url, @config.Method::Get, config?)
+  self.send_verb(url, @config.Method::Get, config?, signal?)
 }
 
 ///|
@@ -60,8 +66,9 @@ pub async fn Client::post(
   self : Client,
   url : String,
   config? : Config,
+  signal? : AbortSignal,
 ) -> Response raise HttpError {
-  self.send_verb(url, @config.Method::Post, config?)
+  self.send_verb(url, @config.Method::Post, config?, signal?)
 }
 
 ///|
@@ -70,8 +77,9 @@ pub async fn Client::put(
   self : Client,
   url : String,
   config? : Config,
+  signal? : AbortSignal,
 ) -> Response raise HttpError {
-  self.send_verb(url, @config.Method::Put, config?)
+  self.send_verb(url, @config.Method::Put, config?, signal?)
 }
 
 ///|
@@ -81,8 +89,9 @@ pub async fn Client::delete(
   self : Client,
   url : String,
   config? : Config,
+  signal? : AbortSignal,
 ) -> Response raise HttpError {
-  self.send_verb(url, @config.Method::Delete, config?)
+  self.send_verb(url, @config.Method::Delete, config?, signal?)
 }
 
 ///|
@@ -91,8 +100,9 @@ pub async fn Client::patch(
   self : Client,
   url : String,
   config? : Config,
+  signal? : AbortSignal,
 ) -> Response raise HttpError {
-  self.send_verb(url, @config.Method::Patch, config?)
+  self.send_verb(url, @config.Method::Patch, config?, signal?)
 }
 
 ///|
@@ -102,8 +112,9 @@ pub async fn Client::head(
   self : Client,
   url : String,
   config? : Config,
+  signal? : AbortSignal,
 ) -> Response raise HttpError {
-  self.send_verb(url, @config.Method::Head, config?)
+  self.send_verb(url, @config.Method::Head, config?, signal?)
 }
 
 ///|
@@ -112,6 +123,7 @@ pub async fn Client::options(
   self : Client,
   url : String,
   config? : Config,
+  signal? : AbortSignal,
 ) -> Response raise HttpError {
-  self.send_verb(url, @config.Method::Options, config?)
+  self.send_verb(url, @config.Method::Options, config?, signal?)
 }

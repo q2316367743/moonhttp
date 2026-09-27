@@ -136,11 +136,11 @@ pub fn Client::defaults(self : Client) -> Config {
 /// 读到的部分正文，从 `HttpError::response()` 取。连响应头都没到手时，
 /// 错误里没有响应。两类失败都会先经过请求侧的错误处理器（重试的落点）。
 ///
-/// 取消走配置里的 `cancel_token`（`Config::with_cancel_token`，对应 axios 的
-/// `cancelToken`）：请求进入管线前 token 已经取消时什么都不做，进行中的取消会
-/// 打断挂起的连接动作，对外是一个 `ERR_CANCELED` 错误、可以用
-/// `HttpError::is_cancelled()` 认出来。设计、覆盖范围与注意事项见
-/// `docs/12-cancellation.md`。
+/// 取消信号由 `signal?` 参数给（对应 axios 的 `signal`），**不属于配置**：
+/// 请求进入管线前信号已经取消时什么都不做，进行中的取消会打断挂起的连接动作，
+/// 对外是一个 `ERR_CANCELED` 错误、可以用 `HttpError::is_cancelled()` 认出来。
+/// 信号是一次性的，只能按请求传——放进实例默认值会拖垮这个实例之后的所有请求，
+/// 所以 `Config` 里没有这个字段（设计理由见 `docs/12-cancellation.md`）。
 ///
 /// 不想读全响应体时用另外两个入口：大文件下载用 `Client::stream`（原始字节流），
 /// SSE 用 `Client::sse`（事件流）。读不读、按什么单位读，由入口决定而不是配置；
@@ -149,24 +149,25 @@ pub fn Client::defaults(self : Client) -> Config {
 pub async fn Client::request(
   self : Client,
   config : Config,
+  signal? : AbortSignal,
 ) -> Response raise HttpError {
   // 1~7. 请求阶段：合并配置 → 取消预检查 → 请求拦截器 → 派发（发送、跟重定向、
   //      读全量、拼响应）。这一段里出的任何错都算**请求阶段的失败**，收进 `stage`
   //      交给请求侧错误处理器；拿回来的响应这时还没校验状态码。
   let stage : Result[Response, HttpError] = try {
-    // 1、2. 合并配置、定方法；紧接着做取消预检查：token 在请求进入管线之前就已
+    // 1、2. 合并配置、定方法；紧接着做取消预检查：信号在请求进入管线之前就已
     //      取消时，这次请求**什么都不做**——不发任何 I/O，也不跑请求拦截器
     //      （拦截器可能带副作用）。检查放在这一层而不是只放在传输层，是为了让
     //      「取消」的语义与传输实现无关：Mock 传输层没有可中断的 I/O，但
-    //      「已取消的 token 让请求立刻失败」照样成立。
+    //      「已取消的信号让请求立刻失败」照样成立。
     let merged = self.merged_config(config)
-    check_cancelled(merged)
+    check_cancelled(merged, signal)
     // 3. 请求拦截器。被拦下时这次请求不发出，错误交给请求侧错误处理器
     //    ——所以这里不抛错，交给下面的分支收口。
     match self.interceptors.run_request(merged) {
       Err(error) => Err(error)
       // 4~7. 发送、跟重定向、读全量、拼响应（状态码校验不在这里）
-      Ok(config) => Ok(self.dispatch_request(config))
+      Ok(config) => Ok(self.dispatch_request(config, signal))
     }
   } catch {
     error => Err(error)
@@ -192,18 +193,31 @@ fn Client::merged_config(self : Client, config : Config) -> Config {
 }
 
 ///|
-/// 取消预检查：token 已经取消时让请求在进入管线前就失败。
+/// 取消预检查：入口传进来的信号已经取消时让请求在进入管线前就失败。
 ///
 /// 三个入口的调用点都紧跟在配置合并之后、请求拦截器之前，所以被取消的请求
 /// 连拦截器都不会跑。它管的是「取消发生在请求发出**之前**」这一种情况
-/// （包括拿一个已取消的 token 去发请求、以及复用同一个 token 的后续请求）；
+/// （包括拿一个已取消的信号来发请求、以及同一个信号被复用多次的情形）；
 /// 「取消发生在请求进行中」由传输层的取消作用域负责（`docs/12-cancellation.md`）。
 ///
-/// 错误里没有响应：这时确实一个字节都没发出去。
-fn check_cancelled(config : Config) -> Unit raise HttpError {
-  match config.cancel_token {
-    Some(token) if token.is_cancelled() => raise cancelled_error(config, None)
-    _ => ()
+/// 信号从**入口参数**进来（`signal?`），不在配置里：信号是一次性的，
+/// 放进实例默认值会让这个实例之后的所有请求一起失效——这条在类型上就不成立
+/// （`Config` 没有这个字段），设计理由见 `docs/12-cancellation.md`。
+///
+/// 这里也是 `AbortError` 与本项目错误体系**唯一的接壤处**：abort 包不能引用
+/// 本包的 `HttpError`，所以 `throw_if_aborted` 抛它自己的类型；这里接住并翻成
+/// 统一的取消失败（`http_error.mbt` 的 `abort_error`）。使用者因此只会看到一种
+/// 错误类型，`is_cancelled()` 照样认得出来。
+fn check_cancelled(
+  config : Config,
+  signal : AbortSignal?,
+) -> Unit raise HttpError {
+  match signal {
+    Some(signal) =>
+      signal.throw_if_aborted() catch {
+        @abort.AbortError::Aborted(reason) => raise abort_error(config, reason)
+      }
+    None => ()
   }
 }
 
@@ -217,10 +231,11 @@ fn check_cancelled(config : Config) -> Unit raise HttpError {
 async fn Client::dispatch_request(
   self : Client,
   merged : Config,
+  signal : AbortSignal?,
 ) -> Response raise HttpError {
   // 拼地址 / 头 / body 并发送，中间需要跟随重定向时自动跟。
   // 拿回来的是**最后一跳**的响应与产出它的配置。
-  let (raw, merged) = self.send_following_redirects(merged)
+  let (raw, merged) = self.send_following_redirects(merged, signal)
   // 把响应体读到 EOF——读全量才有完整的响应体。读取阶段失败
   // （超时、断连）时响应头早已到手，把状态行、响应头与**读到的部分**
   // 一起挂到错误上，失败现场才不会只剩一个错误码。
@@ -268,16 +283,17 @@ async fn Client::dispatch_request(
 async fn Client::open_stream(
   self : Client,
   config : Config,
+  signal : AbortSignal?,
 ) -> (@transport.RawResponse, Config) raise HttpError {
   // 取消预检查的位置与 `request` 一致：合并配置之后、请求拦截器之前。
   // 两个流式入口共用这一条，所以 `stream` / `sse` 也被它覆盖。
   let merged = self.merged_config(config)
-  check_cancelled(merged)
+  check_cancelled(merged, signal)
   let merged = match self.interceptors.run_request(merged) {
     Ok(config) => config
     Err(error) => raise error
   }
-  let (raw, merged) = self.send_following_redirects(merged)
+  let (raw, merged) = self.send_following_redirects(merged, signal)
   if !@util.status_allowed(raw.status, merged) {
     // 错误体也要读全；读到一半失败（超时、断连）时把已读到的部分挂到
     // 错误上——那部分通常正是服务端写下的原因，比一个光秃秃的超时有用。
@@ -314,8 +330,9 @@ async fn Client::open_stream(
 pub async fn Client::stream(
   self : Client,
   config : Config,
+  signal? : AbortSignal,
 ) -> StreamResponse raise HttpError {
-  let (raw, merged) = self.open_stream(config)
+  let (raw, merged) = self.open_stream(config, signal)
   {
     status: raw.status,
     status_text: raw.status_text,
@@ -343,8 +360,9 @@ pub async fn Client::stream(
 pub async fn Client::sse(
   self : Client,
   config : Config,
+  signal? : AbortSignal,
 ) -> SseStream raise HttpError {
-  let (raw, merged) = self.open_stream(config)
+  let (raw, merged) = self.open_stream(config, signal)
   if !@util.declares_event_stream(raw.headers) {
     // 连接已经建立，报错前必须先释放，否则漏一条 TCP 连接。
     raw.body.close()
@@ -406,6 +424,7 @@ pub fn default_client() -> Client {
 /// 文案上不能混为一谈——代理那条判在调 util 之前，正是为了能分开说。
 fn prepare_request(
   config : Config,
+  signal : AbortSignal?,
 ) -> @transport.PreparedRequest raise HttpError {
   match config.proxy {
     Some(proxy) if !proxy.is_usable() =>
@@ -417,7 +436,7 @@ fn prepare_request(
       )
     _ => ()
   }
-  match @util.build_prepared_request(config) {
+  match @util.build_prepared_request(config, signal?) {
     Some(prepared) => prepared
     None =>
       raise make_error(
@@ -458,10 +477,11 @@ fn prepare_request(
 async fn Client::send_following_redirects(
   self : Client,
   merged : Config,
+  signal : AbortSignal?,
 ) -> (@transport.RawResponse, Config) raise HttpError {
   let limit = merged.max_redirects.unwrap_or(5)
   let mut config = merged
-  let mut prepared = prepare_request(config)
+  let mut prepared = prepare_request(config, signal)
   // 发送：这一步失败说明响应头还没到手，错误里没有响应可挂。
   let mut raw = self.transport.send(prepared) catch {
     error => raise transport_error(error, config, None)
@@ -505,7 +525,9 @@ async fn Client::send_following_redirects(
         raw.body.close()
         followed = followed + 1
         config = next
-        prepared = prepare_request(config)
+        // 信号跟着每一跳走：取消落在两跳之间时，由传输层进入作用域时那次
+        // `aborted()` 检查挡住（见 `docs/12-cancellation.md` 的「两条兜底」）。
+        prepared = prepare_request(config, signal)
         raw = self.transport.send(prepared) catch {
           error => raise transport_error(error, config, None)
         }

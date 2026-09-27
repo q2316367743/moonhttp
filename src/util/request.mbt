@@ -96,7 +96,14 @@ fn proxy_endpoint(
 /// 文案怎么写」留给根包——与 `@url.build_full_path` 的分工相同）：
 /// 地址不可用（缺 `url` 且缺 `base_url`，或 `url` 非法），
 /// 以及**配了代理却没给 host**（判定见 `Proxy::is_usable`）。
-pub fn build_prepared_request(config : Config) -> @transport.PreparedRequest? {
+///
+/// `signal` 是这次请求的取消信号，**来自入口参数而不是配置**（信号不是配置字段，
+/// 理由见 `docs/12-cancellation.md`）：本层只把它搬进 `PreparedRequest::signal`，
+/// 不判断、也不改它的状态。
+pub fn build_prepared_request(
+  config : Config,
+  signal? : @abort.AbortSignal,
+) -> @transport.PreparedRequest? {
   // 配了代理却没给 host：这份配置发不出去。宁可让调用方报错，也不能当成
   // 「没配代理」——那会让本该走代理的请求静默直连出去。
   match config.proxy {
@@ -167,8 +174,8 @@ pub fn build_prepared_request(config : Config) -> @transport.PreparedRequest? {
     // 上传进度回调原样交给传输层：怎么分块、什么时候报告由实现决定
     // （`AsyncHttpTransport` 按 64 KiB 分块写，见 `docs/10-progress.md`）。
     on_upload_progress: config.on_upload_progress,
-    // 取消句柄同样原样交给传输层：这一层只搬，不判断（token 的可变状态
-    // 由它自己维护，传输层读到的是同一个句柄）。
-    cancel_token: config.cancel_token,
+    // 取消信号同样原样交给传输层：这一层只搬，不判断（信号的可变状态
+    // 由它自己维护，传输层读到的是同一个信号）。它来自入口参数，不在配置里。
+    signal,
   })
 }

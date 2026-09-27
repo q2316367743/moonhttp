@@ -1,4 +1,4 @@
-// 取消（`cancel_token`）在请求路径上的验收用例：起真机 server 验证「打断了什么」。
+// 取消（`signal`）在请求路径上的验收用例：起真机 server 验证「打断了什么」。
 //
 // 为什么必须用真实连接：取消的价值恰恰在「请求挂在某个 socket 动作上」的时候，
 // 而 Mock 传输层是同步返回的、没有挂起点可中断（这一点在 `docs/12-cancellation.md`
@@ -60,23 +60,24 @@ async fn partial_then_stall_server(group : @async.TaskGroup[Unit]) -> Int {
 }
 
 ///|
-/// 在子任务里发一次请求，`delay` 毫秒后取消 token；返回请求的错误与耗时（毫秒）。
+/// 在子任务里发一次请求（信号 = `controller.signal()`），`delay` 毫秒后用同一个
+/// 控制器叫停；返回请求的错误与耗时（毫秒）。
 ///
 /// 「另一条协程来取消」正是真实的用法（UI 的停止按钮、看门狗），也是取消必须
-/// 走协程级中断而不是同步标志位的原因。
+/// 走协程级中断而不是同步标志位的原因。信号由这里传给入口——它不在配置里。
 async fn request_then_cancel(
   group : @async.TaskGroup[Unit],
   client : @moonhttp.Client,
   config : @moonhttp.Config,
-  token : @moonhttp.CancelToken,
+  controller : @moonhttp.AbortController,
   delay : Int,
-  message : String,
+  reason : String,
 ) -> (@moonhttp.HttpError, Int) {
   let outcome : Array[@moonhttp.HttpError?] = [None]
   let started = @async.now()
   let worker = group.spawn(() => {
     let error = try {
-      ignore(client.request(config))
+      ignore(client.request(config, signal=controller.signal()))
       None
     } catch {
       error => Some(error)
@@ -85,20 +86,20 @@ async fn request_then_cancel(
   })
   group.spawn_bg(no_wait=true) <| () => {
     @async.sleep(delay)
-    token.cancel(message~)
+    controller.abort(reason~)
   }
   worker.wait()
   (outcome[0].unwrap(), (@async.now() - started).to_int())
 }
 
 ///|
-/// 已经取消的 token 让请求**什么都不做**：不发 I/O、不跑请求拦截器。
+/// 已经取消的信号让请求**什么都不做**：不发 I/O、不跑请求拦截器。
 ///
 /// 这条不靠真机也能验（用 Mock 传输层），而它正是「取消语义与传输实现无关」
 /// 的那一半：Mock 没有挂起可中断，但「已取消的请求不发出」照样成立。
-async test "a cancelled token fails the request before anything happens" {
-  let token = @moonhttp.CancelToken::new()
-  token.cancel(message="提前取消")
+async test "an aborted signal fails the request before anything happens" {
+  let controller = @moonhttp.AbortController::new()
+  controller.abort(reason="提前取消")
   let mock = @transport.MockTransport::new(raw_response(200, "OK", "{}"))
   let transport : &@transport.Transport = mock
   let ran : Array[Bool] = [false]
@@ -109,7 +110,10 @@ async test "a cancelled token fails the request before anything happens" {
   let client = @moonhttp.Client::new(transport~, interceptors~)
   let error = try {
     ignore(
-      client.request(@moonhttp.Config::new("/users").with_cancel_token(token)),
+      client.request(
+        @moonhttp.Config::new("/users"),
+        signal=controller.signal(),
+      ),
     )
     None
   } catch {
@@ -129,16 +133,19 @@ async test "a cancelled token fails the request before anything happens" {
 }
 
 ///|
-/// 没给 message 时用库的默认文案（文案只在错误层，token 自己不编）。
-async test "a cancelled token without a message uses the default wording" {
-  let token = @moonhttp.CancelToken::new()
-  token.cancel()
+/// 没给 reason 时用库的默认文案（文案只在错误层，信号自己不编）。
+async test "an aborted signal without a reason uses the default wording" {
+  let controller = @moonhttp.AbortController::new()
+  controller.abort()
   let mock = @transport.MockTransport::new(raw_response(200, "OK", "{}"))
   let transport : &@transport.Transport = mock
   let client = @moonhttp.Client::new(transport~)
   let error = try {
     ignore(
-      client.request(@moonhttp.Config::new("/users").with_cancel_token(token)),
+      client.request(
+        @moonhttp.Config::new("/users"),
+        signal=controller.signal(),
+      ),
     )
     None
   } catch {
@@ -155,15 +162,13 @@ async test "a cancelled token without a message uses the default wording" {
 async test "cancel interrupts a request waiting for the response headers" {
   @async.with_task_group() <| group => {
     let port = slow_headers_server(group)
-    let token = @moonhttp.CancelToken::new()
+    let controller = @moonhttp.AbortController::new()
     let client = @moonhttp.Client::new()
     let (error, elapsed) = request_then_cancel(
       group,
       client,
-      @moonhttp.Config::new("http://127.0.0.1:\{port}/slow").with_cancel_token(
-        token,
-      ),
-      token,
+      @moonhttp.Config::new("http://127.0.0.1:\{port}/slow"),
+      controller,
       50,
       "用户点了停止",
     )
@@ -182,15 +187,13 @@ async test "cancel interrupts a request waiting for the response headers" {
 async test "cancel during the body read keeps the bytes already received" {
   @async.with_task_group() <| group => {
     let port = partial_then_stall_server(group)
-    let token = @moonhttp.CancelToken::new()
+    let controller = @moonhttp.AbortController::new()
     let client = @moonhttp.Client::new()
     let (error, elapsed) = request_then_cancel(
       group,
       client,
-      @moonhttp.Config::new("http://127.0.0.1:\{port}/partial").with_cancel_token(
-        token,
-      ),
-      token,
+      @moonhttp.Config::new("http://127.0.0.1:\{port}/partial"),
+      controller,
       50,
       "不下了",
     )
@@ -211,15 +214,13 @@ async test "cancel during the body read keeps the bytes already received" {
 async test "cancel reports cancelled rather than a timeout when it lands first" {
   @async.with_task_group() <| group => {
     let port = slow_headers_server(group)
-    let token = @moonhttp.CancelToken::new()
+    let controller = @moonhttp.AbortController::new()
     let client = @moonhttp.Client::new()
     let (error, _elapsed) = request_then_cancel(
       group,
       client,
-      @moonhttp.Config::new("http://127.0.0.1:\{port}/slow")
-      .with_timeout(3000)
-      .with_cancel_token(token),
-      token,
+      @moonhttp.Config::new("http://127.0.0.1:\{port}/slow").with_timeout(3000),
+      controller,
       50,
       "取消优先",
     )
@@ -236,23 +237,19 @@ async test "a cancelled request does not stick to the calling coroutine" {
     let slow_port = slow_headers_server(group)
     let ok_port = ok_server(group)
     let client = @moonhttp.Client::new()
-    let token = @moonhttp.CancelToken::new()
+    let controller = @moonhttp.AbortController::new()
     let (error, _elapsed) = request_then_cancel(
       group,
       client,
-      @moonhttp.Config::new("http://127.0.0.1:\{slow_port}/slow").with_cancel_token(
-        token,
-      ),
-      token,
+      @moonhttp.Config::new("http://127.0.0.1:\{slow_port}/slow"),
+      controller,
       50,
       "第一次取消",
     )
     assert_true(error.is_cancelled())
-    // 同一条协程、同一个 Client，换一个 token 再发一次
+    // 同一条协程、同一个 Client，不带信号再发一次（新请求自然不受上一次取消影响）
     let response = client.request(
-      @moonhttp.Config::new("http://127.0.0.1:\{ok_port}/ok").with_cancel_token(
-        @moonhttp.CancelToken::new(),
-      ),
+      @moonhttp.Config::new("http://127.0.0.1:\{ok_port}/ok"),
     )
     assert_eq(response.status, 200)
     assert_eq(response.text(), "ok")
@@ -280,15 +277,13 @@ async test "cancel interrupts a redirect chain on a later hop" {
         }
       })
     }
-    let token = @moonhttp.CancelToken::new()
+    let controller = @moonhttp.AbortController::new()
     let client = @moonhttp.Client::new()
     let (error, elapsed) = request_then_cancel(
       group,
       client,
-      @moonhttp.Config::new("http://127.0.0.1:\{port}/first").with_cancel_token(
-        token,
-      ),
-      token,
+      @moonhttp.Config::new("http://127.0.0.1:\{port}/first"),
+      controller,
       50,
       "链上取消",
     )
@@ -299,9 +294,9 @@ async test "cancel interrupts a redirect chain on a later hop" {
 }
 
 ///|
-/// 顺带说明「取消之后重试」为什么安全：重试配方就是拿 `error.config()` 再调一次
-/// `Client::request`，而那次调用会走取消预检查——配置里带着同一个 token，
-/// 所以已经取消的 token 让重试**立刻失败、不产生第二次请求**，
+/// 「取消之后重试」为什么不产生第二次请求：重试配方是拿 `error.config()` 再调一次
+/// `Client::request`，**把同一个信号一起传下去**（信号是入口参数，不跟着配置走），
+/// 于是那次调用会走取消预检查——已经取消的信号让重试**立刻失败**，
 /// 不会把处理器里的无脑重试变成一串真实 I/O。
 ///
 /// 注意这次取消是重试那一步（响应侧处理器内部）自己撞上预检查的结果，它直接
@@ -314,19 +309,22 @@ async test "a retry after cancel fails fast without another request" {
   )
   let transport : &@transport.Transport = mock
   let plain = @moonhttp.Client::new(transport~)
-  let token = @moonhttp.CancelToken::new()
+  let controller = @moonhttp.AbortController::new()
   let interceptors = @moonhttp.Interceptors::new().use_response(
     response => response,
     on_rejected=error => {
-      // 无脑重试：先把 token 取消（模拟用户在这中间点了停止），再照原样重发
-      token.cancel(message="取消之后重试")
-      plain.request(error.config())
+      // 无脑重试：先叫停控制器（模拟用户在这中间点了停止），再带着同一个信号重发
+      controller.abort(reason="取消之后重试")
+      plain.request(error.config(), signal=controller.signal())
     },
   )
   let client = @moonhttp.Client::new(transport~, interceptors~)
   let error = try {
     ignore(
-      client.request(@moonhttp.Config::new("/flaky").with_cancel_token(token)),
+      client.request(
+        @moonhttp.Config::new("/flaky"),
+        signal=controller.signal(),
+      ),
     )
     None
   } catch {
@@ -337,4 +335,49 @@ async test "a retry after cancel fails fast without another request" {
   assert_eq(error.message(), "取消之后重试")
   // 只有第一次真的发出去了：重试被预检查挡在传输层之前
   assert_eq(mock.request_count(), 1)
+}
+
+///|
+/// 反过来的一面：**不带信号**的重试是一次全新的请求。信号不是配置字段，所以它
+/// 不跟着 `error.config()` 走——「取消之后无脑重试」不再自动被预检查挡住，
+/// 挡它的人得是写重试的那一方：要么把同一个信号一起传下去（上一条用例），
+/// 要么先判 `error.is_cancelled()`（取消本来就不该重试）。
+///
+/// 这条用例把那件事钉住，免得有人以为老行为还在。
+async test "a retry without the signal is a brand new request" {
+  let mock = @transport.MockTransport::new(
+    raw_response(500, "InternalServerError", "boom"),
+  )
+  let transport : &@transport.Transport = mock
+  let plain = @moonhttp.Client::new(transport~)
+  let controller = @moonhttp.AbortController::new()
+  // 只重试一次：固定返回 500 的 Mock 会让无脑重试变成死循环
+  let retried : Array[Bool] = [false]
+  let interceptors = @moonhttp.Interceptors::new().use_response(
+    response => response,
+    on_rejected=error => {
+      if retried[0] {
+        raise error
+      }
+      retried[0] = true
+      controller.abort(reason="取消之后重试")
+      plain.request(error.config())
+    },
+  )
+  let client = @moonhttp.Client::new(transport~, interceptors~)
+  let error = try {
+    ignore(
+      client.request(
+        @moonhttp.Config::new("/flaky"),
+        signal=controller.signal(),
+      ),
+    )
+    None
+  } catch {
+    error => Some(error)
+  }
+  let error = error.unwrap()
+  // 第二次请求真的发出去了（老行为下这里会是 1），抛出来的是它的 500
+  assert_eq(mock.request_count(), 2)
+  assert_false(error.is_cancelled())
 }

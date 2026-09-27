@@ -1,0 +1,31 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316367743/moonhttp/abort"
+
+// Values
+
+// Errors
+pub(all) suberror AbortError {
+  Aborted(String?)
+}
+
+// Types and methods
+pub struct AbortController {
+  // private fields
+}
+pub fn AbortController::abort(Self, reason? : String) -> Unit
+pub fn AbortController::new() -> Self
+pub fn AbortController::signal(Self) -> AbortSignal
+
+pub struct AbortSignal {
+  // private fields
+}
+pub fn AbortSignal::abort(reason? : String) -> Self
+pub fn AbortSignal::aborted(Self) -> Bool
+pub fn AbortSignal::attach(Self, () -> Unit) -> Int
+pub fn AbortSignal::detach(Self, Int) -> Unit
+pub fn AbortSignal::reason(Self) -> String?
+pub fn AbortSignal::throw_if_aborted(Self) -> Unit raise AbortError
+
+// Type aliases
+
+// Traits

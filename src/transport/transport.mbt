@@ -1,8 +1,11 @@
 ///|
 /// 这两个类型出现在 `PreparedRequest` / `RawResponse` 的公开签名里，
 /// 因此随本包一起再导出，使用者不必为了构造一份请求再 import 两个包。
-/// `CancelToken` 同理：它由 `PreparedRequest` 携带到这一层。
-pub using @config {type Method, type ProgressCallback, type CancelToken}
+/// `AbortSignal` 同理：它由 `PreparedRequest` 携带到这一层（定义在 `abort` 包）。
+pub using @config {type Method, type ProgressCallback}
+
+///|
+pub using @abort {type AbortSignal}
 
 ///|
 pub using @headers {type Headers}
@@ -60,16 +63,17 @@ pub(all) struct PreparedRequest {
   /// 它不真的发送数据，所以上传进度无从报告）。
   /// 语义与粒度见 `docs/10-progress.md`。
   on_upload_progress : ProgressCallback?
-  /// 这次请求的取消句柄；`None` 表示不可取消。
+  /// 这次请求的取消信号；`None` 表示不可取消。
   ///
-  /// **由传输实现负责尊重它**：内置的 `AsyncHttpTransport` 在发送每一跳、
-  /// 以及响应体每次读取时把中断手段登记到它上面，取消一旦发生，挂起中的
-  /// 连接动作会立刻被中断，对外表现为 `TransportError::Cancelled`。
+  /// **由传输实现负责尊重它**：内置的 `AsyncHttpTransport` 在进入每一跳的发送
+  /// 作用域时先查 `aborted()`（挡住「取消发生在两段 I/O 之间」），再在响应体每次
+  /// 读取时登记中断手段——取消一旦发生，挂起中的连接动作会立刻被中断，
+  /// 对外表现为 `TransportError::Cancelled`。
   /// 自定义实现可以不理会它（测试用的 `MockTransport` 就不理会——它不真的
   /// 做 I/O，没有「挂起」可中断；这种情况下取消仍然由上层在请求进入管线时
-  /// 的预检查兜住「已取消的 token」这一种情况）。
+  /// 的预检查兜住「已取消的 signal」这一种情况）。
   /// 语义与覆盖范围见 `docs/12-cancellation.md`。
-  cancel_token : CancelToken?
+  signal : AbortSignal?
 }
 
 ///|
@@ -105,10 +109,10 @@ pub impl @debug.Debug for PreparedRequest with fn to_repr(self) {
     Some(_) => @debug.Repr::literal("<fn>")
     None => @debug.Repr::literal("<none>")
   }
-  // token 与回调一样只区分「有没有」：它的取消状态会随外部调用变化，
+  // 信号与回调一样只区分「有没有」：它的取消状态会随外部调用变化，
   // 渲染进去会让同一份请求在不同时刻给出不同字符串。
-  fields["cancel_token"] = match self.cancel_token {
-    Some(_) => @debug.Repr::literal("<token>")
+  fields["signal"] = match self.signal {
+    Some(_) => @debug.Repr::literal("<signal>")
     None => @debug.Repr::literal("<none>")
   }
   @debug.Repr::opaque_("PreparedRequest", @debug.Repr::record(fields))
@@ -150,13 +154,14 @@ pub(all) suberror TransportError {
   Network(String)
   /// 请求还没发出去就失败了：协议不支持、地址非法等
   Unsupported(String)
-  /// 被 `cancel_token` 取消了。
+  /// 被取消信号叫停了；载荷是取消理由（`AbortSignal::reason()`），没给理由就是 `None`。
   ///
-  /// 不带文案：取消理由（`CancelToken::reason`）由上层连同**合并后的配置**
-  /// 一起翻译，默认文案与「HTTP 状态码类错误」的文案保持在同一处
-  /// （`src/http_error.mbt`）。这里只表达「这次失败是取消，不是网络故障」，
-  /// 上层据此报 `ERR_CANCELED` 而不是 `ERR_NETWORK`。
-  Cancelled
+  /// 理由随错误一起上来，是因为信号**不在配置里**（它只从三个入口的 `signal?` 参数
+  /// 进来，见 `12-cancellation.md`）——上层拿不到「这次请求用的是哪个信号」，
+  /// 只能由抛错的一方（`with_abort_scope` / `aborted_failure`）随手带上。
+  /// 文案仍由上层决定（默认文案在 `src/http_error.mbt` 一处），这里只表达
+  /// 「这次失败是取消，不是网络故障」，上层据此报 `ERR_CANCELED` 而不是 `ERR_NETWORK`。
+  Cancelled(String?)
 }
 
 ///|

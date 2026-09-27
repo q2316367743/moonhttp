@@ -159,9 +159,10 @@ async fn stream_chat() -> Unit raise @moonhttp.HttpError {
 /// 返回 `None` 会被上层当成「服务端正常收尾」，而实际是调用方自己喊停。
 async fn cancel_mid_stream() -> Unit raise @moonhttp.HttpError {
   println("== 2. 流式取消（收到第 3 个分片就停）==")
-  let token = @moonhttp.CancelToken::new()
+  let controller = @moonhttp.AbortController::new()
   let events = sse_client().sse(
-    chat_config("写一篇 800 字的散文。").with_cancel_token(token),
+    chat_config("写一篇 800 字的散文。"),
+    signal=controller.signal(),
   )
   let mut count = 0
   let outcome = try {
@@ -169,7 +170,7 @@ async fn cancel_mid_stream() -> Unit raise @moonhttp.HttpError {
       count = count + 1
       if count >= 3 {
         println("  已收到 \{count} 个分片，取消")
-        token.cancel(message="听够了")
+        controller.abort(reason="听够了")
       }
     }
     "流正常结束（不应该：取消没生效）"

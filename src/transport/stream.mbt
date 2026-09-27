@@ -29,11 +29,11 @@ pub struct ResponseBody {
   /// 内存体是手上这份字节的长度（完整字节在手，长度总是已知）。
   /// 读取过程中不随消费变化：它描述的是**整个**响应体，不是「还剩多少」。
   priv total : Int?
-  /// 这次响应体所属请求的取消句柄，来自 `PreparedRequest::cancel_token`。
+  /// 这次响应体所属请求的取消信号，来自 `PreparedRequest::signal`。
   /// `None` 表示这个响应体不可取消（Mock 与自定义实现造的就是这种）。
-  priv cancel_token : CancelToken?
-  /// 挂在 token 上的「取消即关闭这条连接」那个登记的票号；`close()` 时注销。
-  priv mut cancel_ticket : Int?
+  priv signal : AbortSignal?
+  /// 挂在信号上的「取消即关闭这条连接」那个登记的票号；`close()` 时注销。
+  priv mut signal_ticket : Int?
 }
 
 ///|
@@ -60,13 +60,13 @@ priv struct MemoryBody {
 /// 也让 SSE 这种「长时间没有数据是正常的」场景可以通过
 /// `timeout: None` 真正长连。
 ///
-/// `token` 有值时这次读取跑在可中断的子任务里：取消一旦发生，挂起中的读
+/// `signal` 有值时这次读取跑在可中断的子任务里：取消一旦发生，挂起中的读
 /// 立刻断，抛 `TransportError::Cancelled`。取消作用域套在**错误收敛之外**——
 /// 取消不是网络失败，不能被下面那条 catch-all 吞成 `Network`；同理它也不受
 /// `timeout` 约束，取消比超时先到就报取消。
 async fn[T] read_or_fail(
   timeout : Int?,
-  token : @config.CancelToken?,
+  signal : AbortSignal?,
   read : async () -> T,
 ) -> T raise TransportError {
   let attempt = () => {
@@ -83,7 +83,7 @@ async fn[T] read_or_fail(
       error => raise TransportError::Network(error.to_string())
     }
   }
-  with_cancel_scope(token, mapped)
+  with_abort_scope(signal, mapped)
 }
 
 ///|
@@ -98,7 +98,7 @@ pub async fn ResponseBody::read_some(
 ) -> Bytes? raise TransportError {
   // 取消发生在两次读取之间时，这里报取消而不是把已关闭的流当成 EOF——
   // 否则 `while read_some() is Some(_)` 会安静地结束，调用方以为对端正常收尾。
-  match cancelled_failure(self.cancel_token) {
+  match aborted_failure(self.signal) {
     Some(error) => raise error
     None => ()
   }
@@ -129,7 +129,7 @@ pub async fn ResponseBody::read_some(
         Some(limit) => () => client.read_some(max_len=limit)
         None => () => client.read_some()
       }
-      match read_or_fail(self.timeout, self.cancel_token, read) {
+      match read_or_fail(self.timeout, self.signal, read) {
         None => {
           self.close()
           None
@@ -151,7 +151,7 @@ pub async fn ResponseBody::read_until(
   sep : String,
 ) -> String? raise TransportError {
   // 与 read_some 同样的理由：取消之后要报取消，不能退化成「读到 EOF」。
-  match cancelled_failure(self.cancel_token) {
+  match aborted_failure(self.signal) {
     Some(error) => raise error
     None => ()
   }
@@ -184,9 +184,7 @@ pub async fn ResponseBody::read_until(
     }
     Http(client) =>
       match
-        read_or_fail(self.timeout, self.cancel_token, () => {
-          client.read_until(sep)
-        }) {
+        read_or_fail(self.timeout, self.signal, () => client.read_until(sep)) {
         None => {
           self.close()
           None

@@ -18,6 +18,7 @@ moonhttp/
     ├── shortcuts.mbt            快捷方法：七个动词对 request 的薄封装（见 14-shortcut-methods.md）
     ├── *_test.mbt               根包黑盒测试（用 MockTransport 跑整条管线）
     ├── *_wbtest.mbt             根包白盒测试（覆盖只能从包内部触达的分支）
+    ├── abort/                   取消原语：AbortController / AbortSignal / AbortError（纯状态，不碰 async）
     ├── config/                  配置的形状、合并契约、默认值、构建器、请求体序列化、重定向的下一跳规则与代理配置
     ├── headers/                 大小写不敏感的 Headers
     ├── sse/                     SSE 事件解析（纯逻辑：吃字节、吐事件）
@@ -46,7 +47,7 @@ moonhttp/
 
 也就是说，只要 `HttpError` 定义在子包里，`catch { @moonhttp.HttpError(info) => ... }` 这个写法就必然失效（只能改成 `catch { error => error.code() / error.message() }` 这种访问器写法，要解构就得额外 `import @moonhttp/client`）。`http_error.mbt` 里把它声明成 `pub(all) suberror` 就是为了让调用方能解构，这个代价换一个「根包更干净」不值得——**所以不要再尝试把这些代码搬进子包**（拆文件是可以的，见下）。
 
-**能干净独立出去的是「签名里不出现门面类型」的纯逻辑**——`sse/` 就是这么出去的（`config` / `headers` / `url` 同理），根包里的纯函数同理，它们现在都在 `util/` 包里：`resolve_method` / `basic_auth` / `build_prepared_request` / `decode_body` / `encode_body` / `media_type` / `declares_event_stream` / `status_allowed`。
+**能干净独立出去的是「签名里不出现门面类型」的纯逻辑**——`sse/` 就是这么出去的（`abort` / `config` / `headers` / `url` 同理），根包里的纯函数同理，它们现在都在 `util/` 包里：`resolve_method` / `basic_auth` / `build_prepared_request` / `decode_body` / `encode_body` / `media_type` / `declares_event_stream` / `status_allowed`。
 
 判据落在**签名**上，不是「感觉像工具函数」：只要返回 `Response` 或抛 `HttpError`，就必须留在根包——`util` 一旦反过来依赖根包就成环。所以 `prepare_request` / `build_response` 留在 `client.mbt`，`transport_error` / `status_error` / `status_error_code` / `validate_response` 与错误类型一起待在 `http_error.mbt`，它们正是「与门面类型接壤」的那一层；`util` 的准入条件写在 `src/util/moon.pkg` 里，往里加东西前先看那一条。
 
@@ -63,7 +64,8 @@ moonhttp/
 MoonBit 的包之间不能循环依赖，所以分层是按「数据从谁流向谁」切开的：
 
 ```
-headers ─┬─→ config ──┐
+abort ───→ transport ─┐
+headers ─┬─→ config ──┤
 url ─────┘            │
 url ──────────────────┼─→ util ──┐
 transport ────────────┘          ├─→ （根包：门面 + 编排）──→ Client / request / stream / sse
@@ -75,8 +77,9 @@ sse ─────────────────────────�
   `Config.data` 是私有字段，跨包连记录字面量都写不出来，所以合并必须与 `Config` 同包（理由见 `02-config-merge.md`）；
 - `url` 不依赖任何本项目的包（只吃字符串和 `Json`），因此它同时被 `config`（编码请求体）与 `util`（拼地址与 query）用到，不成环；
 - `sse` 也不依赖本项目的包（只吃字节），所以它是这层里唯一能被任意字节来源复用的包；
-- `transport` 依赖 `config` 与 `headers`（`PreparedRequest` 的字段类型），**并且是唯一依赖 `moonbitlang/async` 的包**；
-- `util` 依赖 `config` / `headers` / `url` / `transport`（拼请求要用到它们），但它不认识任何门面类型——这正是它能待在根包外面的唯一理由；
+- `abort` 也不依赖本项目的包（纯状态机：`AbortController` / `AbortSignal` / `AbortError`）：`transport` 用它做取消作用域的观察对象，根包用它做三个入口 `signal?` 参数的类型——**`config` 不认识它**：信号不是配置字段，放进实例默认值会让这个实例之后的所有请求一起失效（见 `12-cancellation.md`）；
+- `transport` 依赖 `config` / `headers` / `abort`（`PreparedRequest` 的字段类型），**并且是唯一依赖 `moonbitlang/async` 的包**；
+- `util` 依赖 `abort` / `config` / `headers` / `url` / `transport`（拼请求要用到它们），但它不认识任何门面类型——这正是它能待在根包外面的唯一理由；
 - 根包依赖以上全部，负责编排与对外 API。
 
 ## 关键设计决策
@@ -85,7 +88,7 @@ sse ─────────────────────────�
 
 MoonBit 标准库没有任何网络能力，唯一的 HTTP 实现在 `moonbitlang/async/http`，且是**全异步**的。如果把异步调用散在代码里，配置合并、URL 拼接这些纯逻辑也要跑在异步环境里才能测。
 
-因此把「真的把字节发出去」抽成 `Transport` trait，异步实现只存在于 `src/transport/` 这个包里（`async_http.mbt` 是真实传输，`cancel.mbt` 是取消作用域，`stream.mbt` / `stream_lifecycle.mbt` 是响应体流与它的生命周期）。收益：
+因此把「真的把字节发出去」抽成 `Transport` trait，异步实现只存在于 `src/transport/` 这个包里（`async_http.mbt` 是真实传输，`abort.mbt` 是取消作用域，`stream.mbt` / `stream_lifecycle.mbt` 是响应体流与它的生命周期）。收益：
 
 - `config` / `headers` / `url` / `util` 四个包可以用**普通同步测试**覆盖，跑得快、不依赖网络；
 - 根包的管线测试用 `MockTransport` 注入，能确定性复现 4xx/5xx、超时、读到一半失败等分支；

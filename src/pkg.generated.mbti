@@ -4,6 +4,7 @@ package "q2316367743/moonhttp"
 import {
   "moonbitlang/core/debug",
   "moonbitlang/core/json",
+  "q2316367743/moonhttp/abort",
   "q2316367743/moonhttp/config",
   "q2316367743/moonhttp/headers",
   "q2316367743/moonhttp/sse",
@@ -36,17 +37,17 @@ pub struct Client {
 }
 pub fn Client::create(Self, @config.Config) -> Self
 pub fn Client::defaults(Self) -> @config.Config
-pub async fn Client::delete(Self, String, config? : @config.Config) -> Response raise HttpError
-pub async fn Client::get(Self, String, config? : @config.Config) -> Response raise HttpError
-pub async fn Client::head(Self, String, config? : @config.Config) -> Response raise HttpError
+pub async fn Client::delete(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
+pub async fn Client::get(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
+pub async fn Client::head(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
 pub fn Client::new(config? : @config.Config, transport? : &@transport.Transport, interceptors? : Interceptors) -> Self
-pub async fn Client::options(Self, String, config? : @config.Config) -> Response raise HttpError
-pub async fn Client::patch(Self, String, config? : @config.Config) -> Response raise HttpError
-pub async fn Client::post(Self, String, config? : @config.Config) -> Response raise HttpError
-pub async fn Client::put(Self, String, config? : @config.Config) -> Response raise HttpError
-pub async fn Client::request(Self, @config.Config) -> Response raise HttpError
-pub async fn Client::sse(Self, @config.Config) -> SseStream raise HttpError
-pub async fn Client::stream(Self, @config.Config) -> StreamResponse raise HttpError
+pub async fn Client::options(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
+pub async fn Client::patch(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
+pub async fn Client::post(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
+pub async fn Client::put(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
+pub async fn Client::request(Self, @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
+pub async fn Client::sse(Self, @config.Config, signal? : @abort.AbortSignal) -> SseStream raise HttpError
+pub async fn Client::stream(Self, @config.Config, signal? : @abort.AbortSignal) -> StreamResponse raise HttpError
 
 pub(all) enum ErrorCode {
   BadRequest
@@ -128,9 +129,11 @@ pub async fn StreamResponse::read_until(Self, String) -> String? raise HttpError
 pub fn StreamResponse::to_repr(Self) -> @debug.Repr
 
 // Type aliases
-pub using @config {type Auth}
+pub using @abort {type AbortController}
 
-pub using @config {type CancelToken}
+pub using @abort {type AbortSignal}
+
+pub using @config {type Auth}
 
 pub using @config {type Config}
 

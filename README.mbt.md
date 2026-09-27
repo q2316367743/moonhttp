@@ -60,7 +60,7 @@ async fn main {
 | 字段 | 合并方式 |
 |---|---|
 | `url` / 请求方法 / 请求体 | 只取请求级，实例默认值里的同名字段丢弃 |
-| `base_url` / `timeout` / `max_redirects` / `response_encoding` / 进度回调 / `cancel_token` | 请求级优先，缺省回退实例默认值 |
+| `base_url` / `timeout` / `max_redirects` / `response_encoding` / 进度回调 | 请求级优先，缺省回退实例默认值 |
 | `params` / `headers` / `auth` / `proxy` | 逐层合并（头名大小写不敏感） |
 | `validate_status` / `params_serializer` | 请求级提供即整体接管 |
 
@@ -166,24 +166,27 @@ let client = @moonhttp.Client::new(
 
 ### 取消请求
 
-一个 `CancelToken` 可以传给任意多次请求，从任何地方喊停（另一条协程、进度回调、看门狗）：
+形态与平台的 `AbortController` / `AbortSignal` 一致：控制器留在需要叫停的一方，随请求走的是它的信号。信号**按请求传**（它是三个入口的 `signal?` 参数，不是配置字段——放进实例默认值会让这个实例之后的所有请求一起失效），可以传给任意多次调用，从任何地方喊停（另一条协程、进度回调、看门狗）：
 
 ```moonbit nocheck
-let stop = @moonhttp.CancelToken::new()
+let stop = @moonhttp.AbortController::new()
 
 @async.with_task_group(group => {
   let running = group.spawn(() => {
-    api.request(@moonhttp.Config::new("/reports/big.csv").with_cancel_token(stop)) catch {
+    api.request(
+      @moonhttp.Config::new("/reports/big.csv"),
+      signal=stop.signal(),
+    ) catch {
       error if error.is_cancelled() => println("已取消：" + error.message())
     }
   })
   @async.sleep(2_000)
-  stop.cancel(message="Operation canceled by the user.")
+  stop.abort(reason="Operation canceled by the user.")
   running.wait()
 })
 ```
 
-取消能打断挂起中的连接动作（等首字节、建连、传大 body、读响应体），流式入口在消费过程中取消也生效（下一次读取抛 `Cancelled`，而不是退化成流结束）。token 是一次性的，`cancel` 给的 message 就是错误文案；取消发生在响应头到手之后时，错误里带着已经收到的部分响应。
+取消能打断挂起中的连接动作（等首字节、建连、传大 body、读响应体），流式入口在消费过程中取消也生效（下一次读取抛 `Cancelled`，而不是退化成流结束）。信号是一次性的，`abort` 给的 reason 就是错误文案；取消发生在响应头到手之后时，错误里带着已经收到的部分响应。快捷方法同形：`api.get(url, signal=stop.signal())`。
 
 ### 自动重定向
 
@@ -265,7 +268,7 @@ try {
 | `BadResponse` | 状态码 5xx（或其它非 2xx） |
 | `Network` | 连接 / DNS / TLS 失败、读响应体中途断连、代理拒绝建隧道 |
 | `Timeout` | 超过 `timeout` |
-| `Cancelled` | 被 `CancelToken` 取消（`error.is_cancelled()`） |
+| `Cancelled` | 被取消信号叫停（`error.is_cancelled()`） |
 | `InvalidUrl` | 既没有 `url` 也没有可用的 `base_url` |
 | `NotSupported` | 传输层无法完成该请求（例如重定向到非 http(s) 协议） |
 | `TooManyRedirects` | 重定向次数超过 `max_redirects` |

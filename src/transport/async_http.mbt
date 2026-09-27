@@ -266,9 +266,9 @@ async fn send_head(
 // 由 trait 决定，实现侧不再重复标注（与 moonbitlang/async 自身的写法一致）。
 pub impl Transport for AsyncHttpTransport with fn send(self, request) {
   ignore(self)
-  // 取消句柄随请求带过来（`PreparedRequest::cancel_token`）；没有就直跑，
-  // 不建任务组（见 with_cancel_scope）。
-  let sent = with_cancel_scope(request.cancel_token, () => send_head(request))
+  // 取消信号随请求带过来（`PreparedRequest::signal`）；没有就直跑，
+  // 不建任务组（见 with_abort_scope）。
+  let sent = with_abort_scope(request.signal, () => send_head(request))
   let (client, response) = sent
   {
     status: response.code,
@@ -277,12 +277,12 @@ pub impl Transport for AsyncHttpTransport with fn send(self, request) {
     // 响应体还没读：连接的所有权转移给这个流，读到 EOF 或 close() 时关闭。
     // 不在这里读全，是为了让 chunked / SSE 这类协议能边到边读。
     // `Content-Length` 一并交出去，它是下载进度的 total（可能没有，见 content_length）；
-    // token 也交出去：每次读取都靠它可被取消，取消时它还会顺手关掉这条连接。
+    // 信号也交出去：每次读取都靠它可被取消，取消时它还会顺手关掉这条连接。
     body: ResponseBody::open(
       client,
       request.timeout,
       content_length(response.headers),
-      request.cancel_token,
+      request.signal,
     ),
   }
 }

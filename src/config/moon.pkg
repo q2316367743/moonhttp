@@ -4,6 +4,8 @@
 // buffer / utf8 用于把请求体编码成字节，random 用于生成 multipart boundary；
 // url 只用来复用 query 的序列化器（urlencoded 请求体与 query 是同一套规则）——
 // url 不依赖本项目的任何包，所以这条依赖不成环。
+// 取消信号**不在本包**：它不是配置字段，而是三个入口的参数（见 12-cancellation.md），
+// 所以 config 连 abort 包都不认识。
 import {
   "moonbitlang/core/buffer",
   "moonbitlang/core/debug",
