@@ -142,7 +142,7 @@ pub(all) struct RawResponse {
 pub extend RawResponse with @debug.Debug::{to_repr}
 
 ///|
-/// 传输层错误：把「网络世界里可能出什么事」收敛成四种情况，
+/// 传输层错误：把「网络世界里可能出什么事」收敛成五种情况，
 /// 上层再映射成对外的 `ErrorCode`。
 ///
 /// 有了这层收敛，上层不需要 import 任何 async 相关的包，
@@ -154,6 +154,12 @@ pub(all) suberror TransportError {
   Network(String)
   /// 请求还没发出去就失败了：协议不支持、地址非法等
   Unsupported(String)
+  /// 响应体与它声称的元数据不符：声明了 `Content-Encoding: gzip`，字节却不是
+  /// 合法、完整的 gzip 流（头非法、数据损坏、被截断）。上层映射成
+  /// `ERR_BAD_RESPONSE`——这不是网络故障，是响应本身解不开。
+  ///
+  /// 目前只有 `decode_gzip` 抛它（见 decode.mbt）。
+  Malformed(String)
   /// 被取消信号叫停了；载荷是取消理由（`AbortSignal::reason()`），没给理由就是 `None`。
   ///
   /// 理由随错误一起上来，是因为信号**不在配置里**（它只从三个入口的 `signal?` 参数

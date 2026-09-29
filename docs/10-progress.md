@@ -73,12 +73,17 @@ body（完整字节）
 - **回调粒度**：真实连接上是每次 `read_some` 拿到的块（对端到货多少算多少）；内存体按 64 KiB 模拟分块，好让 Mock 的用例能确定地观察到多块递增。
 - **读失败时进度停在断点**：已经报出去的字节数就是现场，之后抛 `HttpError`（错误里还带着已读到的部分）。
 
-### 为什么 `total` 可能不准
+### `total` 什么时候会缺失
 
-两种已知情况，`loaded` 可能超过 `total`（`progress()` 不截断，直接给出大于 1.0 的值）：
+`total` 只有「长度未知」和「长度已知」两种状态，`loaded` 不会超过它：
 
 1. **chunked 响应没有 `Content-Length`** → `total` 是 `None`，`progress()` 也是 `None`。这时能回答的只有「已经收到多少字节」。
-2. **压缩响应**：底层默认发 `Accept-Encoding: gzip,identity` 并自动解压，`Content-Length` 是**压缩后**的长度，而 `loaded` 数的是**解压后**的字节。响应体被压缩时 `loaded` 会先于 `total` 到达甚至超过它。axios 在浏览器里同样有这个问题。
+2. **压缩响应（gzip）不会让它失准**，两条路径的口径都是「数线上字节」：缓冲路径（`Client::request`）的解压发生在**读全量之后**，
+   所以 `loaded` 是收到的压缩字节数、`total` 是压缩后的 `Content-Length`；流式路径上底层解压时已经把 `Content-Length` 删掉了
+   （`total` 是 `None`，`loaded` 数的是解压后的字节）。设计与用例见 `15-response-compression.md`。
+
+`progress()` 不做截断：数出来的东西照实换算（`loaded / total`），宁可给出大于 1.0 的值，也不假装成 1.0 ——
+那会把「服务端给的 `Content-Length` 与真实字节不符」这类问题藏起来。
 
 ## 与 axios 的差异
 

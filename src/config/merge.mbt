@@ -144,7 +144,8 @@ fn merge_method_headers(
 /// 策略分配与 axios 保持一致：
 /// - 只取请求级：url / http_method / data
 /// - 请求级优先、否则默认：base_url / timeout / max_redirects / response_encoding /
-///   allow_absolute_urls / params_serializer / on_upload_progress / on_download_progress
+///   decompress / allow_absolute_urls / params_serializer /
+///   on_upload_progress / on_download_progress
 /// - 深合并：params / auth / proxy / headers / common_headers / method_headers
 /// - 存在即生效：validate_status
 ///
@@ -171,6 +172,9 @@ pub fn merge_config(base : Config, request : Config) -> Config {
       base.response_encoding,
       request.response_encoding,
     ),
+    // 与 axios 一样走策略 2：请求级 `decompress` 覆盖实例默认值（`Some(false)`
+    // 是「别解压」这个有意义的取值，不能被当成「未提供」）。
+    decompress: prefer_request(base.decompress, request.decompress),
     allow_absolute_urls: prefer_request(
       base.allow_absolute_urls,
       request.allow_absolute_urls,

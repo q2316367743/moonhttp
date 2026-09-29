@@ -273,7 +273,12 @@ pub impl Transport for AsyncHttpTransport with fn send(self, request) {
   {
     status: response.code,
     status_text: response.reason,
-    headers: from_http_headers(response.headers),
+    // 响应头交给 `without_decoded_encoding` 收尾：底层透明解压过的 gzip 响应
+    // 不该再把 `Content-Encoding` 留给上层（头要描述交出去的字节）。
+    headers: without_decoded_encoding(
+      request,
+      from_http_headers(response.headers),
+    ),
     // 响应体还没读：连接的所有权转移给这个流，读到 EOF 或 close() 时关闭。
     // 不在这里读全，是为了让 chunked / SSE 这类协议能边到边读。
     // `Content-Length` 一并交出去，它是下载进度的 total（可能没有，见 content_length）；

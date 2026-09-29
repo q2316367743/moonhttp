@@ -8,7 +8,8 @@
 | `src/transport/stream.mbt` | `ResponseBody`：响应体流（真实连接 / 内存体两种来源），按块读的部分 |
 | `src/transport/stream_lifecycle.mbt` | `ResponseBody` 的构造与释放（`from_bytes` / `open` / `rewind` / `close`），含取消登记 |
 | `src/transport/stream_all.mbt` | `ResponseBody` 的「读全量」三件套（`drain_into` / `read_all_partial` / `read_all`）与下载进度的逐块报告 |
-| `src/transport/async_http.mbt` | 真实实现（唯一对接 `moonbitlang/async` 的文件），含上传进度的分块写 |
+| `src/transport/async_http.mbt` | 真实实现（唯一对接 `moonbitlang/async` 的文件），含上传进度的分块写、把底层已解掉的 `Content-Encoding` 摘掉 |
+| `src/transport/decode.mbt` | `Content-Encoding` 的解码工具：`decode_gzip`（整份字节的内存解压）与 `declares_gzip`（认定 gzip 的唯一判据），见 `15-response-compression.md` |
 | `src/transport/mock.mbt` | 测试用实现：记录请求、按队列返回响应、可注入失败 |
 | `src/transport/transport_test.mbt` | 传输层自身的用例（含不依赖外网的真实实现用例） |
 | `src/transport/stream_test.mbt` | 响应体流的读语义 + 本机 server 的真实流式读取用例 |
@@ -43,10 +44,16 @@ pub(open) trait Transport {
 | `headers` | 响应头（本项目自己的 `Headers`，大小写不敏感） |
 | `body` | **响应体流**（`ResponseBody`），不是字节 |
 
-`TransportError` 有四类：`Timeout` / `Network(String)` / `Unsupported(String)` / `Cancelled(String?)`。
-前三类是「网络世界里可能出什么事」，`Cancelled` 是「调用方自己喊了停」——它**带着取消理由**
-（`signal.reason()`，可能为 `None`）随错误一起上来，因为信号不在配置里、上层没有别的地方能找到它；
-措辞仍由根包一处决定（默认文案「请求已取消」）。它也不该与网络故障混为一谈。分类的用途见 `04-errors.md`。
+`TransportError` 有五类：`Timeout` / `Network(String)` / `Unsupported(String)` / `Malformed(String)` / `Cancelled(String?)`。
+前四类覆盖「网络世界里可能出什么事」加上「响应本身读不出来」——`Malformed` 表示响应体与它声称的 `Content-Encoding`
+不符（目前只有 `decode_gzip` 抛它，上层报 `ERR_BAD_RESPONSE`，见 `15-response-compression.md`）。
+`Cancelled` 是「调用方自己喊了停」——它**带着取消理由**（`signal.reason()`，可能为 `None`）随错误一起上来，
+因为信号不在配置里、上层没有别的地方能找到它；措辞仍由根包一处决定（默认文案「请求已取消」）。
+它也不该与网络故障混为一谈。分类的用途见 `04-errors.md`。
+
+`headers` 里**没有 `Content-Encoding` 就等于「交出去的字节是实体字节」**：内置实现在底层替它解压过 gzip 时会把那句
+已经失效的 `Content-Encoding` 摘掉；自定义实现要么自己交付解码后的字节、要么把声称编码的头留着（两者一致即可），
+见 `15-response-compression.md`。
 
 ### 为什么 `body` 是流
 
@@ -75,11 +82,16 @@ pub fn ResponseBody::close(Self) -> Unit
 - `close()` 幂等。没有析构器，**拿到流后不读完也不 `close()` 会漏一条连接**；
 - 任何读取失败都会先关闭流再抛 `TransportError`：失败之后连接状态已不可信，调用方不该继续读。
 
+**流的字节里没有「内容编码」这一层**：`ResponseBody` 交出去的永远是实体字节（`Content-Encoding` 已经被负责解码的一方消掉）。
+缓冲路径是上层读完自己解，流式路径由内置传输实现所依赖的底层做透明懒解压——两条路的口径、谁声明压缩、响应头怎么跟着变，
+见 `15-response-compression.md`。自定义传输实现若要交出 gzip 字节，就必须把 `Content-Encoding` 一起交出去（让头与体说同一件事）。
+
 `read_all_partial` 的声明带 `noraise`：MoonBit 里 async 函数省略错误类型**不等于**不抛错（省略等于开放错误类型），要表达「不抛」必须显式写 `noraise`。
 
 **不要用 `read_until("\n\n")` 切 SSE 事件。** CRLF 流上事件边界的字节是 `0D 0A 0D 0A`，里面没有连续两个 `0A`，这个分隔符永远匹配不到：内存体上表现为「整段原样返回」，真实连接上更糟——EOF 不会来，于是会一直等到连接关闭（不限时的 SSE 配置下就是永远等下去）。事件切分要按规范认 CRLF / LF / CR 三种行尾，落在**根包**的 `SseParser` 里，不在传输层，见 `06-sse.md`；`src/transport/stream_test.mbt` 有一条用例专门钉住这个坑。
 
-`ResponseBody` 刻意**不**实现 `@io.Reader`：那要实现 `_get_internal_buffer` / `_direct_read` 这两个标注「仅内部实现」的方法。只暴露上面四个方法，底层库换 Reader 实现也不会波及本模块。
+`ResponseBody` 刻意**不**实现 `@io.Reader`：那要实现 `_get_internal_buffer` / `_direct_read` 这两个标注「仅内部实现」的方法（它们要命名 async 包内部的 `ReaderBuffer`，跨模块做不到），也会把「底层换 Reader 实现」这件事漏进本模块。只暴露上面五个方法。
+gzip 解压因此也不在流上做：缓冲路径读完再解（`decode_gzip` 借一个内存管道把字节喂给 `@gzip.Decoder`），流式的懒解压交给底层，见 `15-response-compression.md`。
 
 ### 超时语义
 

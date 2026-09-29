@@ -18,8 +18,8 @@ pub using @headers {type Headers}
 /// 字段按合并策略分组，与 `merge` 包里的实现一一对应：
 /// - 只取请求级（axios `valueFromConfig2`）：url / http_method / data
 /// - 请求级优先、否则回退默认（`defaultToConfig2`）：
-///   base_url / timeout / max_redirects / response_encoding / params_serializer /
-///   on_upload_progress / on_download_progress
+///   base_url / timeout / max_redirects / response_encoding / decompress /
+///   params_serializer / on_upload_progress / on_download_progress
 /// - 深合并（`mergeDeepProperties`）：
 ///   params / auth / proxy / headers / common_headers / method_headers / allow_absolute_urls
 /// - 请求级存在即生效（`mergeDirectKeys`）：validate_status
@@ -63,6 +63,10 @@ pub(all) struct Config {
   /// 缺省（或未设置时）按 UTF-8 解码，非法字节用替换字符；
   /// 只在 `Client::request` 路径上生效。
   response_encoding : ResponseEncoding?
+  /// 响应带 `Content-Encoding: gzip` 时要不要解压，对应 axios 的 `decompress`；
+  /// 默认 `true`（`None` 按 `true` 处理）。关掉之后请求侧声明 `identity` 挡住压缩，
+  /// 交出去的字节与响应头都保持原样。谁声明、谁解压见 `docs/15-response-compression.md`。
+  decompress : Bool?
   /// 查询参数，序列化后追加到 URL（不覆盖 URL 里已有的 query）
   params : Json?
   /// 自定义 query 序列化器，对应 axios 的 `paramsSerializer`（函数形式）；

@@ -280,6 +280,16 @@ fn transport_error(
         config,
         response,
       )
+    // 响应体声称的编码解不开（目前只有 gzip）：这不是网络故障，而是这份响应
+    // 本身读不出来，所以归 `BadResponse` 而不是 `Network`。原始字节留在
+    // `response` 上——「解不开」这个事实比「字节被吞掉」有用得多。
+    @transport.TransportError::Malformed(message) =>
+      make_error(
+        "响应体解压失败：" + message,
+        ErrorCode::BadResponse,
+        config,
+        response,
+      )
     @transport.TransportError::Cancelled(reason) =>
       cancelled_error(config, reason, response)
   }

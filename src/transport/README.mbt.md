@@ -16,7 +16,7 @@ import {
 | `PreparedRequest` | 方法、完整 URL、拍平后的头、body 字节、超时、代理端点、上传进度回调、取消信号 |
 | `RawResponse` | 状态码、状态短语、响应头、响应体**流** `ResponseBody` |
 | `ProxyEndpoint` | `{ url, authorization? }`：隧道地址与 CONNECT 的凭据 |
-| `TransportError` | `Timeout` / `Network(String)` / `Unsupported(String)` / `Cancelled(String?)`；上层看到的 `HttpError` 分类就来自它，取消的载荷是取消理由 |
+| `TransportError` | `Timeout` / `Network(String)` / `Unsupported(String)` / `Malformed(String)` / `Cancelled(String?)`；上层看到的 `HttpError` 分类就来自它（`Malformed` 是「响应体与它声称的 `Content-Encoding` 不符」，报 `ERR_BAD_RESPONSE`），取消的载荷是取消理由 |
 
 ## `ResponseBody` 的读法
 
@@ -30,6 +30,11 @@ import {
 | `close()` | 释放连接 |
 
 超时在这里分两种口径：`read_all` / `read_all_partial` 是「整段读完」一个时限，`read_some` / `read_until` 是「每次等待」一个时限。
+
+## 解压与响应头
+
+`Content-Encoding` 的解码工具也在这个包（只有它碰 async 运行时）：`decode_gzip(bytes)` 把一整份 gzip 字节解成实体字节，`declares_gzip(headers)` 判断响应是否声称自己是 gzip。**流里没有「内容编码」这一层**——交出去的 `ResponseBody` 永远是实体字节；自定义传输实现若要交 gzip 字节，就得把 `Content-Encoding` 一起交出去（让头与体说同一件事）。谁声明、谁解压、失败怎么报见
+[`docs/15-response-compression.md`](https://github.com/q2316367743/moonhttp/blob/master/docs/15-response-compression.md)。
 
 ## 两个实现
 

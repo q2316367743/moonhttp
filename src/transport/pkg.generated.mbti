@@ -9,12 +9,16 @@ import {
 }
 
 // Values
+pub fn declares_gzip(@headers.Headers) -> Bool
+
+pub async fn decode_gzip(Bytes) -> Bytes raise TransportError
 
 // Errors
 pub(all) suberror TransportError {
   Timeout
   Network(String)
   Unsupported(String)
+  Malformed(String)
   Cancelled(String?)
 }
 

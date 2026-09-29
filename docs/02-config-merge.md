@@ -76,6 +76,7 @@ pub fn merge_config(base : Config, request : Config) -> Config {
 | `timeout` | 请求优先/否则默认 | |
 | `max_redirects` | 请求优先/否则默认 | axios 没把它登记进 `mergeConfig` 的表，落到默认的深合并策略，标量上等价于请求优先。内置默认值是 5，请求级的 `0`（不跟随）必须能覆盖掉它，见 `08-redirects.md` |
 | `response_encoding` | 请求优先/否则默认 | 内置默认值是 `Utf8`（axios 的 `responseEncoding: 'utf8'`） |
+| `decompress` | 请求优先/否则默认 | 响应带 gzip 时要不要解压（axios 的 `decompress`）。内置默认值是 `true`；请求级的 `Some(false)` 是「别解压」这个有意义的取值，不能被当成「未提供」，所以走这一档而不是深合并。字段说明见 `15-response-compression.md` |
 | `params_serializer` | 请求优先/否则默认 | 自定义 query 序列化器（axios 的 `paramsSerializer`，登记为 `defaultToConfig2`）。请求级提供即**整体替换**实例默认值，不是深合并——函数没法「合并」；字段说明见 `03-request-pipeline.md` |
 | `on_upload_progress` | 请求优先/否则默认 | 上传进度回调（axios 的 `onUploadProgress`，同为 `defaultToConfig2`）。请求级提供即整体替换实例默认值，不会出现「实例级与请求级的回调都被调用」；字段说明见 `10-progress.md` |
 | `on_download_progress` | 请求优先/否则默认 | 下载进度回调（axios 的 `onDownloadProgress`），与上一条同档、同样整体替换 |

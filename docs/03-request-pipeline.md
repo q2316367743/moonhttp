@@ -233,6 +233,8 @@ urlencoded 的括号约定）见 `07-request-body.md`。
 
 这张表只在 `Client::request` 上生效——`stream` 交的是原始字节流（`read_all()` 返回 `Bytes`），`sse` 按规范固定 UTF-8 解析事件：流式入口连 `Response` 都没有，解码不是它们的事。实例默认值里带着 `response_encoding` 时，这两个入口照样可用。
 
+**字符集解码之外还有一层内容编码**：响应体带 `Content-Encoding: gzip` 时，`Client::request` 在读全量之后先解压成实体字节，再按 `response_encoding` 解成文本——`bytes()` / `text()` / `content_length()` 说的都是解压后的实体字节。这两层是两件事：前者是「字节怎么变成实体字节」，后者是「实体字节怎么变成文本」。`with_decompress(false)` 可以把前者关掉，那时交出去的就是线上原样的压缩字节（`Content-Encoding` 也一并留着）。谁声明压缩、流式路径怎么处理、解压失败报什么错，见 `15-response-compression.md`。
+
 ## 状态码校验
 
 对应 axios 的 `settle`：

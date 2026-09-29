@@ -235,7 +235,9 @@ async fn Client::dispatch_request(
 ) -> Response raise HttpError {
   // 拼地址 / 头 / body 并发送，中间需要跟随重定向时自动跟。
   // 拿回来的是**最后一跳**的响应与产出它的配置。
-  let (raw, merged) = self.send_following_redirects(merged, signal)
+  // `buffered: true` 告诉拼请求那一层：「这次的响应体会被库读全」，
+  // 于是由库来声明压缩、也由库来解压（见 docs/15-response-compression.md）。
+  let (raw, merged) = self.send_following_redirects(merged, signal, true)
   // 把响应体读到 EOF——读全量才有完整的响应体。读取阶段失败
   // （超时、断连）时响应头早已到手，把状态行、响应头与**读到的部分**
   // 一起挂到错误上，失败现场才不会只剩一个错误码。
@@ -255,10 +257,25 @@ async fn Client::dispatch_request(
       )
     None => ()
   }
-  // 校验状态码**不在这里**：交给 `Client::request`——那里才知道这次失败该走
-  // 请求侧还是响应侧的错误处理器（解码也不在这里：响应体以原始字节交出去，
-  // 读法由调用方选）
-  build_response(raw.status, raw.status_text, raw.headers, body, merged)
+  // 响应体解压：缓冲路径由库负责（见 `docs/15-response-compression.md`）。
+  // 解压失败不在这里抛：状态码同样没通过校验时，状态码那个原因更准确
+  // （404 的错误页解不开，说「404」比说「解压失败」有用）。
+  match
+    decode_response_body(raw.status, raw.status_text, raw.headers, body, merged) {
+    Ok((decoded, headers)) =>
+      // 校验状态码**不在这里**：交给 `Client::request`——那里才知道这次失败该走
+      // 请求侧还是响应侧的错误处理器（字符集解码同样不在这里：响应体以原始字节
+      // 交出去，读法由调用方选）
+      build_response(raw.status, raw.status_text, headers, decoded, merged)
+    Err(error) =>
+      if @util.status_allowed(raw.status, merged) {
+        raise error
+      } else {
+        // 状态码本身也没通过校验：以状态码为准，响应体与响应头都保持原样
+        // ——字节确实还是压缩字节，`Content-Encoding` 也照原样留着（头与体一致）。
+        build_response(raw.status, raw.status_text, raw.headers, body, merged)
+      }
+  }
 }
 
 ///|
@@ -280,6 +297,9 @@ async fn Client::dispatch_request(
 ///
 /// 与 `request` 的最后一步不同：这里**不读响应体**，把「还开着的连接」
 /// 连同响应头一起返回，由调用方（两个流式入口）决定怎么读。
+///
+/// 压缩声明按流式路径的规则走（`buffered: false`）：默认不声明，由底层实现补上
+/// 并在响应头声明 gzip 时透明解压；关掉解压时声明 `identity` 挡住它。
 async fn Client::open_stream(
   self : Client,
   config : Config,
@@ -293,7 +313,7 @@ async fn Client::open_stream(
     Ok(config) => config
     Err(error) => raise error
   }
-  let (raw, merged) = self.send_following_redirects(merged, signal)
+  let (raw, merged) = self.send_following_redirects(merged, signal, false)
   if !@util.status_allowed(raw.status, merged) {
     // 错误体也要读全；读到一半失败（超时、断连）时把已读到的部分挂到
     // 错误上——那部分通常正是服务端写下的原因，比一个光秃秃的超时有用。
@@ -412,6 +432,35 @@ pub fn default_client() -> Client {
 // ---------------------------------------------------------------------------
 
 ///|
+/// 这次请求往 `Accept-Encoding` 上声明什么（`None` = 不声明，交给传输实现决定）。
+///
+/// 一句话版规则：**谁解压谁声明**，谁都不解压时用 `identity` 把压缩挡住。
+/// - 缓冲路径（`Client::request`）：响应体由库读全、也由库解压，所以由库声明
+///   `gzip, identity`；
+/// - 流式路径（`stream` / `sse`）：流式解压由底层实现透明完成——它见请求里没有
+///   `Accept-Encoding` 就会自己补上并在响应头声明 gzip 时解压，所以这里不声明，
+///   把决定权留给它（见 `docs/15-response-compression.md`）；
+/// - `decompress: false`：谁都不解压，于是声明 `identity` 让服务端别压缩
+///   （也让底层不介入）。
+///
+/// 用户自己设置过 `Accept-Encoding` 时这段声明不生效（补默认头走
+/// `set_if_absent`，见 `@util.build_prepared_request`）：流式路径那时交出去的就是
+/// 压缩字节（头也留着，自描述）；缓冲路径是例外——它的承诺是「交出去的体一定解压」，
+/// 所以只要响应头声明 gzip，读到的全量字节照样解（`decode_response_body`），
+/// 无论那次声明是谁写的。
+fn declared_encoding(config : Config, buffered : Bool) -> String? {
+  if config.decompress.unwrap_or(true) {
+    if buffered {
+      Some("gzip, identity")
+    } else {
+      None
+    }
+  } else {
+    Some("identity")
+  }
+}
+
+///|
 /// 拼请求：调 `@util.build_prepared_request`，把「这份配置拼不出可发送的请求」
 /// 翻译成对外错误。
 ///
@@ -425,6 +474,7 @@ pub fn default_client() -> Client {
 fn prepare_request(
   config : Config,
   signal : AbortSignal?,
+  buffered : Bool,
 ) -> @transport.PreparedRequest raise HttpError {
   match config.proxy {
     Some(proxy) if !proxy.is_usable() =>
@@ -436,7 +486,8 @@ fn prepare_request(
       )
     _ => ()
   }
-  match @util.build_prepared_request(config, signal?) {
+  let accept_encoding = declared_encoding(config, buffered)
+  match @util.build_prepared_request(config, signal?, accept_encoding?) {
     Some(prepared) => prepared
     None =>
       raise make_error(
@@ -444,6 +495,57 @@ fn prepare_request(
         ErrorCode::InvalidUrl,
         config,
         None,
+      )
+  }
+}
+
+///|
+/// 把响应体按响应头解压（目前只认 gzip），返回解压后的字节与处理过的响应头。
+///
+/// 只有缓冲路径（`Client::request`）用得到它：流式路径的响应体由底层透明解压，
+/// 不走这里，见 `docs/15-response-compression.md`。
+///
+/// 三种「不解压、原样返回」：响应头没声明 gzip、`decompress: false`、
+/// 以及空体——HEAD 这类响应可能带着 `Content-Encoding` 却一个字节都没有，
+/// 硬解只会换来一个假失败（声明的是别的编码同样不解：`br` / `deflate` /
+/// 多值都没有对应的解码器，假装认识比不认更危险）。
+///
+/// 解压成功后摘掉 `Content-Encoding` 与 `Content-Length`：这两个头描述的是**线上
+/// 字节**，而交出去的响应体已经是实体字节，留着就等于让头与体互相矛盾
+/// （底层透明解压时同样会删掉 `Content-Length`，两处口径一致）。
+///
+/// 解压失败返回 `Err` 而**不在这里抛**：状态码同样没通过校验时，状态码那个原因
+/// 更准确（404 的错误页解不开，说「404」比说「解压失败」有用），由调用方
+/// 结合校验结果决定报哪个。失败时错误里挂着**原始压缩字节与原始响应头**
+/// ——解不开的就是这份字节，头照原样留着才看得出它声称自己是 gzip。
+async fn decode_response_body(
+  status : Int,
+  status_text : String,
+  headers : Headers,
+  body : Bytes,
+  config : Config,
+) -> Result[(Bytes, Headers), HttpError] noraise {
+  let needed = config.decompress.unwrap_or(true) &&
+    @transport.declares_gzip(headers) &&
+    body.length() > 0
+  if !needed {
+    return Ok((body, headers))
+  }
+  let decoded : Result[Bytes, @transport.TransportError] = Ok(
+    @transport.decode_gzip(body),
+  ) catch {
+    error => Err(error)
+  }
+  match decoded {
+    Ok(decoded) =>
+      Ok((decoded, headers.remove("Content-Encoding").remove("Content-Length")))
+    Err(error) =>
+      Err(
+        transport_error(
+          error,
+          config,
+          Some(build_response(status, status_text, headers, body, config)),
+        ),
       )
   }
 }
@@ -474,14 +576,19 @@ fn prepare_request(
 /// 与 axios 的一处有意不同：每一跳各自受 `timeout` 约束（与既有的「建连到响应头
 /// 整体一个时限、响应体每次读取一个时限」口径一致），所以整条链的最坏耗时是
 /// 「上限 × timeout」；axios 是整条链共用一个计时器。
+///
+/// `buffered` 只用来决定请求头上的压缩声明（每跳都要重新拼请求，所以每跳都带上）：
+/// 值为 `true` 表示这次调用的响应体会被库读全，因此由库声明、也由库解压，
+/// 见 `declared_encoding` 与 `docs/15-response-compression.md`。
 async fn Client::send_following_redirects(
   self : Client,
   merged : Config,
   signal : AbortSignal?,
+  buffered : Bool,
 ) -> (@transport.RawResponse, Config) raise HttpError {
   let limit = merged.max_redirects.unwrap_or(5)
   let mut config = merged
-  let mut prepared = prepare_request(config, signal)
+  let mut prepared = prepare_request(config, signal, buffered)
   // 发送：这一步失败说明响应头还没到手，错误里没有响应可挂。
   let mut raw = self.transport.send(prepared) catch {
     error => raise transport_error(error, config, None)
@@ -527,7 +634,7 @@ async fn Client::send_following_redirects(
         config = next
         // 信号跟着每一跳走：取消落在两跳之间时，由传输层进入作用域时那次
         // `aborted()` 检查挡住（见 `docs/12-cancellation.md` 的「两条兜底」）。
-        prepared = prepare_request(config, signal)
+        prepared = prepare_request(config, signal, buffered)
         raw = self.transport.send(prepared) catch {
           error => raise transport_error(error, config, None)
         }

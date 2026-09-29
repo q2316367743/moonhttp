@@ -37,6 +37,7 @@ pub(all) struct Config {
   timeout : Int?
   max_redirects : Int?
   response_encoding : ResponseEncoding?
+  decompress : Bool?
   params : Json?
   params_serializer : ((Json) -> String)?
   on_upload_progress : ((ProgressEvent) -> Unit)?
@@ -65,6 +66,7 @@ pub fn Config::with_data_from_form(Self, FormData) -> Self
 pub fn Config::with_data_from_json(Self, Json) -> Self
 pub fn Config::with_data_from_str(Self, String) -> Self
 pub fn Config::with_data_from_urlencoded(Self, Json) -> Self
+pub fn Config::with_decompress(Self, Bool) -> Self
 pub fn Config::with_header(Self, StringView, String) -> Self
 pub fn Config::with_headers(Self, @headers.Headers) -> Self
 pub fn Config::with_max_redirects(Self, Int) -> Self

@@ -34,8 +34,8 @@ pub extend ProgressEvent with @debug.Debug::{to_repr}
 /// 已传输比例（0.0 ~ 1.0）。
 ///
 /// `total` 未知或为 `0` 时返回 `None`——这时能回答的只有「已经传了多少字节」，
-/// 编不出一个比例来。`loaded` 超过 `total` 时可能大于 1.0（见
-/// `docs/10-progress.md` 的「为什么 total 可能不准」），这里不做截断。
+/// 编不出一个比例来。这里不做截断（`loaded` 超过 `total` 时照实给出大于 1.0 的值，
+/// 见 `docs/10-progress.md` 的「`total` 什么时候会缺失」）。
 pub fn ProgressEvent::progress(self : ProgressEvent) -> Double? {
   match self.total {
     Some(total) if total > 0 =>

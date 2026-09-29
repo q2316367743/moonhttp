@@ -9,7 +9,7 @@ import {
 }
 
 // Values
-pub fn build_prepared_request(@config.Config, signal? : @abort.AbortSignal) -> @transport.PreparedRequest?
+pub fn build_prepared_request(@config.Config, signal? : @abort.AbortSignal, accept_encoding? : String) -> @transport.PreparedRequest?
 
 pub fn declares_event_stream(@headers.Headers) -> Bool
 

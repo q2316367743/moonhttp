@@ -21,6 +21,9 @@ pub fn defaults() -> Config {
     // axios 的 responseEncoding 默认值是 'utf8'，这里显式放进默认值，
     // 让 client.defaults() 里看得见「响应体按什么解码」。
     response_encoding: Some(ResponseEncoding::Utf8),
+    // axios 的 decompress 默认值是 true（Node 适配器按 Content-Encoding 自动解压），
+    // 这里同样显式放进默认值：默认实例的响应体是解压后的实体字节。
+    decompress: Some(true),
     // axios 的 validateStatus 默认实现：只有 2xx 算成功。
     validate_status: Some(fn(status) { status >= 200 && status < 300 }),
     common_headers: Some(

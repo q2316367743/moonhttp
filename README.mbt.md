@@ -2,7 +2,7 @@
 
 MoonBit 上的 HTTP 客户端，基于官方异步库 `moonbitlang/async`：调第三方 REST API、上传下载文件、消费 SSE 流，一次配置就能发请求。
 
-它提供实例化配置与合并、`request` / `stream` / `sse` 三个入口、四种请求体形态、自动重定向、代理隧道、上传下载进度回调、请求与响应拦截器、取消请求、SSE 事件解析，以及一组按失败原因分类的错误码。API 语义参考 axios，代码为原创实现。
+它提供实例化配置与合并、`request` / `stream` / `sse` 三个入口、四种请求体形态、自动重定向、代理隧道、上传下载进度回调、请求与响应拦截器、取消请求、SSE 事件解析、响应体 gzip 解压，以及一组按失败原因分类的错误码。API 语义参考 axios，代码为原创实现。
 
 ## 安装
 
@@ -133,6 +133,20 @@ res.is_success()     // 状态码是不是 2xx
 
 状态行与响应头在 `res.status` / `res.status_text` / `res.headers` 上。库不做自动解析：`json()` 必须显式调用，它也不看 `Content-Type`。
 
+### 压缩响应
+
+服务端把响应压成 gzip（`Content-Encoding: gzip`）时，`request` 先解压再交给你：`bytes()` / `text()` 拿到的已经是实体字节，响应头里也不会留着那句已经失效的 `Content-Encoding`。请求侧由库声明 `Accept-Encoding: gzip, identity`，你自己设过就以你的为准。想自己处理压缩字节（例如把 `.tar.gz` 原样转存）就用 `with_decompress(false)`：
+
+```moonbit nocheck
+// 关掉自动解压：请求侧改声明 identity，响应体与 Content-Encoding 都保持线上原样
+let res = client.request(
+  @moonhttp.Config::new("/package.tgz").with_decompress(false),
+)
+let compressed : Bytes = res.bytes()
+```
+
+只支持 gzip——`moonbitlang/async` 只提供这一种编解码器。别的编码（`br` / `deflate`）既不解压也不报错，字节与头原样交给你。两个流式入口（`stream` / `sse`）的 gzip 解压由底层传输实现透明完成，`with_decompress(false)` 同样能关掉。解压失败时抛 `BadResponse`（`ERR_BAD_RESPONSE`），错误里带着原始字节与那句 `Content-Encoding`。
+
 ### 拦截器
 
 请求侧在发送前改配置，响应侧在拿到响应后改响应；两侧各有一个错误处理器，**按失败来源分流**——请求阶段的失败（被拦下、连不上、超时、被取消、重定向超限）走请求侧，状态码没通过校验（默认 2xx 以外的响应）走响应侧。拦截器挂在**实例**上：
@@ -212,7 +226,7 @@ client.request(
 )
 ```
 
-`ProgressEvent` 只有 `loaded`（已传输字节）与 `total`（总字节，`None` 表示长度未知，chunked 与压缩响应下也可能不准），外加算比例的 `progress()`；方向由哪个回调被调用表达。下载进度由「库读全量」的两条路（`request` 与 `read_all`）触发，自己按块读时自行累加。回调是同步执行且不允许抛错的，别在里面做耗时的事。
+`ProgressEvent` 只有 `loaded`（已传输字节）与 `total`（总字节，`None` 表示长度未知——chunked 响应就是这种），外加算比例的 `progress()`；方向由哪个回调被调用表达。下载进度由「库读全量」的两条路（`request` 与 `read_all`）触发，自己按块读时自行累加。压缩响应下报的是**线上字节**（收到的压缩数据），所以 `loaded` 不会超过 `total`。回调是同步执行且不允许抛错的，别在里面做耗时的事。
 
 ### 流式响应与 SSE
 
@@ -296,6 +310,7 @@ println(mock.last_request().unwrap().url) // 已经拼好 base_url 与 query 的
 - **重定向的** `beforeRedirect` 回调与自定义敏感头名单。
 - **代理的** SOCKS 支持、`http_proxy` / `no_proxy` 环境变量，以及按请求关掉代理的开关（显式 `with_proxy` 已支持）。
 - **单条头的多值**：一个头名只能对应一个字符串值。
+- **`deflate` / `br` 等其它压缩编码**：响应解压只做 gzip（`moonbitlang/async` 只提供 gzip 的编解码器）；别的编码既不解压也不报错，字节与 `Content-Encoding` 原样交给你。
 
 ## 参与开发
 

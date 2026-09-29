@@ -41,7 +41,7 @@ pub(all) suberror HttpError {
 | 本项目 | axios 错误码字符串 | 触发点 |
 |---|---|---|
 | `BadRequest` | `ERR_BAD_REQUEST` | `validate_response`：状态码 4xx |
-| `BadResponse` | `ERR_BAD_RESPONSE` | `validate_response`：其它非 2xx（含 5xx、3xx） |
+| `BadResponse` | `ERR_BAD_RESPONSE` | `validate_response`：其它非 2xx（含 5xx、3xx）；解压失败：响应体与它声称的 `Content-Encoding` 不符（`TransportError::Malformed`，gzip 数据损坏 / 被截断），见 `15-response-compression.md` |
 | `Network` | `ERR_NETWORK` | `TransportError::Network`（连接失败、DNS、TLS；**读响应体中途**连接被重置也算；**代理拒绝建立隧道**，文案里带 CONNECT 的状态码，见 `09-proxy.md`） |
 | `Timeout` | `ECONNABORTED` | `TransportError::Timeout`（含读响应体中途的单次读取超时，以及与代理的 CONNECT 握手超时） |
 | `InvalidUrl` | `ERR_INVALID_URL` | `build_prepared_request`（`src/util/request.mbt`）返回 `None` 的两种原因：既没有 `url` 也没有可用的 `base_url`；或者**配了代理却没给 host**。都交由根包 `prepare_request` 翻译成 `HttpError`（两种原因分别报，文案不同） |
@@ -56,6 +56,9 @@ pub(all) suberror HttpError {
 状态码分档是复刻 axios 的 `[ERR_BAD_REQUEST, ERR_BAD_RESPONSE][floor(status / 100) - 4]`：按百位取档，4xx 一档、其它一档。写成显式判断是为了让源码可读。
 
 **错误码永远是「失败本身」的分类**：读响应体读到一半超时 → `Timeout`，中途断连 → `Network`，不会因为此时状态码是 500 就改报 `BadResponse`。状态码与响应头在 `response` 里看得到，两件事不混在一起。
+
+一处例外是**解压失败与状态码失败同时出现**：那时以状态码为准（404 的错误页解不开，说「404」比说「解压失败」有用），
+响应体与响应头都原样交出去，见 `15-response-compression.md`。状态码放行时，解压失败才报 `BadResponse`。
 
 ## 错误里带什么
 

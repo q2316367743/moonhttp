@@ -100,9 +100,15 @@ fn proxy_endpoint(
 /// `signal` 是这次请求的取消信号，**来自入口参数而不是配置**（信号不是配置字段，
 /// 理由见 `docs/12-cancellation.md`）：本层只把它搬进 `PreparedRequest::signal`，
 /// 不判断、也不改它的状态。
+///
+/// `accept_encoding` 是「这次请求往 `Accept-Encoding` 上声明什么」（`None` 表示
+/// 不声明，交给传输实现自己决定）。它由**入口**决定，因为那取决于「谁负责解压
+/// 这次的响应体」——策略与理由见 `docs/15-response-compression.md`；
+/// 本层只按 `set_if_absent` 补默认值（用户显式设置的同名头优先）。
 pub fn build_prepared_request(
   config : Config,
   signal? : @abort.AbortSignal,
+  accept_encoding? : String,
 ) -> @transport.PreparedRequest? {
   // 配了代理却没给 host：这份配置发不出去。宁可让调用方报错，也不能当成
   // 「没配代理」——那会让本该走代理的请求静默直连出去。
@@ -148,6 +154,12 @@ pub fn build_prepared_request(
   let headers = match config.auth {
     // Basic 认证同样不覆盖用户自己设置的 Authorization。
     Some(auth) => headers.set_if_absent("Authorization", basic_auth(auth))
+    None => headers
+  }
+  // 声明压缩也归在「补默认头」这一档：用户显式设置过 Accept-Encoding 就一字不动
+  // （他可能就是要让服务端别压缩，或者自己指定别的编码）。
+  let headers = match accept_encoding {
+    Some(value) => headers.set_if_absent("Accept-Encoding", value)
     None => headers
   }
   // 代理凭据：先取走自定义的 `Proxy-Authorization`（它本来就该发给代理而不是

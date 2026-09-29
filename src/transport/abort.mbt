@@ -78,6 +78,7 @@ fn narrow_transport_error(error : Error) -> TransportError {
     TransportError::Timeout => TransportError::Timeout
     TransportError::Network(message) => TransportError::Network(message)
     TransportError::Unsupported(message) => TransportError::Unsupported(message)
+    TransportError::Malformed(message) => TransportError::Malformed(message)
     TransportError::Cancelled(reason) => TransportError::Cancelled(reason)
     error => TransportError::Network(error.to_string())
   }

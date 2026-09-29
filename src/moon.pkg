@@ -36,9 +36,13 @@ import {
 // 除了端到端用例，还要有一条不走网络的断言。
 // core/json 给「响应体后处理」那几条用例用（`@json.Replacer::exclude`）；
 // 其余用例断言的是门面的返回值，不需要直接调 `@json`。
+// `async/gzip` 与 `async/io` 也只给测试用：gzip 的用例要造**真的**压缩字节
+// （用底层自带的编码器），而不是手抄一份字节串。
 import {
   "moonbitlang/async",
+  "moonbitlang/async/gzip",
   "moonbitlang/async/http",
+  "moonbitlang/async/io",
   "moonbitlang/async/socket",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
