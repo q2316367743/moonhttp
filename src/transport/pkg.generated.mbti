@@ -2,6 +2,7 @@
 package "q2316367743/moonhttp/transport"
 
 import {
+  "moonbitlang/async/io",
   "moonbitlang/core/debug",
   "q2316367743/moonhttp/abort",
   "q2316367743/moonhttp/config",
@@ -74,6 +75,7 @@ pub struct ResponseBody {
 }
 pub fn ResponseBody::close(Self) -> Unit
 pub fn ResponseBody::from_bytes(Bytes) -> Self
+pub fn ResponseBody::open_wire(&@io.Reader, () -> Unit, timeout~ : Int?, total~ : Int?, signal~ : @abort.AbortSignal?) -> Self
 pub async fn ResponseBody::read_all(Self, on_progress? : (@config.ProgressEvent) -> Unit) -> Bytes raise TransportError
 pub async fn ResponseBody::read_all_partial(Self, on_progress? : (@config.ProgressEvent) -> Unit) -> (Bytes, TransportError?) noraise
 pub async fn ResponseBody::read_some(Self, max_len? : Int) -> Bytes? raise TransportError

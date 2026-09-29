@@ -26,3 +26,12 @@ import {
 import {
   "moonbitlang/async/socket",
 } for "test"
+
+// alert_internal 是**有意**的：`open_wire`（自研传输层 httpconn 的响应体入口）
+// 的前提是「包外可以实现 `@io.Reader`」，而 trait 的必需方法 `_get_internal_buffer`
+// 返回的 `ReaderBuffer` 被上游标了内部用途——但它的构造器 `ReaderBuffer::new()`
+// 是公开 API，上游自己的 Tcp / Tls / gzip Decoder 也全靠同一套机制。
+// 这是这条路线唯一的赌注，stream_wire_test 就是哨兵：上游若收紧，它第一个失败。
+// 届时的退路（MemoryReader 泵送桥接）记在 docs/18。
+
+warnings = "-alert_internal"

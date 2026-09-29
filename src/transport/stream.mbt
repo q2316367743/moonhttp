@@ -6,8 +6,9 @@
 /// 走原来的解析流程）。这样 chunked / SSE 这类「边到边读」的协议才有落点：
 /// 响应头先用于判断状态码与内容类型，数据到了再一段段取。
 ///
-/// 内部有两种来源：真实的 HTTP 连接，以及内存字节（Mock 与测试用）。
-/// 两者的读语义刻意保持一致（对齐 `@io.Reader`），Mock 才能真实代表网络侧：
+/// 内部有三种来源：旧栈的真实 HTTP 连接（`@http.Client`）、自研栈的连接流
+/// （`open_wire` 包进来的任意 `@io.Reader`），以及内存字节（Mock 与测试用）。
+/// 三者的读语义刻意保持一致（对齐 `@io.Reader`），Mock 才能真实代表网络侧：
 /// - `read_some` 到 EOF 返回 `None`；
 /// - `read_until` 消费掉分隔符，且不把分隔符放进返回值；
 /// - 读到 EOF 会自动关闭底层连接，之后继续读仍然返回 `None`。
@@ -16,8 +17,9 @@
 /// 忘记关闭就会漏掉一条 TCP 连接。
 ///
 /// 本文件只放**读**这一半（读语义、超时、取消作用域）；构造与释放
-/// （`from_bytes` / `open` / `rewind` / `close`）在 `stream_lifecycle.mbt`，
-/// 读全量那三件套在 `stream_all.mbt`——都是 RL-04 的 300 行上限逼出来的拆分。
+/// （`from_bytes` / `open` / `open_wire` / `rewind` / `close`）在
+/// `stream_lifecycle.mbt`，读全量那三件套在 `stream_all.mbt`——
+/// 都是 RL-04 的 300 行上限逼出来的拆分。
 pub struct ResponseBody {
   priv mut inner : BodyInner
   /// 单次读取的等待上限（毫秒），来自 `PreparedRequest::timeout`；
@@ -41,8 +43,20 @@ pub struct ResponseBody {
 /// 同时保证关闭之后再读不会碰到已经释放的连接。
 priv enum BodyInner {
   Http(@http.Client)
+  /// 自研传输层（httpconn）的连接流：一个已按 HTTP 分帧切好的 `@io.Reader`
+  /// 加一个「关连接」的回调。`close` 是同步回调——连接关闭不涉及等待。
+  Wire(WireBody)
   Memory(MemoryBody)
   Closed
+}
+
+///|
+/// 自研传输层交给响应体的那一对东西：读靠 reader（超时/取消由 `read_or_fail`
+/// 统一管），关靠 close（幂等性由持有方保证：close 之后 reader 的读会失败，
+/// 但 `ResponseBody::close` 自身只走一次）。
+priv struct WireBody {
+  reader : &@io.Reader
+  close : () -> Unit
 }
 
 ///|
@@ -137,6 +151,21 @@ pub async fn ResponseBody::read_some(
         Some(chunk) => Some(chunk)
       }
     }
+    // Wire 与 Http 的读语义刻意逐行同构：超时/取消走同一个 read_or_fail，
+    // EOF（None）同样触发关闭——两种真实来源在使用侧必须无法区分。
+    Wire(wire) => {
+      let read = match max_len {
+        Some(limit) => () => wire.reader.read_some(max_len=limit)
+        None => () => wire.reader.read_some()
+      }
+      match read_or_fail(self.timeout, self.signal, read) {
+        None => {
+          self.close()
+          None
+        }
+        Some(chunk) => Some(chunk)
+      }
+    }
   }
 }
 
@@ -191,6 +220,18 @@ pub async fn ResponseBody::read_until(
         }
         Some(text) => Some(text)
       }
+    // 与 Http 分支同构：SSE 的事件切分靠它，自研栈的流必须给出同样的形状
+    Wire(wire) =>
+      match
+        read_or_fail(self.timeout, self.signal, () => {
+          wire.reader.read_until(sep)
+        }) {
+        None => {
+          self.close()
+          None
+        }
+        Some(text) => Some(text)
+      }
   }
 }
 
@@ -204,6 +245,12 @@ pub impl @debug.Debug for ResponseBody with fn to_repr(self) {
       @debug.Repr::opaque_(
         "ResponseBody",
         @debug.Repr::literal("<http stream>"),
+      )
+    // 自研栈的连接流同样是「不可复制、不可窥视」的网络流，打印占位符
+    Wire(_) =>
+      @debug.Repr::opaque_(
+        "ResponseBody",
+        @debug.Repr::literal("<wire stream>"),
       )
     Memory(memory) =>
       @debug.Repr::opaque_(

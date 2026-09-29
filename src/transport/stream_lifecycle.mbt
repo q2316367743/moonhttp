@@ -48,7 +48,45 @@ fn ResponseBody::open(
     signal,
     signal_ticket: None,
   }
-  match signal {
+  register_cancel_close(body)
+  body
+}
+
+///|
+/// 用自研传输层（httpconn）的连接流构造响应体：`reader` 是已按 HTTP 分帧
+/// 切好的读端（chunked / content-length / close-delimited 都在它底下解好），
+/// `close` 负责释放底层连接（TLS + TCP）。
+///
+/// 除来源外与 `open` 完全同一条路：`timeout` 约束**单次读取**、`signal`
+/// 登记「取消即关闭」、进来就已取消的信号立刻关流——两种真实来源在
+/// `read_some` / `read_until` 的语义上必须无法区分（见 stream.mbt 的
+/// Wire 分支注释）。`close` 应当幂等：取消触发的关闭与显式 `close()`
+/// 可能只差一拍。
+pub fn ResponseBody::open_wire(
+  reader : &@io.Reader,
+  close : () -> Unit,
+  timeout~ : Int?,
+  total~ : Int?,
+  signal~ : @abort.AbortSignal?,
+) -> ResponseBody {
+  let body : ResponseBody = {
+    inner: BodyInner::Wire({ reader, close, }),
+    timeout,
+    total,
+    signal,
+    signal_ticket: None,
+  }
+  register_cancel_close(body)
+  body
+}
+
+///|
+/// 「取消即关闭」的登记：`open` / `open_wire` 共用的一份。
+/// **进来就已经取消**的信号在这里显式处理：立刻关掉，随后任何读取都会报
+/// `Cancelled` 而不是安静地 EOF。这份检查必须自己写——信号上的登记在
+/// 已取消时不会补触发，见 `src/abort/abort.mbt` 的 `attach`。
+fn register_cancel_close(body : ResponseBody) -> Unit {
+  match body.signal {
     Some(signal) =>
       if signal.aborted() {
         body.close()
@@ -58,7 +96,6 @@ fn ResponseBody::open(
       }
     None => ()
   }
-  body
 }
 
 ///|
@@ -82,6 +119,12 @@ fn ResponseBody::rewind(self : ResponseBody) -> ResponseBody? {
 pub fn ResponseBody::close(self : ResponseBody) -> Unit {
   match self.inner {
     Http(client) => client.close()
+    // close 的幂等性靠「立刻置 Closed」保证：回调本身不必防重入。
+    // 字段里的函数值要先解出来再调（直接 wire.close() 会被当成方法调用）。
+    Wire(wire) => {
+      let close = wire.close
+      close()
+    }
     _ => ()
   }
   self.inner = BodyInner::Closed
