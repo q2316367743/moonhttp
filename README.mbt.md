@@ -311,6 +311,7 @@ println(mock.last_request().unwrap().url) // 已经拼好 base_url 与 query 的
 - **代理的** SOCKS 支持、`http_proxy` / `no_proxy` 环境变量，以及按请求关掉代理的开关（显式 `with_proxy` 已支持）。
 - **单条头的多值**：一个头名只能对应一个字符串值。
 - **`deflate` / `br` 等其它压缩编码**：响应解压只做 gzip（`moonbitlang/async` 只提供 gzip 的编解码器）；别的编码既不解压也不报错，字节与 `Content-Encoding` 原样交给你。
+- **自定义请求方法（WebDAV 的 `PROPFIND` 等）**：`Method` 只有九个标准方法；底层 `moonbitlang/async/http` 目前同样只支持这九个（封闭枚举、无字符串方法入口），已向上游反馈，待其支持后本库跟进（方案见 `docs/16-custom-http-methods.md`）。
 
 ## 参与开发
 

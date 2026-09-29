@@ -176,7 +176,7 @@ pub impl Transport for MyTransport with fn send(self, request) {
 配套的四处适配：
 
 1. **地址切分**（`split_url`）：底层 `Client::Client(uri)` 要求 uri 的 path 恰好是 `/`（否则抛 `InvalidFormat`），路径必须留给 `Client::request(meth, path)`。切法镜像底层私有的 `resolve_url`：按 `://` 分出协议，取之后第一个 `/` 之前的部分作为 host、其余作为 path+query。相对地址与非 http/https 协议抛 `TransportError::Unsupported`——同一类输入以前走 `@http.request` 时会被归到 `Network`，现在分类更准（`Unsupported` 的定义就是「请求还没发出去就失败了」）。
-2. **枚举映射**：本项目的 `Method` 与底层的 `RequestMethod` 一一对应（`to_request_method`）。上层不认识底层类型，所以映射写在这里。
+2. **枚举映射**：本项目的 `Method` 与底层的 `RequestMethod` 一一对应（`to_request_method`）。上层不认识底层类型，所以映射写在这里。注意两边都是九个标准方法的封闭枚举（上游 main 分支同样），WebDAV 等扩展方法本期发不出去——证据、被排除的绕行路线与解锁方案见 `16-custom-http-methods.md`。
 3. **头的容器转换**：底层要求 `Map[CaseInsensitiveString, String]`（`to_http_headers` / `from_http_headers`）。两边都是大小写不敏感的容器，转换只搬类型不改语义。头与便捷函数一样在 `Client::Client` 建连时一次性交出，body 单独 `write`，语义与改造前一致。
 4. **超时与错误收敛**：见上文「超时语义」；底层 `TimeoutError` → `TransportError::Timeout`，其余错误统一归 `Network` 并保留原始错误文本。建连之后任何失败都靠 `errdefer client.close()` 关连接，不留半开连接。
 5. **代理**（`request.proxy` 非空时）：在同一个 `attempt` 里先建一个**干净的代理客户端**（`open_proxy`，凭据以持久头的形式交给它）再传给 `Client::Client(root, proxy?)`——放在这里是为了让 CONNECT 握手也落进 `timeout`。底层的代理客户端**所有权会被接管**，所以每次请求都得新建、不能缓存。CONNECT 非 2xx 时底层抛 `ProxyError`，这里翻译成 `Network("代理拒绝建立隧道：HTTP <状态码> <原因短语>")`（单独一条 catch 分支，在通用兜底之前）。细节见 `09-proxy.md`。
@@ -191,6 +191,7 @@ pub impl Transport for MyTransport with fn send(self, request) {
 | 下载进度 | **已支持**（`ResponseBody` 的 `read_all*` 带 `on_progress`），只由「库读全量」触发 | 见 `10-progress.md` |
 | 代理 | 已支持（`PreparedRequest::proxy`） | 底层 `Client::Client(uri, proxy~)` 的 CONNECT 隧道；凭据落在代理客户端自己的持久头上。契约与注意事项见 `09-proxy.md` |
 | TLS 校验开关 | 固定为默认（校验） | `Client::Client(trust~ / verify~)` |
+| 自定义请求方法 | 不支持（`Method` 只有九个标准方法；底层 `RequestMethod` 同为封闭枚举、无字符串入口） | 待上游 `moonbitlang/async` 支持；届时本项目只改 `Method` 加 `Other(String)` 与 `to_request_method` 一个分支，方案见 `16-custom-http-methods.md` |
 | 响应 cookie | 读不到 `Set-Cookie` | 底层把响应 cookie 单独放在 `Response::cookies` 里，没有并进 headers。要暴露需要先决定多值头的表示（本项目的 `Headers` 一个名字只能有一个值） |
 | SSE 事件解析 | 已实现，但**不在本模块** | 传输层只交出字节流；事件边界与 `event:` / `data:` 字段语义在 `sse` 包（`SseParser`），接到 HTTP 上的入口是根包的 `Client::sse` / `SseStream`，见 `06-sse.md`。分层的意义是「字节怎么来」与「字节怎么解」各自独立演进：换成别的字节来源（WebSocket、文件）也能复用同一个解析器 |
 
