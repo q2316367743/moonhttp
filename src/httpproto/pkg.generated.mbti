@@ -1,0 +1,81 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316367743/moonhttp/httpproto"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn body_framing(Bool, Int, HeaderMap) -> BodyFraming raise ParseError
+
+pub fn is_token(StringView) -> Bool
+
+pub fn parse_header_block(Array[String]) -> HeaderMap raise ParseError
+
+pub fn parse_status_line(String) -> StatusLine raise ParseError
+
+pub fn render_request_head(StringView, StringView, HeaderMap) -> Bytes raise ParseError
+
+// Errors
+pub(all) suberror ParseError {
+  Malformed(String)
+  Unsupported(String)
+} derive(Eq, @debug.Debug)
+pub fn ParseError::equal(Self, Self) -> Bool
+pub fn ParseError::not_equal(Self, Self) -> Bool
+pub fn ParseError::to_repr(Self) -> @debug.Repr
+
+// Types and methods
+pub(all) enum BodyFraming {
+  Empty
+  Chunked
+  Length(Int)
+  UntilClose
+} derive(Eq, @debug.Debug)
+pub fn BodyFraming::equal(Self, Self) -> Bool
+pub fn BodyFraming::not_equal(Self, Self) -> Bool
+pub fn BodyFraming::to_repr(Self) -> @debug.Repr
+
+pub struct ChunkDecoder {
+  // private fields
+}
+pub fn ChunkDecoder::feed(Self, Bytes) -> Array[Bytes] raise ParseError
+pub fn ChunkDecoder::finish(Self) -> Unit raise ParseError
+pub fn ChunkDecoder::is_done(Self) -> Bool
+pub fn ChunkDecoder::new() -> Self
+
+pub(all) struct HeaderMap {
+  mut entries : Array[(String, String)]
+} derive(@debug.Debug)
+pub fn HeaderMap::append(Self, String, String) -> Unit
+pub fn HeaderMap::get_all(Self, StringView) -> Array[String]
+pub fn HeaderMap::get_first(Self, StringView) -> String?
+pub fn HeaderMap::get_last(Self, StringView) -> String?
+pub fn HeaderMap::has(Self, StringView) -> Bool
+pub fn HeaderMap::length(Self) -> Int
+pub fn HeaderMap::new() -> Self
+pub fn HeaderMap::remove(Self, StringView) -> Unit
+pub fn HeaderMap::set(Self, String, String) -> Unit
+pub fn HeaderMap::set_if_absent(Self, String, String) -> Unit
+pub fn HeaderMap::to_repr(Self) -> @debug.Repr
+
+pub(all) enum HttpVersion {
+  Http10
+  Http11
+} derive(Eq, @debug.Debug)
+pub fn HttpVersion::equal(Self, Self) -> Bool
+pub fn HttpVersion::not_equal(Self, Self) -> Bool
+pub fn HttpVersion::to_repr(Self) -> @debug.Repr
+
+pub(all) struct StatusLine {
+  version : HttpVersion
+  code : Int
+  reason : String
+} derive(Eq, @debug.Debug)
+pub fn StatusLine::equal(Self, Self) -> Bool
+pub fn StatusLine::not_equal(Self, Self) -> Bool
+pub fn StatusLine::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+
+// Traits

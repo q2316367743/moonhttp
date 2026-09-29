@@ -1,0 +1,15 @@
+// httpproto 是自研 HTTP/1.x 的**协议层**（docs/17 口径 7）：请求行/状态行、
+// 头解析（multimap + obs-fold）、响应体分帧判定（chunked / content-length /
+// close-delimited / 无体规则）、chunked 增量解码。全部是纯逻辑——不依赖
+// async 运行时、也不依赖本项目任何子包，因此能用普通同步测试覆盖；
+// 「测试比代码多」的那部分成本就放在这里（docs/17 口径 6）。
+// 实现层（httpconn）负责 I/O 驱动：把网络字节喂进来，从这里拿解析结果；
+// 「协议错误 → TransportError」的映射也归它，本包只表达「坏在哪一类」。
+//
+// buffer 仅用于字节攒包（渲染请求头块、chunked 的行累积）；
+// debug 仅用于实现 Debug（测试断言需要）；encoding/utf8 用于头值的 UTF-8 编码。
+import {
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/debug",
+  "moonbitlang/core/encoding/utf8",
+}
