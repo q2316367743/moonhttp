@@ -279,3 +279,21 @@ test "other fields survive the hop" {
   assert_eq(next.allow_absolute_urls, Some(false))
   assert_eq(next.http_method, Some(@config.Method::Get))
 }
+
+///|
+/// 自定义方法（`Other`）的重定向语义与「非 POST 的标准方法」完全一致，不需要
+/// 任何特判（docs/16 核实过的「天然兼容」）：301/302 只降级 POST，所以原方法
+/// 原样保留；303 的语义是「去 GET 那个资源」，`Other` 落进 GET。
+test "custom methods follow the standard redirect rules" {
+  let config = @config.Config::new("https://api.example.com/resource").with_method(
+    @config.Method::Other("PROPFIND"),
+  )
+  let kept = next_hop(
+    config.next_redirect("https://api.example.com/resource", 301, Some("/v2")),
+  )
+  assert_eq(kept.http_method, Some(@config.Method::Other("PROPFIND")))
+  let demoted = next_hop(
+    config.next_redirect("https://api.example.com/resource", 303, Some("/v2")),
+  )
+  assert_eq(demoted.http_method, Some(@config.Method::Get))
+}

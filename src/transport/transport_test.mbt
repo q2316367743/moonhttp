@@ -157,6 +157,32 @@ async test "async transport classifies connection failures" {
 }
 
 ///|
+/// 旧栈对自定义方法的拦截：底层方法枚举封闭，`Other` 必须在建连**之前**报
+/// `Unsupported`。url 特意用本机必然拒连的地址——如果拦截发生在建连之后，
+/// 这个用例会拿到 `Network` 而不是 `Unsupported`，正好暴露顺序错误。
+/// 自定义方法真正发得出去的路径是自研传输层（httpconn，见 docs/16 / docs/18）。
+async test "async transport rejects custom methods before connecting" {
+  let transport : &@transport.Transport = @transport.AsyncHttpTransport::new()
+  let request = @transport.PreparedRequest::{
+    http_method: @transport.Method::Other("PROPFIND"),
+    url: "http://127.0.0.1:1/",
+    headers: @transport.Headers::new(),
+    body: None,
+    timeout: Some(3000),
+    proxy: None,
+    on_upload_progress: None,
+    signal: None,
+  }
+  let error = try {
+    ignore(transport.send(request))
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_true(error is Some(@transport.TransportError::Unsupported(_)))
+}
+
+///|
 /// Mock 的请求记录访问器：一次都没发过时 last_request 为 None。
 async test "mock transport accessors" {
   let mock = @transport.MockTransport::new(ok_response(b"x"))

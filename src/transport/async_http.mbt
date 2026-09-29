@@ -24,9 +24,17 @@ pub fn AsyncHttpTransport::new() -> AsyncHttpTransport {
 ///|
 /// 本项目的 `Method` 到底层 `RequestMethod` 的一一映射。
 ///
-/// 两个枚举的构造子完全对应，映射写在这里而不是做成类型别名，
+/// 九个标准方法的构造子完全对应，映射写在这里而不是做成类型别名，
 /// 是为了让上层完全不认识底层类型——上层的纯逻辑包不需要依赖 async。
-fn to_request_method(meth : @config.Method) -> @http.RequestMethod {
+///
+/// `Other` 在这里被拦下：底层 `RequestMethod` 是封闭枚举，装不下自定义方法，
+/// 这是旧栈发不出 WebDAV 的根因（证据见 `docs/16-custom-http-methods.md`）。
+/// 报 `Unsupported`（→ `ERR_NOT_SUPPORTED`）而不是硬编一个相近的标准方法，
+/// 是因为「请求没发出去就失败了」正是这个分类的定义；调用方应在建连前
+/// （`send_head` 的最前面）完成映射，失败时不白费一次 TCP/TLS 握手。
+fn to_request_method(
+  meth : @config.Method,
+) -> @http.RequestMethod raise TransportError {
   match meth {
     Get => @http.RequestMethod::Get
     Head => @http.RequestMethod::Head
@@ -37,6 +45,10 @@ fn to_request_method(meth : @config.Method) -> @http.RequestMethod {
     Options => @http.RequestMethod::Options
     Trace => @http.RequestMethod::Trace
     Patch => @http.RequestMethod::Patch
+    Other(name) =>
+      raise TransportError::Unsupported(
+        "内置传输层发不出自定义方法「\{name}」：底层 HTTP 栈的方法枚举是封闭的，请改用注入 HttpConnTransport 的客户端（见 docs/16）",
+      )
   }
 }
 
@@ -204,6 +216,9 @@ fn content_length(headers : Map[@http.CaseInsensitiveString, String]) -> Int? {
 async fn send_head(
   request : PreparedRequest,
 ) -> (@http.Client, @http.Response) raise TransportError {
+  // 方法映射放在最前面：自定义方法在旧栈上发不出去，要在任何 I/O 之前拦下
+  // （映射内部抛 `Unsupported`），否则会白建一条连接。
+  let request_method = to_request_method(request.http_method)
   let (root, path) = split_url(request.url)
   let attempt = () => {
     // 代理客户端在这里（而不是外层）新建，握手代价才落进 timeout；
@@ -221,7 +236,7 @@ async fn send_head(
     )
     // 失败路径必须关连接，否则会漏下一条没人管的半开连接。
     errdefer client.close()
-    client.request(to_request_method(request.http_method), path)
+    client.request(request_method, path)
     match request.body {
       Some(bytes) => write_body(client, bytes, request.on_upload_progress)
       // 无 body 时什么都不写：底层据此发 Content-Length: 0 或 chunked。

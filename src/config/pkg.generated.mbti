@@ -120,6 +120,7 @@ pub(all) enum Method {
   Options
   Trace
   Patch
+  Other(String)
 } derive(Eq, Hash, @debug.Debug)
 pub fn Method::equal(Self, Self) -> Bool
 pub fn Method::hash(Self) -> Int

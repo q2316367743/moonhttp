@@ -135,6 +135,42 @@ test "method wire name is upper case" {
 }
 
 ///|
+/// 自定义方法（`Other`）存原样发原样：`to_string` 返回载荷本身，token
+/// 区分大小写（RFC 7230）。`parse` 的口径不变——标准方法之外的名字一律
+/// `None`，不被静默当成自定义方法（否则 `GT` 这样的笔误会变成线上 405）。
+test "custom method keeps its token verbatim and parse stays strict" {
+  assert_eq(@config.Method::Other("PROPFIND").to_string(), "PROPFIND")
+  assert_eq(@config.Method::Other("report").to_string(), "report")
+  assert_true(
+    @config.Method::Other("PROPFIND") == @config.Method::Other("PROPFIND"),
+  )
+  assert_true(
+    @config.Method::Other("PROPFIND") != @config.Method::Other("REPORT"),
+  )
+  assert_eq(@config.Method::parse("PROPFIND"), None)
+  assert_eq(@config.Method::parse("report"), None)
+}
+
+///|
+/// `Other` 能当 `method_headers` 的键用（`Hash + Eq` 对 String 载荷自动生效）：
+/// 按自定义方法分层的默认头照常工作。
+test "custom method works as a method_headers bucket key" {
+  let config = @config.Config::new("https://api.example.com/").with_method_header(
+    @config.Method::Other("PROPFIND"),
+    "Depth",
+    "0",
+  )
+  let bucket = config.method_headers
+    .unwrap()
+    .get(@config.Method::Other("PROPFIND"))
+  assert_eq(bucket.unwrap().get("Depth"), Some("0"))
+  // 不同 token 各自成桶，互不可见
+  assert_true(
+    config.method_headers.unwrap().get(@config.Method::Other("REPORT")) is None,
+  )
+}
+
+///|
 /// 配置的字符串渲染只列出被提供的字段，未提供的字段不出现（减少噪音）。
 test "config to_string lists only provided fields" {
   let config = @config.Config::default()
