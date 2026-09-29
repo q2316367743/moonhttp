@@ -1,7 +1,15 @@
 # 15 响应体的压缩（gzip）
 
 **一句话**：声明了 `Content-Encoding: gzip` 的响应由库负责解掉——`Client::request`（读全量）由库自己声明压缩并解压；
-`stream` / `sse`（流式）沿用底层 `moonbitlang/async/http` 的透明懒解压。`with_decompress(false)` 可整体关掉。
+流式路径分两栈：旧栈（默认的 `AsyncHttpTransport`）沿用底层 `moonbitlang/async/http` 的透明懒解压，
+自研栈（`HttpConnTransport`）由本库声明并流式解压。`with_decompress(false)` 可整体关掉。
+
+> **状态更新（2026-09-29，自研传输层落地）**：本文描述的机制仍对**旧栈**完全成立；
+> 自研栈的流式路径不再依赖底层的透明解压，改为「httpconn 自己声明 gzip、自己流式解压」——
+> 判定锚点从底层的私有行为（`has_accept_encoding`）变成了自己请求头里的声明，
+> 怪癖（头体矛盾、用户声明后行为漂移）随之消失。规则表见 `18-httpconn-transport.md` 的 gzip 一节；
+> 下文的判定锚点、摘头判据对两条栈都适用（自研栈的摘头在 `httpconn/transport.mbt` 的
+> `build_raw_response`，判据同为「请求里有没有 `Accept-Encoding`」）。
 
 ## 关键文件
 
@@ -56,10 +64,13 @@
 
 ## 为什么不在 `ResponseBody` 上做懒解压
 
-`@gzip.Decoder` 只接受 `@io.Reader`，而 `ResponseBody` **刻意不实现**该 trait（要实现 `_get_internal_buffer` /
-`_direct_read`，那需要命名 async 包内部的 `ReaderBuffer`，跨模块做不到，见 `05-transport.md`）。
-缓冲路径不需要它——读全量之后解压是纯内存变换（`decode_gzip` 借一个内存管道把字节喂给解码器，
-与 async 库自测里同一件事的写法一致）。流式懒解压才需要 Reader 适配或管道 + 泵任务，那一份由底层承担。
+`@gzip.Decoder` 只接受 `@io.Reader`。缓冲路径不需要它——读全量之后解压是纯内存变换（`decode_gzip` 借一个内存管道
+把字节喂给解码器，与 async 库自测里同一件事的写法一致）；流式懒解压才需要 Reader 适配。
+
+> **勘误（2026-09-29）**：本文初版写「实现 `@io.Reader` 需要命名 async 包内部的 `ReaderBuffer`，跨模块做不到」
+> ——实测不成立：`ReaderBuffer::new()` 是公开 API，trait 的两个必需方法也未标内部。
+> 自研传输层正是靠包外实现 `@io.Reader` 做的分帧流（含 `@gzip.Decoder` 的包装），见 `18-httpconn-transport.md`
+> 的「有意的赌注与它的哨兵」——这条路唯一的代价是上游把 `ReaderBuffer` 标了内部用途，按包关掉一条告警。
 
 ## 失败分类与现场
 
@@ -90,9 +101,11 @@ gzip 数据损坏、被截断（CRC32 或长度校验不过、`NeedMoreInput`）
 
 ## 不做的事
 
-- **流式懒解压自己实现**：`stream` / `sse` 交给底层，理由见上。想在流式路径上拿到「我们自己解压」的行为没有开关，
+- **流式懒解压自己实现（旧栈）**：旧栈的 `stream` / `sse` 交给底层，理由见上。自研栈的流式解压
+  已由 httpconn 自持（见状态更新）；在旧栈上想要「我们自己解压」的行为没有开关，
   但 `decompress: false` 能让它明确地不解压。
 - **`deflate` / `br` / `zstd`**：`moonbitlang/async` 只提供 gzip；别的编码要有实现才谈得上支持。
 - **请求体压缩上传**：本期只做响应侧。
 - **自动改写用户显式设置的头**：`Accept-Encoding` 用户设过就一字不动（`set_if_absent`），
-  那时缓冲路径仍会解 gzip（「交出去的体一定解压」是这条路径的承诺），流式路径则交压缩字节、头留着。
+  那时缓冲路径仍会解 gzip（「交出去的体一定解压」是这条路径的承诺），流式路径则交压缩字节、头留着
+  （两条栈一致）。

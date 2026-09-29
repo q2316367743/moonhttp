@@ -3,7 +3,9 @@
 **一句话**：为根治底层 `moonbitlang/async/http` 的结构性限制（封闭方法枚举见 `16-custom-http-methods.md`、
 gzip 透明解压怪癖、`Client` opaque 导致连接池做不了、代理只支持 CONNECT），另起分支自研 HTTP/1.x 客户端栈，
 按 RFC 分**协议层**与**实现层**两个包，为 2026-10 的连接池打地基。
-**状态：规划文档，未实现、未开分支**——2026-09-29 与 owner 对齐的七条口径见下，分支启动后按此执行并回填实际包名与文件清单。
+**状态：第 1 期已落地（2026-09-29，分支 `feat/http-protocol`）**——协议层 `src/httpproto/`、
+实现层 `src/httpconn/`、`Transport` 双实现并存、自定义方法与 gzip 自持随期交付；
+实现细节与新旧栈对照见 `18-httpconn-transport.md`。七条口径照录如下，分支开发期间不得偏离。
 
 ## 已核实的可行性前提（动手前复核一遍）
 

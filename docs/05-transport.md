@@ -63,6 +63,8 @@ pub(open) trait Transport {
 
 ```moonbit
 pub fn ResponseBody::from_bytes(Bytes) -> ResponseBody   // 内存体：Mock 与自定义实现用
+pub fn ResponseBody::open_wire(&@io.Reader, close : () -> Unit, timeout~, total~, signal~) -> ResponseBody
+                                                         // 连接流：自研传输（httpconn）用，close 负责释放连接
 pub async fn ResponseBody::read_some(Self, max_len? : Int) -> Bytes? raise TransportError
 pub async fn ResponseBody::read_until(Self, sep : String) -> String? raise TransportError
 pub async fn ResponseBody::read_all(Self, on_progress? : ProgressCallback) -> Bytes raise TransportError
@@ -72,7 +74,7 @@ pub fn ResponseBody::close(Self) -> Unit
 
 `on_progress` 是下载进度的报告钩子（`None` 表示不报告），只有两个「读全量」的方法有它：按块读的 `read_some` / `read_until` 不报告，那条路由调用方自己累加。报告粒度、`total` 从哪来、回调为什么是 `noraise` 见 `10-progress.md`。
 
-两种来源（真实连接、内存字节）的语义**完全一致**，对齐 `@io.Reader`，Mock 才能真实代表网络侧：
+三种来源（旧栈连接、自研栈连接流、内存字节）的语义**完全一致**，对齐 `@io.Reader`，Mock 才能真实代表网络侧：
 
 - `read_some` 到 EOF 返回 `None`；返回的块大小不保证（取决于对端一次发了多少）；
 - `read_until` 消费掉分隔符且不返回它；EOF 时把剩余内容当作最后一段返回，再读一次才是 `None`；
@@ -83,8 +85,8 @@ pub fn ResponseBody::close(Self) -> Unit
 - 任何读取失败都会先关闭流再抛 `TransportError`：失败之后连接状态已不可信，调用方不该继续读。
 
 **流的字节里没有「内容编码」这一层**：`ResponseBody` 交出去的永远是实体字节（`Content-Encoding` 已经被负责解码的一方消掉）。
-缓冲路径是上层读完自己解，流式路径由内置传输实现所依赖的底层做透明懒解压——两条路的口径、谁声明压缩、响应头怎么跟着变，
-见 `15-response-compression.md`。自定义传输实现若要交出 gzip 字节，就必须把 `Content-Encoding` 一起交出去（让头与体说同一件事）。
+缓冲路径是上层读完自己解；流式路径在自研传输（httpconn）里由本库声明并解压（谁解压谁声明）、在旧栈里由底层透明懒解压——口径、谁声明压缩、响应头怎么跟着变，
+见 `15-response-compression.md` 与 `18-httpconn-transport.md`。自定义传输实现若要交出 gzip 字节，就必须把 `Content-Encoding` 一起交出去（让头与体说同一件事）。
 
 `read_all_partial` 的声明带 `noraise`：MoonBit 里 async 函数省略错误类型**不等于**不抛错（省略等于开放错误类型），要表达「不抛」必须显式写 `noraise`。
 
@@ -191,11 +193,11 @@ pub impl Transport for MyTransport with fn send(self, request) {
 | 下载进度 | **已支持**（`ResponseBody` 的 `read_all*` 带 `on_progress`），只由「库读全量」触发 | 见 `10-progress.md` |
 | 代理 | 已支持（`PreparedRequest::proxy`） | 底层 `Client::Client(uri, proxy~)` 的 CONNECT 隧道；凭据落在代理客户端自己的持久头上。契约与注意事项见 `09-proxy.md` |
 | TLS 校验开关 | 固定为默认（校验） | `Client::Client(trust~ / verify~)` |
-| 自定义请求方法 | 不支持（`Method` 只有九个标准方法；底层 `RequestMethod` 同为封闭枚举、无字符串入口） | 待上游 `moonbitlang/async` 支持；届时本项目只改 `Method` 加 `Other(String)` 与 `to_request_method` 一个分支，方案见 `16-custom-http-methods.md` |
+| 自定义请求方法 | **已支持**（`Method::Other(String)`，自研传输 `HttpConnTransport` 原样发送；旧栈在建连前报 `ERR_NOT_SUPPORTED`） | 自研路径见 `18-httpconn-transport.md`；旧栈受底层封闭枚举所限（证据与上游 issue 见 `16-custom-http-methods.md`） |
 | 响应 cookie | 读不到 `Set-Cookie` | 底层把响应 cookie 单独放在 `Response::cookies` 里，没有并进 headers。要暴露需要先决定多值头的表示（本项目的 `Headers` 一个名字只能有一个值） |
 | SSE 事件解析 | 已实现，但**不在本模块** | 传输层只交出字节流；事件边界与 `event:` / `data:` 字段语义在 `sse` 包（`SseParser`），接到 HTTP 上的入口是根包的 `Client::sse` / `SseStream`，见 `06-sse.md`。分层的意义是「字节怎么来」与「字节怎么解」各自独立演进：换成别的字节来源（WebSocket、文件）也能复用同一个解析器 |
 
-改动这些能力时请只动 `src/transport/`——它是本模块唯一对接 `moonbitlang/async` 的包（`src/transport/*.mbt` 都可以改，不限于 `async_http.mbt`）。`PreparedRequest` 的字段语义不要动（加字段是加能力，比如 `proxy`；改已有字段的含义不是）；`PreparedRequest` / `RawResponse` 的结构变化（例如本次 `body` 由字节改成流、`proxy` 字段的加入）必须同步本节与 `03-request-pipeline.md`，因为它们出现在公开签名里。
+改动这些能力时请只动 `src/transport/` 与 `src/httpconn/`——它们是本模块唯二对接 `moonbitlang/async` 的包（`src/transport/*.mbt` 都可以改，不限于 `async_http.mbt`）。`PreparedRequest` 的字段语义不要动（加字段是加能力，比如 `proxy`；改已有字段的含义不是）；`PreparedRequest` / `RawResponse` 的结构变化（例如本次 `body` 由字节改成流、`proxy` 字段的加入）必须同步本节与 `03-request-pipeline.md`，因为它们出现在公开签名里。
 
 ## `MockTransport` 的用法
 

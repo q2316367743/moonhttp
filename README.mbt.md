@@ -308,10 +308,10 @@ println(mock.last_request().unwrap().url) // 已经拼好 base_url 与 query 的
 - **`transformRequest` / `transformResponse`**：不做成独立配置项——用两段拦截器代替（请求侧改 body、响应侧改正文，见上面「拦截器」一节）。
 - **拦截器的** `runWhen`（按条件跳过）与 `synchronous`（批量注册）：条件写在拦截器体内 `if` 即可，批量注册用链式 `use_*`；`eject` 的等价物是具名注册 + `remove_request` / `remove_response`。
 - **重定向的** `beforeRedirect` 回调与自定义敏感头名单。
-- **代理的** SOCKS 支持、`http_proxy` / `no_proxy` 环境变量，以及按请求关掉代理的开关（显式 `with_proxy` 已支持）。
+- **代理的** SOCKS 支持（自研传输 `HttpConnTransport` 的下一个提交补 SOCKS5）、`http_proxy` / `no_proxy` 环境变量，以及按请求关掉代理的开关（显式 `with_proxy` 已支持）。
 - **单条头的多值**：一个头名只能对应一个字符串值。
 - **`deflate` / `br` 等其它压缩编码**：响应解压只做 gzip（`moonbitlang/async` 只提供 gzip 的编解码器）；别的编码既不解压也不报错，字节与 `Content-Encoding` 原样交给你。
-- **自定义请求方法（WebDAV 的 `PROPFIND` 等）**：`Method` 只有九个标准方法；底层 `moonbitlang/async/http` 目前同样只支持这九个（封闭枚举、无字符串方法入口），已向上游反馈，待其支持后本库跟进（方案见 `docs/16-custom-http-methods.md`）。
+- **内置传输上的自定义请求方法**：默认传输（`AsyncHttpTransport`）发不了 `Method::Other`——底层 `moonbitlang/async/http` 的方法枚举是封闭的；注入自研传输 `HttpConnTransport` 即可原样发送（`PROPFIND` 等 WebDAV 方法，见 `docs/18-httpconn-transport.md`）。
 
 ## 参与开发
 
