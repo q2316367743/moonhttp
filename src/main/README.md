@@ -1,8 +1,8 @@
 # main —— 可运行的示例
 
-不是库的一部分，而是一组 `pkgtype(kind: "executable")` 的示例程序：本地手动测试用，**每个方向一个包、单独 `moon run`**。
+不是库的一部分，而是一组可运行的示例程序，本地手动测试用：**每个方向一个包、单独 `moon run`**。
 
-它们不进 `moon test`：不用 `test` 块，而是真实发请求、把结果 `println` 出来（打本机靶子时由示例自己起 server）。整个 `src/main/` 都在根目录 `.moonignore` 里，`moon publish` 不会带上它们。
+不用 `test` 块，而是真实发请求、把结果 `println` 出来（打本机靶子时由示例自己起 server）；不进 `moon test`，也不随包发布。
 
 ## 快速上手（`src/main`）
 
@@ -26,6 +26,6 @@ moon run src/main   # 需要联网
 
 ## 三个约定
 
-- **靶子优先放本机**：除「代理」「真实下载」「SSE」三段外，用例都在示例内部起一个本机 server 当靶子——离线可跑、结果确定；而且**服务端视角的回显**（echo server 把收到的头回吐出来）才是「头真的发出去了」这类结论的证据。为什么这么混着来、以及两个已知问题（HTTPS 上取消的错误分类与原生崩溃）见 [docs/13](../docs/13-runnable-examples.md)。
+- **靶子优先放本机**：除「代理」「真实下载」「SSE」三段外，用例都在示例内部起一个本机 server 当靶子——离线可跑、结果确定；而且**服务端视角的回显**（echo server 把收到的头回吐出来）才是「头真的发出去了」这类结论的证据。已知问题与取舍记录见 [docs/13](../docs/13-runnable-examples.md)。
 - **需要外网的用例一律包在 `try` / `catch` 里**：断网、代理没起、站点变动都只打印一行错误分类，不会 panic，也不会带崩后面的段落。
-- **`pkg.generated.mbti` 都是空的**：示例程序不对外暴露任何 API（`moon info` 生成，要提交，否则 CI 的接口门禁会挂）。
+- **`pkg.generated.mbti` 都是空的**：示例程序不对外暴露任何 API；文件由 `moon info` 生成，要提交。

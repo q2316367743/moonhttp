@@ -1,6 +1,6 @@
 # url —— URL 拼接与 query 序列化
 
-纯逻辑包：只做字符串 / JSON 层面的变换，不依赖本模块的其它包，也不碰网络，可以用同步测试覆盖。
+URL 拼接与 query 序列化：只做字符串 / JSON 层面的变换，不碰网络。
 
 ```toml
 import {
@@ -15,7 +15,7 @@ import {
 | `build_full_path(base_url?, url?, allow_absolute?)` | 算出完整地址（还没拼 query）：绝对地址且允许直连就用 `url`，否则有 `base_url` 就拼接，都没有则原样返回；地址不可用时 `None` |
 | `build_url(url, params?, serializer?)` | 把序列化后的参数追加到地址上：已有 `?` 用 `&` 续接，`#fragment` 被丢弃 |
 | `combine_urls(base, relative)` | 拼接：去掉 base 末尾的 `/` 与 relative 开头的 `/`，中间补恰好一个 `/` |
-| `resolve_url(base, reference)` | 把一个相对引用解析成绝对地址（RFC 3986 的解析算法，重定向的 `Location` 用它）。结果不含 fragment；只有 base 不是绝对地址时才返回 `None` |
+| `resolve_url(base, reference)` | 把一个相对引用解析成绝对地址（重定向的 `Location` 用它）。结果不含 fragment；只有 base 不是绝对地址时才返回 `None` |
 | `serialize_params(params)` | params → query 文本（不含前导 `?`） |
 | `encode_component(text)` | 编码单个 URL 组件（query 的 key 或 value） |
 | `is_absolute_url(text)` | 是否是绝对地址 |
@@ -33,7 +33,7 @@ import {
 
 ## 绝对地址的判定
 
-等价于正则 `/^([a-z][a-z\d+\-.]*:)?\/\//i`，所以：
+判定不看大小写：带 `scheme://` 前缀、或以 `//` 开头，就算绝对地址。所以：
 
 - `//cdn.example.com/x`（协议相对地址）**算**绝对地址；
 - `localhost:8080/x` **不算**——冒号后面不是 `//`，它会正常和 `base_url` 拼接。

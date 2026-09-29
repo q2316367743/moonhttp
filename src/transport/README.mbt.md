@@ -1,6 +1,6 @@
 # transport —— 传输层契约
 
-本模块**唯一**依赖 `moonbitlang/async` 的包。它把「真正把字节发出去」抽象成一个 `Transport` trait，上层只认 `PreparedRequest` / `RawResponse` 两个契约——换实现不破坏上层 API，也让整条管线能在无网络下测试。
+传输层：把「真正把字节发出去」抽象成 `Transport` trait，上层只认 `PreparedRequest` / `RawResponse` 两个契约。自带基于 `moonbitlang/async` 的 `AsyncHttpTransport`，也可以在测试里换成 `MockTransport` 或自己的实现。
 
 ```toml
 import {
@@ -16,7 +16,7 @@ import {
 | `PreparedRequest` | 方法、完整 URL、拍平后的头、body 字节、超时、代理端点、上传进度回调、取消信号 |
 | `RawResponse` | 状态码、状态短语、响应头、响应体**流** `ResponseBody` |
 | `ProxyEndpoint` | `{ url, authorization? }`：隧道地址与 CONNECT 的凭据 |
-| `TransportError` | `Timeout` / `Network(String)` / `Unsupported(String)` / `Cancelled(String?)`；分类在根包翻译成 `HttpError`，取消的载荷是取消理由 |
+| `TransportError` | `Timeout` / `Network(String)` / `Unsupported(String)` / `Cancelled(String?)`；上层看到的 `HttpError` 分类就来自它，取消的载荷是取消理由 |
 
 ## `ResponseBody` 的读法
 
@@ -33,7 +33,7 @@ import {
 
 ## 两个实现
 
-- **`AsyncHttpTransport`**：真实实现，基于 `moonbitlang/async`。每次请求新建连接（不做连接复用），代理用 `CONNECT` 隧道、http 与 https 目标都一样；取消作用域也在本包（`abort.mbt`：进入每一跳时先查 `aborted()` 挡住「两段 I/O 之间」的取消，再把中断手段登记到信号上，取消能打断挂起中的连接动作）。
+- **`AsyncHttpTransport`**：真实实现，基于 `moonbitlang/async`；代理用 `CONNECT` 隧道，http 与 https 目标都一样；每次请求新建连接（不做连接复用）。
 - **`MockTransport`**：测试用，不碰网络。记录收到的每一份请求（`received()` / `request_count()` / `last_request()`），返回预置响应（`new(response)` 或 `from_responses([...])`，取完之后一直复用最后一个），也可以固定失败（`failing(error)` / `with_failure(error)`）。
 
 ## 用法

@@ -1,8 +1,6 @@
 # config —— 请求配置
 
-`Config` 描述「一个请求长什么样」：地址、方法、超时、请求头、查询参数、请求体、认证、代理、进度回调。实例默认值（`Client` 里那份）与本次请求的配置都是它，两者的合并规则也在本包（`merge_config`）。
-
-本包是**纯逻辑**包：不依赖 async 运行时，合并语义与请求体字节都能用同步测试钉死。依赖 `headers`（头集合）与 `url`（复用 query 序列化器），不反向依赖本模块的任何包。
+`Config` 描述「一个请求长什么样」：地址、方法、超时、请求头、查询参数、请求体、认证、代理、进度回调。实例默认值（`Client` 里那份）与本次请求的配置都是它；两者的合并规则也在本包（`merge_config`）。
 
 ```toml
 import {
@@ -22,7 +20,7 @@ let defaults = Config::default() // 从零起步
   .with_timeout(5_000)
 ```
 
-`Config` 的**请求体是私有字段**，所以包外写不出记录字面量 / 记录展开——构造只能走上面两个入口加 `with_*`。这样「请求体」与它配套的 `Content-Type` 不会被拆散，往结构体加字段忘了配合并策略也会变成编译错误。
+构造只能走上面两个入口加 `with_*`（请求体是私有字段，包外写不出记录字面量与记录展开）；请求体与配套的 `Content-Type` 由同一个构建器一起决定。
 
 方法字段叫 `http_method` 而不是 `method`（`method` 是 MoonBit 保留字），构建器仍叫 `with_method`。
 
@@ -87,8 +85,7 @@ let defaults = Config::default() // 从零起步
 | `with_on_upload_progress(cb)` | 上传进度回调（同步、不抛错） |
 | `with_on_download_progress(cb)` | 下载进度回调 |
 
-取消信号**不是配置字段**：它是三个入口（与七个快捷方法）的 `signal?` 参数，所以本包不认识它。
-用法与理由见 [docs/12](https://github.com/q2316367743/moonhttp/blob/master/docs/12-cancellation.md)。
+取消信号不在 `Config` 上：它是三个入口与七个快捷方法的 `signal?` 参数，用法见 [docs/12](https://github.com/q2316367743/moonhttp/blob/master/docs/12-cancellation.md)。
 
 **响应处理**
 
@@ -129,7 +126,7 @@ let defaults = Config::default() // 从零起步
 
 ## 合并策略
 
-字段各归属一档，`None` 一律表示「未提供」→ 回退，而不是覆盖：
+字段各归属一档，没设的字段回退到上一级：
 
 | 字段 | 策略 |
 |---|---|

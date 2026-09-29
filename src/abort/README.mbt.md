@@ -1,10 +1,6 @@
 # abort —— 取消原语（AbortController / AbortSignal）
 
-纯逻辑包：只有状态，没有底层机制，不碰网络、不碰 async。对应 JS 平台原生的
-`AbortController` / `AbortSignal`，也是本项目替代 axios 那套 `CancelToken` 的形态。
-
-真正打断一次请求（挂起中的建连、读写）的机制在 `transport` 包（那里才有 `@async`）；
-取消的语义、覆盖范围与注意事项见 [docs/12-cancellation.md](../docs/12-cancellation.md)。
+`AbortController` 与 `AbortSignal`：控制器用来发起取消，信号随请求走、只负责观察。
 
 ```toml
 import {
@@ -14,39 +10,35 @@ import {
 
 ## 语义
 
-- **发起方与观察方分开**：`AbortController` 留给需要叫停的一方（UI 的停止按钮、看门狗），
-  随请求走的是 `controller.signal()` 给出的 `AbortSignal`。拿到信号的一方只能观察，
-  「误调用取消」在类型上就写不出来。
+- **发起方与观察方分开**：`AbortController` 留给需要叫停的一方（UI 的停止按钮、看门狗），随请求走的是 `controller.signal()` 给出的 `AbortSignal`。
 - **一次性**：取消之后永远是取消状态，不能复用；一次请求一个信号就每次 `AbortController::new()`。
-- **可共享**：同一个信号可以挂到任意多个请求上，`abort` 一次全部生效；
-  信号与控制器共享状态（复制信号不复制状态）。
+- **可共享**：同一个信号可以挂到任意多个请求上，`abort` 一次全部生效。
 - **幂等**：重复 `abort` 只生效第一次，第二次连理由都不会改。
-- **已取消的信号上登记既不触发、也不保留**（与 JS 的 `addEventListener` 一致）。
-  所以「取消晚一步」的兜底是**登记点自己先查 `aborted()`**，不是登记的副作用。
-- **`AbortError` 不跨库边界**：`throw_if_aborted()` 为「每段开头先查一眼」而存在，
-  它抛的 `AbortError` 只在 abort 包与根包之间流转；根包在管线入口把它归一成统一的
-  `HttpError`（`is_cancelled()` / `ERR_CANCELED`），使用者只会看到一套错误体系。
+- **已取消的信号可以直接传**：拿它发请求会立刻以取消失败收场，理由就是 `abort` 时给的那个。
+- 从三个入口看到的取消失败都是 `HttpError`：`error.is_cancelled()` 为真，`code` 是 `Cancelled`（`ERR_CANCELED`）。
+
+完整语义与边界见 [docs/12-cancellation.md](../docs/12-cancellation.md)。
 
 ## API
 
 | 方法 | 说明 |
 |---|---|
 | `AbortController::new()` | 造一个尚未取消的控制器 |
-| `AbortController::signal()` | 取出它的信号（与控制器共享状态） |
+| `AbortController::signal()` | 取出它的信号 |
 | `AbortController::abort(reason?)` | 发起取消；同步、不抛错、幂等、一次性 |
-| `AbortSignal::abort(reason?)` | 静态构造：出生就已取消的信号（对应 `AbortSignal.abort`） |
-| `AbortSignal::aborted()` | 是否已取消（对应 `signal.aborted`） |
-| `AbortSignal::reason()` | 取消理由，`String?`（对应 `signal.reason`；默认文案在错误层） |
-| `AbortSignal::throw_if_aborted()` | 已取消就抛 `AbortError`（对应 `signal.throwIfAborted()`） |
-| `AbortSignal::attach(handle)` | **内部机制**：登记「取消时要做什么」，返回注销票号 |
-| `AbortSignal::detach(ticket)` | **内部机制**：注销登记；越界票号忽略 |
+| `AbortSignal::abort(reason?)` | 静态构造：出生就已取消的信号 |
+| `AbortSignal::aborted()` | 是否已取消 |
+| `AbortSignal::reason()` | 取消理由，`String?`（默认文案在错误层） |
+| `AbortSignal::throw_if_aborted()` | 已取消就抛 `AbortError` |
+
+`attach` / `detach` 是库内部的中断登记接口，写业务代码用不到。
 
 ## 用法
 
 ```moonbit nocheck
 let controller = @abort.AbortController::new()
 
-// 信号按请求传（它不属于配置，见 docs/12-cancellation.md）：
+// 信号按请求传：它是入口的 signal? 参数，不在 Config 上
 client.request(Config::new("/reports/big.csv"), signal=controller.signal())
 
 // 另一条协程里（UI 的停止按钮、看门狗、超时兜底）：
