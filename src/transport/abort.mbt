@@ -35,7 +35,11 @@
 /// 一条关键性质：被取消的是**这里 spawn 的子任务**，不是调用方协程。所以取消
 /// 之后调用方不会被「粘住」（取消是被取消任务的粘性状态），它拿到的只是一个
 /// 普通错误，可以接着发下一个请求。
-async fn[T] with_abort_scope(
+///
+/// 开放为 pub 是自研传输层落地（docs/17）的一部分：取消作用域是 `Transport`
+/// 契约的一半（另一半是 `ResponseBody` 上的「取消即关闭」登记），任何传输
+/// 实现都应该走同一套机制，取消语义才能在实现之间保持一致。
+pub async fn[T] with_abort_scope(
   signal : @abort.AbortSignal?,
   f : async () -> T raise TransportError,
 ) -> T raise TransportError {

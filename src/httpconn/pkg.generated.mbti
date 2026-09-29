@@ -1,0 +1,34 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316367743/moonhttp/httpconn"
+
+import {
+  "moonbitlang/core/debug",
+  "q2316367743/moonhttp/transport",
+}
+
+// Values
+pub fn host_header(Target) -> String
+
+pub fn parse_target(String) -> Target raise @transport.TransportError
+
+// Errors
+
+// Types and methods
+pub struct HttpConnTransport {
+}
+pub fn HttpConnTransport::new() -> Self
+pub async fn HttpConnTransport::send(Self, @transport.PreparedRequest) -> @transport.RawResponse raise @transport.TransportError
+pub impl @transport.Transport for HttpConnTransport
+
+pub(all) struct Target {
+  scheme : String
+  use_tls : Bool
+  host : String
+  port : Int
+  target : String
+} derive(@debug.Debug)
+pub fn Target::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+
+// Traits

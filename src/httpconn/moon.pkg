@@ -1,0 +1,29 @@
+// httpconn 是自研 HTTP/1.x 的**实现层**（docs/17 口径 7）：拨号（TCP / TLS /
+// CONNECT 隧道）、请求写入、响应头读取、分帧响应体，并实现 transport 包的
+// `Transport` trait——与旧的 `AsyncHttpTransport` 双实现并存，
+// `Client::new(transport~: HttpConnTransport::new())` 即可切换。
+//
+// 依赖方向：httpconn → transport（拿 trait 与契约类型）+ httpconn → httpproto
+//（协议层的纯逻辑），不成环。async 运行时依赖只出现在 transport 与本包
+//（docs/17 落地后，「唯一依赖 async 的包」口径改为「transport 与 httpconn」）。
+//
+// gzip 的流式解压也由本包自持（docs/17 口径 4）：请求没声明 Accept-Encoding
+// 时由我们声明 gzip 并在响应侧解压——「谁解压谁声明」，见 docs/15。
+import {
+  "moonbitlang/async",
+  "moonbitlang/async/gzip",
+  "moonbitlang/async/io",
+  "moonbitlang/async/socket",
+  "moonbitlang/async/tls",
+  "moonbitlang/core/debug",
+  "q2316367743/moonhttp/headers",
+  "q2316367743/moonhttp/httpproto",
+  "q2316367743/moonhttp/transport",
+}
+
+// alert_internal 是**有意**的（与 transport 包同一条注）：连接流实现
+// `@io.Reader` 的 pushback 用的是公开构造器 `ReaderBuffer::new()`，
+// 该类型本身被上游标了内部用途。stream_wire_test（transport 包）是这条
+// 赌注的哨兵，退路（MemoryReader 泵送桥接）记在 docs/18。
+
+warnings = "-alert_internal"

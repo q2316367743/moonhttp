@@ -14,6 +14,8 @@ pub fn declares_gzip(@headers.Headers) -> Bool
 
 pub async fn decode_gzip(Bytes) -> Bytes raise TransportError
 
+pub async fn[T] with_abort_scope(@abort.AbortSignal?, async () -> T raise TransportError) -> T raise TransportError
+
 // Errors
 pub(all) suberror TransportError {
   Timeout
