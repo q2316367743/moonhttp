@@ -65,7 +65,7 @@ async fn main {
 let search = api.create(@moonhttp.Config::default().with_timeout(15_000))
 ```
 
-请求方法缺省时按「实例默认值 → `GET`」回退，`api.defaults()` 可以看实例当前的默认配置；状态码默认只认 2xx，想关掉校验就传一个恒真函数（`with_validate_status(fn(_) { true })`）。
+请求方法缺省时按「实例默认值 → `GET`」回退，`api.defaults()` 可以看实例当前的默认配置；状态码默认只认 2xx，想关掉校验就传一个恒真函数（`with_validate_status(fn(_) { true })`）。九个标准方法之外，`Method::Other("PROPFIND")` 这类自定义方法按你给的名字原样发送（传输层在建连前校验 token 合法性），WebDAV 等扩展语义开箱即用。
 
 ### 三个入口
 
@@ -323,7 +323,6 @@ println(mock.last_request().unwrap().url) // 已经拼好 base_url 与 query 的
 - **代理的** SOCKS 支持（自研传输 `HttpConnTransport` 的下一个提交补 SOCKS5）、`http_proxy` / `no_proxy` 环境变量，以及按请求关掉代理的开关（显式 `with_proxy` 已支持）。
 - **单条头的多值**：一个头名只能对应一个字符串值。
 - **`deflate` / `br` 等其它压缩编码**：响应解压只做 gzip（`moonbitlang/async` 只提供 gzip 的编解码器）；别的编码既不解压也不报错，字节与 `Content-Encoding` 原样交给你。
-- **内置传输上的自定义请求方法**：默认传输（`AsyncHttpTransport`）发不了 `Method::Other`——底层 `moonbitlang/async/http` 的方法枚举是封闭的；注入自研传输 `HttpConnTransport` 即可原样发送（`PROPFIND` 等 WebDAV 方法，见 `docs/18-httpconn-transport.md`）。
 
 ## 参与开发
 

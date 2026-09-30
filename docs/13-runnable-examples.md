@@ -69,7 +69,7 @@
 
 现象：取消 HTTPS 下载时，有时拿到 `ERR_CANCELED`（正确），有时拿到 `ERR_NETWORK` + `OSError("@socket.Tcp::read(): Bad file descriptor")`。取消本身是生效的（进度停住、错误里带着半截响应）。
 
-机理：取消链路上「关闭连接」（`ResponseBody::open` 时登记）排在「中断子任务」（`read_or_fail` 时登记）**前面**，所以在线的那次读可能先撞上「描述符已关闭」；`src/transport/read_or_fail` 的兜底把非超时错误一律归成 `Network`，于是分类丢了。
+机理：取消链路上「关闭连接」（`ResponseBody::open_wire` 时登记）排在「中断子任务」（`read_or_fail` 时登记）**前面**，所以在线的那次读可能先撞上「描述符已关闭」；`src/transport/stream.mbt` 的 `read_or_fail` 兜底把非超时错误一律归成 `Network`，于是分类丢了。（本条是旧栈时期的现象，新栈机理相同、是否复现待实测。）
 
 绕法：示例照实打印（`src/main/progress` 在分类不是 `ERR_CANCELED` 时会多打一行说明）。
 

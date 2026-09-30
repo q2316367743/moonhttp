@@ -48,7 +48,8 @@ pub struct Client {
 /// - `config`：叠加在**内置默认值**之上的用户配置，
 ///   对应 axios 里 `axios.create(config)` 的语义（`axios.defaults` 的位置由
 ///   `@config.defaults()` 固定提供）；
-/// - `transport`：传输层实现，缺省是真正走网络的 `AsyncHttpTransport`；
+/// - `transport`：传输层实现，缺省是真正走网络的自研栈 `HttpConnTransport`
+///   （HTTP/1.0/1.1，RFC 净室实现，见 `docs/17-http-protocol.md` / `docs/18`）；
 ///   测试或特殊场景可以注入自己的实现（例如 `MockTransport`）；
 /// - `interceptors`：请求 / 响应拦截器，缺省是一条都不挂（`Interceptors::new()`）；
 /// - `cookie_jar`：cookie 存储罐，缺省不挂（不做 cookie 维护）。传入后
@@ -65,7 +66,8 @@ pub fn Client::new(
   }
   let transport : &@transport.Transport = match transport {
     Some(transport) => transport
-    None => @transport.AsyncHttpTransport::new()
+    // 缺省传输 = 自研 HTTP/1.1 栈（docs/17 第 1 期落地后的默认路径）
+    None => @httpconn.HttpConnTransport::new()
   }
   let interceptors = match interceptors {
     Some(interceptors) => interceptors

@@ -145,7 +145,7 @@ async test "connection refused is classified as network error" {
 
 ///|
 /// 自定义方法穿过 token 校验、真的去拨号（拒连被归类为 Network）——
-/// 与旧栈「Other 在建连前被拦」相对照，这正是自研路径解锁自定义方法的
+/// 与「非法 token 在建连前被拦」相对照，这正是自定义方法解锁的
 /// 可观察证据（docs/16 的目标）。
 async test "custom method passes validation and reaches the network layer" {
   let transport : &@transport.Transport = @httpconn.HttpConnTransport::new()

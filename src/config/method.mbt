@@ -10,8 +10,8 @@
 ///
 /// `Other` 承载自定义方法（WebDAV 的 `PROPFIND`、`REPORT` 等）：**存原样、发原样**
 /// ——HTTP 方法 token 按 RFC 7230 区分大小写，大写惯例由调用方保证，
-/// `to_string` 对它返回载荷本身。传输层发不出它时（内置的旧栈受底层封闭枚举所限）
-/// 会报 `Unsupported`，自研传输层（httpconn）则原样发送并在发送前校验 token 合法性。
+/// `to_string` 对它返回载荷本身。传输层原样发送（httpconn 为缺省实现），
+/// 发送前校验 token 合法性，非法 token 在建连之前报 `Unsupported`。
 pub(all) enum Method {
   Get
   Head

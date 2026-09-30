@@ -1,10 +1,9 @@
 // 响应体的 gzip 支持：缓冲路径（`Client::request`）由库声明并解压，
-// 流式路径（`stream` / `sse`）沿用底层的透明懒解压。
+// 流式路径（`stream` / `sse`）由 httpconn 声明并流式解压（谁解压谁声明）。
 //
 // 规则表（谁声明、谁解压、响应头怎么变、失败怎么报）见
-// `docs/15-response-compression.md`。前半用 Mock 覆盖「库自己解压」这条路
-// （含失败分类与开关），后半起本机 server 覆盖真实连接上的两条路径——
-// 「流式那条靠底层」是本次实现依赖的既有行为，用用例钉住它。
+// `docs/15-response-compression.md` 与 `docs/18`。前半用 Mock 覆盖「库自己解压」
+// 这条路（含失败分类与开关），后半起本机 server 覆盖真实连接上的两条路径。
 
 ///|
 /// 把字节压成 gzip 流：用 async 自带的编码器造**真的** gzip 字节。
@@ -249,12 +248,13 @@ async test "async transport decodes a gzip response for the buffered path" {
 }
 
 ///|
-/// 真实连接（流式路径）：库里**不声明**压缩，底层补上并在响应头声明 gzip 时
-/// 透明解压——这条既有行为是本次「流式沿用底层」实现的前提，用真实连接钉住它。
+/// 真实连接（流式路径）：请求没声明压缩时，由 httpconn 自己声明 `gzip`
+/// 并在响应侧流式解压——「谁解压谁声明」（docs/15 / docs/18），旧栈
+/// 「底层库补声明、透明解压」的怪癖随旧栈一起删除了。
 ///
-/// 同时钉住摘头判据：这次请求的 `Accept-Encoding` 是底层自己补的，
-/// 所以传上来的响应头里不该再留着 `Content-Encoding`。
-async test "streaming still relies on the transport's transparent gunzip" {
+/// 同时钉住摘头口径：我们声明了我们解的，响应头里不该再留着
+/// `Content-Encoding`（`Content-Length` 也一并摘掉，`total` 归 `None`）。
+async test "streaming decompresses gzip that httpconn declared itself" {
   let payload = @utf8.encode("流式读到的 gzip 正文")
   let compressed = gzip_bytes(payload)
   let seen : Array[String] = ["<未收到请求>"]
@@ -282,8 +282,8 @@ async test "streaming still relies on the transport's transparent gunzip" {
     assert_eq(stream.read_all(), payload)
     assert_true(stream.headers.get("Content-Encoding") is None)
   }
-  // 服务端看到的声明来自底层（不是我们发的）：这正是它据以解压的那条路
-  assert_eq(seen[0], "gzip,identity")
+  // 服务端看到的声明来自我们自己（httpconn 补的）：这正是「谁解压谁声明」
+  assert_eq(seen[0], "gzip")
 }
 
 ///|
@@ -317,8 +317,8 @@ async test "request level decompress overrides the instance default" {
 }
 
 ///|
-/// 流式路径上关掉解压：我们声明 `identity` 把底层的透明解压挡住，
-/// 于是字节与头都保持线上原样——「头里有 Content-Encoding」与「字节仍是压缩的」
+/// 流式路径上关掉解压：我们声明 `identity`，httpconn 便一概不动，
+/// 字节与头都保持线上原样——「头里有 Content-Encoding」与「字节仍是压缩的」
 /// 在这条路上也成立。
 async test "streaming with decompress false keeps the compressed bytes" {
   let payload = @utf8.encode("流式不解压")
@@ -350,7 +350,7 @@ async test "streaming with decompress false keeps the compressed bytes" {
     assert_eq(stream.read_all(), compressed)
     assert_eq(stream.headers.get("Content-Encoding"), Some("gzip"))
   }
-  // 声明是我们发的（不是底层补的），底层因此没有解压
+  // 声明是我们发的（decompress: false 换来的 identity），httpconn 因此没有解压
   assert_eq(seen[0], "identity")
 }
 

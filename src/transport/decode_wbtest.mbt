@@ -1,8 +1,7 @@
-// 响应体解码的单元用例：`decode_gzip` 本身，以及「底层已经替我们解掉的
-// `Content-Encoding` 要不要摘」那个判据。
+// 响应体解码（缓冲路径）的单元用例。
 //
-// 白盒而不是黑盒：这里要造真的 gzip 字节（用 `@gzip` 编码器），还要直接验
-// `without_decoded_encoding` 这个包私有函数——白盒测试才看得见生产的 import 清单。
+// 白盒而不是黑盒：这里要造真的 gzip 字节（用 `@gzip` 编码器）——白盒测试
+// 才看得见生产的 import 清单。
 
 ///|
 /// 把字节压成 gzip 流：用 async 自带的编码器，保证产物是**真的** gzip 字节
@@ -20,24 +19,9 @@ async fn gzip_encode(data : Bytes) -> Bytes {
 }
 
 ///|
-/// 一份声明的响应头，够 `declares_gzip` 与 `without_decoded_encoding` 用。
+/// 一份声明的响应头，够 `declares_gzip` 用。
 fn gzip_headers() -> @headers.Headers {
   @headers.Headers::new().set("Content-Encoding", "gzip")
-}
-
-///|
-/// 只带请求头的最小 `PreparedRequest`：这两个判据都只看 `headers`。
-fn prepared_with_headers(headers : @headers.Headers) -> PreparedRequest {
-  {
-    http_method: @config.Method::Get,
-    url: "http://127.0.0.1/",
-    headers,
-    body: None,
-    timeout: None,
-    proxy: None,
-    on_upload_progress: None,
-    signal: None,
-  }
 }
 
 ///|
@@ -105,31 +89,4 @@ test "declares_gzip only accepts a plain gzip content-encoding" {
     declares_gzip(@headers.Headers::new().set("Content-Encoding", "gzip, br")),
   )
   assert_false(declares_gzip(@headers.Headers::new()))
-}
-
-///|
-/// 摘头的判据：**请求里本来有没有 `Accept-Encoding`**。
-///
-/// 没有 → 底层（`moonbitlang/async/http`）自己补了 `Accept-Encoding: gzip,identity`
-/// 并透明解压，响应头里那句 `Content-Encoding` 已经是假话，要摘掉；
-/// 有（用户自己设的、或缓冲路径由库声明的）→ 底层不解压，一个头都不动。
-test "without_decoded_encoding drops the header only when nobody declared" {
-  let decoded = without_decoded_encoding(
-    prepared_with_headers(@headers.Headers::new()),
-    gzip_headers(),
-  )
-  assert_true(decoded.get("Content-Encoding") is None)
-  let kept = without_decoded_encoding(
-    prepared_with_headers(
-      @headers.Headers::new().set("Accept-Encoding", "gzip"),
-    ),
-    gzip_headers(),
-  )
-  assert_eq(kept.get("Content-Encoding"), Some("gzip"))
-  // 认不出来的编码同样不动：字节本来就是那个编码，头留着才是真话
-  let br = without_decoded_encoding(
-    prepared_with_headers(@headers.Headers::new()),
-    @headers.Headers::new().set("Content-Encoding", "br"),
-  )
-  assert_eq(br.get("Content-Encoding"), Some("br"))
 }

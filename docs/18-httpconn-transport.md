@@ -1,27 +1,28 @@
-# 18 自研 HTTP/1.x 传输层（httpproto + httpconn）：第 1 期实现
+# 18 自研 HTTP/1.x 传输层（httpproto + httpconn）：第 1 期实现与默认切换
 
 **一句话**：`docs/17` 规划的第 1 期已落地——按 RFC 净室实现的 HTTP/1.0/1.1 客户端栈，
 分**协议层**（`src/httpproto/`，纯逻辑）与**实现层**（`src/httpconn/`，async I/O 驱动）两个包，
-实现 `Transport` trait 与旧栈双实现并存；**自定义方法（WebDAV 的 `PROPFIND` 等）在自研路径
-第一天可用**（`docs/16` 的解锁清单随之作废），gzip 的声明与解压全由本库自持。
+实现 `Transport` trait；**2026-09-30 起它是缺省传输实现，旧的 `AsyncHttpTransport`
+（基于 `moonbitlang/async/http`）已整体删除**——自定义方法（WebDAV 的 `PROPFIND` 等）
+在默认路径可用（`docs/16` 的解锁清单随之完成），对底层 HTTP 库的生产依赖归零，
+gzip 的声明与解压全由本库自持。
 
 ## 用法
 
 传输层是注入切换的，客户端其余能力（拦截器、重定向、取消、进度……）零改动：
 
 ```moonbit nocheck
-// 在使用方包的 moon.pkg 里加 import: "q2316367743/moonhttp/httpconn"
-let client = @moonhttp.Client::new(
-  transport~: @httpconn.HttpConnTransport::new(),
-)
-// 之后照常使用；自定义方法直接构造 Method::Other
+// 缺省传输就是自研栈，什么都不用做；自定义方法直接构造 Method::Other
 let propfind = @moonhttp.Config::new("https://dav.example.com/cal/")
   .with_method(@moonhttp.Method::Other("PROPFIND"))
   .with_header("Depth", "0")
+let response = client.request(propfind)
+// transport~ 仍可注入（测试注入 MockTransport，或接自己的实现）
 ```
 
-默认传输仍是旧的 `AsyncHttpTransport`（长期保留为回退，见 `docs/17` 待决问题的口径）。
-旧栈收到 `Method::Other` 会在**建连前**报 `ERR_NOT_SUPPORTED`（底层方法枚举封闭，证据见 `docs/16`）。
+`Client::new` 的缺省 transport 是 `@httpconn.HttpConnTransport::new()`（根包生产依赖
+`httpconn`）；旧栈不是「可选回退」而是**已删除**——注入切换的口径保留给 `MockTransport`
+与自定义实现。
 
 ## 两个包的边界
 
@@ -30,8 +31,9 @@ let propfind = @moonhttp.Config::new("https://dav.example.com/cal/")
 | `httpproto` | 请求行/状态行、头块解析（obs-fold、multimap）、分帧判定、chunked 增量解码、token 校验、头块渲染。全部纯逻辑，同步测试 | 只依赖 core |
 | `httpconn` | 拨号（TCP/TLS/CONNECT 隧道）、请求写入、响应头读取、分帧响应体、gzip 自持、`Transport` 实现 | transport（拿 trait）+ httpproto + async 运行时 |
 
-依赖方向 `httpconn → transport + httpproto` 不成环；async 运行时依赖从此出现在
-`transport` 与 `httpconn` 两处（`docs/17` 落地前「transport 是唯一依赖 async 的包」的口径随之更新）。
+依赖方向 `httpconn → transport + httpproto` 不成环；旧栈删除后，对 `moonbitlang/async/http`
+的依赖为 0（测试里只剩 `@http.Server` 当本机服务器夹具），与 async HTTP 库相关的
+网络交互集中在 `httpconn` 一处；根包为缺省传输生产依赖 `httpconn`。
 
 ## 分帧判定（RFC 9112 §6.3，判定顺序不可交换）
 
@@ -54,12 +56,15 @@ trailer 解析后**丢弃**（`docs/17` 待决问题的口径），chunk 扩展�
 | 用户自己设的 | 用户 | 不解 | 不动（流式交出的字节自描述） |
 | `identity` | client 层（`decompress: false`） | 没人解 | 不动 |
 
-与旧栈的可观察差异只有一条：旧栈流式透明解压是「底层补了 `Accept-Encoding` 才解」，
-新栈是「我们声明了我们解」——判定锚点从底层的私有行为变成了自己头里的声明，怪癖消失。
+（旧栈的「补了 `Accept-Encoding` 才透明解压」怪癖随旧栈删除——判定锚点就是
+自己头里的声明。）
 
-## 新旧栈行为对照
+## 与已删除旧栈的行为差异（历史记录）
 
-| 维度 | 旧栈 `AsyncHttpTransport` | 新栈 `HttpConnTransport` |
+旧栈 `AsyncHttpTransport`（基于 `moonbitlang/async/http`）已于 2026-09-30 删除；
+下表是从它切过来时可观察的行为差异，留作排查历史问题的对照：
+
+| 维度 | 旧栈（已删除） | 现行（`HttpConnTransport`） |
 |---|---|---|
 | 自定义方法 | 建连前 `Unsupported`（底层枚举封闭） | 原样发送（token 校验在建连前） |
 | 协议 | 底层库决定 | HTTP/1.0/1.1（h2 gated：`@tls` 无 ALPN） |
@@ -69,6 +74,7 @@ trailer 解析后**丢弃**（`docs/17` 待决问题的口径），chunk 扩展�
 | TLS 校验 | 底层默认 | `Tls::client(host=…)` 默认校验 + SNI=目标 host |
 | 代理 | CONNECT（底层实现） | CONNECT（自己实现，凭据只落隧道请求）；SOCKS5 见下 |
 | 错误分类 | `TransportError` 五变体 | 同一套（`with_abort_scope` 也复用 transport 的） |
+| Set-Cookie | 底层单独解析，不出现在 headers | 原样保留在 headers，同时进 `set_cookies` 多值出口 |
 
 ## 有意的赌注与它的哨兵
 
@@ -79,6 +85,22 @@ trailer 解析后**丢弃**（`docs/17` 待决问题的口径），chunk 扩展�
 （transport 包）是这条赌注的哨兵：上游若收紧，它第一个失败。
 届时退路：改用 `@io.MemoryReader(生产者闭包)` 泵送桥接（协议层分帧逻辑不变，
 只换「谁把字节递给 Reader」），gzip Decoder 照样可包。
+
+## 默认切换时修掉的真实缺陷（2026-09-30，真连接读路径）
+
+切换默认实现让全部端到端用例第一次整体压在 httpconn 上，暴露并修复了三个只有
+真连接才踩得到的缺陷，各有回归用例钉在 `src/httpconn/stream_real_test.mbt`：
+
+- **头后残留泄漏**：读头的「多读」会把原始线字节（含 chunked 帧头）留进连接缓冲，
+  BodyReader 曾与连接共用缓冲，而默认读方法「缓冲有字节就直接交出、不再过
+  `_direct_read`」，帧原样漏进响应体。修复：BodyReader 自持输出缓冲
+  （`body_reader.mbt` 的所有权注释）。
+- **chunked 读取等满**：`_direct_read` 的 chunked 分支曾循环拉到填满 `max_len`，
+  违反 `read_some`「数据一到尽快返回」的契约——SSE 的下一个事件被堵在一次读取里，
+  取消也因此失去落点。修复：一有解码产出就返回。
+- **隧道错误被二次包装**：`send_head` 的 catch-all 把 dial 辅助函数抛的
+  `TransportError` 又包了一层，「代理拒绝建立隧道：HTTP 407 …」被冲成一句类型名。
+  修复：传输层自己的错误原样透传。
 
 ## 本期未做（按 docs/17 分期）
 
@@ -93,8 +115,7 @@ trailer 解析后**丢弃**（`docs/17` 待决问题的口径），chunk 扩展�
 
 - 改分帧判定 / chunked：先改 `httpproto` 的纯逻辑 + 同步测试，`httpconn` 只跟驱动；
   同步本文的判定表。
-- 改 gzip 规则：同步 `15-response-compression.md`（它描述的两条路径已由本文接管一半）。
+- 改 gzip 规则：同步 `15-response-compression.md`（两条路径的归属见本文的表）。
 - 改拨号 / 隧道：`09-proxy.md` 是 CONNECT 语义的契约文档；SOCKS5 落地时撤「占位」两处
   （本文与 `README.mbt.md` 的暂不支持清单）。
-- 新增头装配规则：`httpconn/request_write.mbt` 的 `build_request_headers` 与旧栈
-  `async_http.mbt` 是两份实现，改动要么两边同步、要么注明差异。
+- 新增头装配规则：`httpconn/request_write.mbt` 的 `build_request_headers` 是唯一实现。

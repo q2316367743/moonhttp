@@ -70,7 +70,7 @@ async test "wire body reads to eof and closes the connection" {
 }
 
 ///|
-/// read_until 与内存体/旧栈同一条语义：分隔符被消费、不进返回值；
+/// read_until 与内存体同一条语义：分隔符被消费、不进返回值；
 /// EOF 前的残余当作最后一段。
 async test "wire body read_until matches the shared semantics" {
   let mut closed = 0
@@ -91,7 +91,7 @@ async test "wire body read_until matches the shared semantics" {
 
 ///|
 /// 进来就已取消的信号：立刻关流，读取报 Cancelled 而不是安静 EOF——
-/// 与 open（旧栈）同一条兜底。
+/// 「取消不能被当成 EOF」这条兜底在这里生效。
 async test "already-cancelled signal closes the wire body up front" {
   let mut closed = 0
   // AbortSignal::abort() 直接给出一个已取消的信号

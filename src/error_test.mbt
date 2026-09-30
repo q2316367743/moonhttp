@@ -195,8 +195,8 @@ async test "request keeps the partial response when the body read fails" {
     let port = stalling_server(
       group, 500, "Internal Server Error", "{\"error\": \"too ",
     )
-    let transport : &@transport.Transport = @transport.AsyncHttpTransport::new()
-    let client = @moonhttp.Client::new(transport~)
+    // 缺省传输即自研栈，不必再显式注入
+    let client = @moonhttp.Client::new()
     let error = try {
       ignore(
         client.request(
@@ -227,8 +227,8 @@ async test "stream keeps the partial error body when reading it fails" {
     let port = stalling_server(
       group, 500, "Internal Server Error", "{\"error\": \"too ",
     )
-    let transport : &@transport.Transport = @transport.AsyncHttpTransport::new()
-    let client = @moonhttp.Client::new(transport~)
+    // 缺省传输即自研栈，不必再显式注入
+    let client = @moonhttp.Client::new()
     let error = try {
       ignore(
         client.stream(
@@ -255,8 +255,8 @@ async test "stream keeps the partial error body when reading it fails" {
 async test "stream read_all keeps the bytes received before the failure" {
   @async.with_task_group() <| group => {
     let port = stalling_server(group, 200, "OK", "0123456789")
-    let transport : &@transport.Transport = @transport.AsyncHttpTransport::new()
-    let client = @moonhttp.Client::new(transport~)
+    // 缺省传输即自研栈，不必再显式注入
+    let client = @moonhttp.Client::new()
     let download = client.stream(
       @moonhttp.Config::new("http://127.0.0.1:\{port}/file").with_timeout(300),
     )

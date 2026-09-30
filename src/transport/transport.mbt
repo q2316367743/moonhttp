@@ -58,14 +58,14 @@ pub(all) struct PreparedRequest {
   /// 上传进度回调；`None` 表示这次请求不报告进度。
   ///
   /// **由传输实现负责调用**：在把 `body` 写出去的过程中逐块报告。
-  /// 内置的 `AsyncHttpTransport` 会按 64 KiB 分块写入并逐块回调；
+  /// 内置的传输实现（httpconn）会按 64 KiB 分块写入并逐块回调；
   /// 自定义实现可以不调用它（测试用的 `MockTransport` 就不调用——
   /// 它不真的发送数据，所以上传进度无从报告）。
   /// 语义与粒度见 `docs/10-progress.md`。
   on_upload_progress : ProgressCallback?
   /// 这次请求的取消信号；`None` 表示不可取消。
   ///
-  /// **由传输实现负责尊重它**：内置的 `AsyncHttpTransport` 在进入每一跳的发送
+  /// **由传输实现负责尊重它**：内置的 httpconn 在进入每一跳的发送
   /// 作用域时先查 `aborted()`（挡住「取消发生在两段 I/O 之间」），再在响应体每次
   /// 读取时登记中断手段——取消一旦发生，挂起中的连接动作会立刻被中断，
   /// 对外表现为 `TransportError::Cancelled`。

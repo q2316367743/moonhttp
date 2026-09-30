@@ -26,12 +26,6 @@ pub(all) suberror TransportError {
 }
 
 // Types and methods
-pub struct AsyncHttpTransport {
-}
-pub fn AsyncHttpTransport::new() -> Self
-pub async fn AsyncHttpTransport::send(Self, PreparedRequest) -> RawResponse raise TransportError
-pub impl Transport for AsyncHttpTransport
-
 pub struct MockTransport {
   // private fields
 }

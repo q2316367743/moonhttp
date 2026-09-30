@@ -9,9 +9,9 @@
 | `src/config/progress.mbt` | `ProgressEvent` / `ProgressCallback` 与两个 `with_on_*` 构建器 |
 | `src/config/config.mbt` | 两个字段本身（合并策略的分组注释也在这里） |
 | `src/config/merge.mbt` | `prefer_request` 那一档（请求级整体替换实例默认值） |
-| `src/transport/async_http.mbt` | 上传：`write_body` 分块写 + 逐块回调；`content_length` 解析响应头 |
+| `src/httpconn/request_write.mbt` | 上传：`write_request_body` 分块写（64 KiB）+ 逐块回调 |
 | `src/transport/stream_all.mbt` | 下载：读全量时逐块回调（`drain_into` / `read_all_partial`） |
-| `src/transport/stream.mbt` / `stream_lifecycle.mbt` | `ResponseBody::total`（进度的分母从哪来）；构造在后者 |
+| `src/transport/stream.mbt` / `stream_lifecycle.mbt` | `ResponseBody::total`（进度的分母从哪来）；构造在后者，分母的值由 httpconn 的 `build_raw_response` 按分帧判定给出（定长才有） |
 | `src/util/request.mbt` | 把 `Config::on_upload_progress` 透传进 `PreparedRequest` |
 | `src/client.mbt` | `Client::request` 读全量时接上下载回调 |
 | `src/facade.mbt` | `StreamResponse::read_all` 同样接上下载回调；再导出两个类型 |
@@ -37,7 +37,7 @@ pub type ProgressCallback = (ProgressEvent) -> Unit noraise
 
 ## 上传进度
 
-**触发点**：`AsyncHttpTransport` 把 `PreparedRequest::body` 写出去的时候，按 `UPLOAD_CHUNK_SIZE`（64 KiB）切块，每块 `write` + `flush` 之后报一次。
+**触发点**：传输实现把 `PreparedRequest::body` 写出去的时候（httpconn 的 `write_request_body`），按 `UPLOAD_CHUNK_SIZE`（64 KiB）切块，每块写完报一次。
 
 ```
 body（完整字节）
@@ -48,7 +48,7 @@ body（完整字节）
 
 几个必须知道的口径：
 
-- **分块不改变线上格式。** 底层不传 `Content-Length` 时本来就把请求体编码成 `Transfer-Encoding: chunked`（它的发送缓冲只有 1 KiB），也就是说整块 `write` 在底层早就被切成很多个 chunk 了。分块只改 chunk 边界，对服务端透明。
+- **分块不改变线上格式。** 请求体线上形状由传输层定死为一律 `Content-Length`（见 `docs/18`），分块写只影响「交给内核的节奏」（`write` 多次、每次一块），对服务端不可见。
 - **`loaded` 是「已写入连接」的字节，不是「对端已收到」。** 每块之后的 `flush()` 保证报告时数据已经交给内核，不再堆在库的缓冲里；但 TCP 缓冲区里还剩多少只有对端知道。进度到 100% 之后仍需等待服务端处理，这是所有 HTTP 客户端的上传进度的共同语义。
 - **`total` 恒等于 `body` 的字节数**（`PreparedRequest::body` 的长度），所以上传方向的 `total` 总是 `Some`。多部分表单里 boundary 与各部分头都算在内——报的是真实写出去的字节数。
 - **没有 body 时不触发。** `body` 为 `None` 或空字节串时一次回调都不会有（没有字节可报）。
@@ -104,7 +104,7 @@ body（完整字节）
 
 ## 注意事项（改动时）
 
-1. **粒度常量两处**：上传是 `src/transport/async_http.mbt` 的 `UPLOAD_CHUNK_SIZE`，内存体的下载报告粒度是 `src/transport/stream_all.mbt` 的 `PROGRESS_CHUNK_SIZE`。改它们会让 `src/progress_test.mbt` 里「精确断言块数」的用例失败——那是故意的，改粒度就该同步改断言。
+1. **粒度常量两处**：上传是 `src/httpconn/request_write.mbt` 的 `UPLOAD_CHUNK_SIZE`，内存体的下载报告粒度是 `src/transport/stream_all.mbt` 的 `PROGRESS_CHUNK_SIZE`。改它们会让 `src/progress_test.mbt` 里「精确断言块数」的用例失败——那是故意的，改粒度就该同步改断言。
 2. **回调不能在 `noraise` 之外被调用**：`read_all_partial` 声明是 `noraise`，回调类型也是 `noraise`，两者是配套的。想让回调能抛错，先想清楚错误该归给谁。
 3. **`ResponseBody::total` 在构造时定下**，不随读取变化。加新的响应体来源（例如未来的连接池）时要一并给出 total，否则下载进度的分母就没了。
 4. **`PreparedRequest` 的手写 `Debug`**：它因为多了一个函数类型字段而不能 `derive(Debug)`，实现里刻意不打印 `body` 的字节内容与 `proxy` 的凭据。加字段时保持这个口径，`src/transport/transport_test.mbt` 有一条快照用例钉着它。

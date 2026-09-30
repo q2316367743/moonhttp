@@ -27,6 +27,12 @@ priv enum BodyMode {
 /// 连接的关闭由 `ResponseBody` 的 close 回调驱动，见 transport.mbt）。
 priv struct BodyReader {
   conn : Connection
+  /// 自己的输出缓冲：默认 read / read_some / read_until 先看它。
+  /// 刻意**不**与连接共用 `conn.buf`——读响应头的「多读」会把原始线字节
+  /// （甚至 chunked 帧头）留进连接缓冲，而默认方法「缓冲有字节就直接交出、
+  /// 不再过 `_direct_read`」，从这里交出就会把帧原样漏进响应体。
+  /// 本缓冲里只会出现 `_direct_read` 产出的**已解码**字节。
+  buf : @io.ReaderBuffer
   mut mode : BodyMode
   /// chunked 模式的线上字节暂存：feed 之前先从连接拉一拍
   scratch : FixedArray[Byte]
@@ -55,6 +61,7 @@ fn BodyReader::open(
   }
   {
     conn,
+    buf: @io.ReaderBuffer::new(),
     mode,
     scratch: FixedArray::make(BODY_PULL_SIZE, b'\x00'),
     pending: [],
@@ -63,16 +70,18 @@ fn BodyReader::open(
 }
 
 ///|
+/// 输出侧用自己的缓冲（见结构体字段注释）：这里交出的字节永远已经过
+/// 分帧解码；连接自己的缓冲只是线上字节的中转，经 `conn.read` 进 `_direct_read`。
 impl @io.Reader for BodyReader with fn _get_internal_buffer(self : BodyReader) -> @io.ReaderBuffer {
-  self.conn.buf
+  self.buf
 }
 
 ///|
 /// 按分帧模式读出**解码后**（去 chunked 帧）的字节；0 = 响应体结束。
 ///
 /// 两个口径：
-/// - 定长不足（连接提前关闭）：按 EOF 交出已到的部分，与旧栈的宽松行为
-///   一致——截断的正文留给上层按内容判断，不在这里改写语义；
+/// - 定长不足（连接提前关闭）：按 EOF 交出已到的部分——截断的正文留给
+///   上层按内容判断，不在这里改写语义；
 /// - chunked 截断：`ChunkDecoder::finish` 会显式报 `Malformed`
 ///   ——半截的 chunked 无法自洽，宽容等于交出坏数据。
 impl @io.Reader for BodyReader with fn _direct_read(
@@ -126,6 +135,13 @@ impl @io.Reader for BodyReader with fn _direct_read(
               offset=offset + filled,
               max_len=max_len - filled,
             )
+        }
+        // 一有解码产出就返回：`read_some` 的契约是「数据一到尽快交出」，
+        // 等满 max_len 会把「同一次拉取之后才到的数据」也堵在连接上——
+        // SSE 这类边到边读协议的下一个事件就卡在了一次读取里。
+        // 循环只为「这批线上字节全是帧头、还没解出载荷」的情形继续。
+        if filled > 0 {
+          return filled
         }
       }
       filled

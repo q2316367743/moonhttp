@@ -25,7 +25,7 @@ moonhttp/
     ├── sse/                     SSE 事件解析（纯逻辑：吃字节、吐事件）
     ├── url/                     绝对地址判定、拼接、params 序列化、Location 的相对解析、host / path 提取
     ├── util/                    纯函数层：拼请求、编解码、Content-Type 与状态码判定
-    ├── transport/               传输层：trait + 真实实现 + Mock + 响应体流
+    ├── transport/               传输层：trait + 契约类型 + Mock + 响应体流（真实实现在 httpconn）
     ├── httpconn/                自研 HTTP/1.x 实现层（拨号 / 隧道 / 写读，见 18-httpconn-transport.md）
     ├── httpproto/               自研 HTTP/1.x 协议层（纯逻辑：请求行 / 状态行 / 头块 / 分帧，见 18-httpconn-transport.md）
     └── main/                    可运行示例（本地手动测试，不随包发布）
@@ -73,7 +73,8 @@ url ─────┘            │
 url ──────────────────┼─→ util ──┐
 transport ────────────┘          ├─→ （根包：门面 + 编排）──→ Client / request / stream / sse
 sse ─────────────────────────────┤
-cookie ──────────────────────────┘
+cookie ──────────────────────────┤
+httpproto ──→ httpconn ──────────┘
 ```
 
 - `config` 依赖 `headers`（配置里有头字段）与 `url`（urlencoded 请求体复用 query 的序列化器），
@@ -85,7 +86,9 @@ cookie ────────────────────────�
   `core/env`（`now()` 当过期时钟），不碰 async——它的状态挂在根包的 `Client` 上
   （`Client::new(cookie_jar~)`），见 `19-cookies.md`；
 - `abort` 也不依赖本项目的包（纯状态机：`AbortController` / `AbortSignal` / `AbortError`）：`transport` 用它做取消作用域的观察对象，根包用它做三个入口 `signal?` 参数的类型——**`config` 不认识它**：信号不是配置字段，放进实例默认值会让这个实例之后的所有请求一起失效（见 `12-cancellation.md`）；
-- `transport` 依赖 `config` / `headers` / `abort`（`PreparedRequest` 的字段类型），**并且是唯一依赖 `moonbitlang/async` 的包**；
+- `transport` 依赖 `config` / `headers` / `abort`（`PreparedRequest` 的字段类型）与 `moonbitlang/async` 的 io / gzip（响应体流、取消作用域、缓冲路径的 gzip 解压）；
+- `httpproto` 只依赖 core（纯协议逻辑：请求行 / 状态行 / 头块 / 分帧 / chunked），不认识连接、不碰 async，因此同步可测；
+- `httpconn` 依赖 `transport`（拿 trait 与契约类型）、`httpproto`（协议层的纯逻辑）与 `headers`，实现 `transport` 的 `Transport` trait——它是**唯一**与 socket / tls 打交道的包（自研 HTTP/1.x 栈，2026-09-30 起也是缺省传输，见 `18-httpconn-transport.md`）；
 - `util` 依赖 `abort` / `config` / `headers` / `url` / `transport`（拼请求要用到它们），但它不认识任何门面类型——这正是它能待在根包外面的唯一理由；
 - 根包依赖以上全部，负责编排与对外 API。
 
@@ -93,11 +96,16 @@ cookie ────────────────────────�
 
 ### 1. async 依赖被关在一层里
 
-MoonBit 标准库没有任何网络能力，唯一的 HTTP 实现在 `moonbitlang/async/http`，且是**全异步**的。如果把异步调用散在代码里，配置合并、URL 拼接这些纯逻辑也要跑在异步环境里才能测。
+MoonBit 标准库没有任何网络能力，网络与异步设施都在 `moonbitlang/async` 一族里。如果把异步调用散在代码里，配置合并、URL 拼接这些纯逻辑也要跑在异步环境里才能测。
 
-因此把「真的把字节发出去」抽成 `Transport` trait，异步实现只存在于 `src/transport/` 这个包里（`async_http.mbt` 是真实传输，`abort.mbt` 是取消作用域，`stream.mbt` / `stream_lifecycle.mbt` 是响应体流与它的生命周期，`decode.mbt` 是响应体的 gzip 解压工具）。收益：
+因此把「真的把字节发出去」抽成 `Transport` trait，async 依赖集中关在两个包里（2026-09-30 起真实传输是自研 HTTP/1.x 栈，旧栈 `moonbitlang/async/http` 已整体删除，见 `18-httpconn-transport.md`）：
 
-- `config` / `headers` / `url` / `util` 四个包可以用**普通同步测试**覆盖，跑得快、不依赖网络；
+- `src/transport/`（契约层）：`abort.mbt` 是取消作用域，`stream.mbt` / `stream_lifecycle.mbt` / `stream_all.mbt` 是响应体流与它的生命周期，`decode.mbt` 是缓冲路径的 gzip 解压；
+- `src/httpconn/`（实现层）：拨号（TCP / TLS / CONNECT 隧道）、请求写入、响应读取、流式 gzip 解压——**socket / tls 只出现在这里**；协议解析的纯逻辑另立 `src/httpproto/`（零 async 依赖，同步可测）。
+
+收益：
+
+- `config` / `headers` / `url` / `util` / `httpproto` / `sse` / `cookie` / `abort` 等纯逻辑包可以用**普通同步测试**覆盖，跑得快、不依赖网络；
 - 根包的管线测试用 `MockTransport` 注入，能确定性复现 4xx/5xx、超时、读到一半失败等分支；
 - 响应体是流（`ResponseBody`），但它的读语义在内存体与真实连接上完全一致，Mock 因此能代表网络侧的流式行为；
 - 使用方也能替换传输层（自定义实现只需一个方法）。

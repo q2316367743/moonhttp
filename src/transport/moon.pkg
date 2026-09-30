@@ -1,31 +1,27 @@
-// transport 与 src/httpconn/ 是本模块唯二依赖 async 运行时的包（自研传输见 docs/17）：
-// 配置合并、URL 拼接、头拍平等纯逻辑都留在其它包里，可以离线同步测试。
-// core/error 用于把底层错误渲染成可读消息，core/debug 用于 Debug 实现，
+// transport 是 Transport trait、契约类型与响应体流的所在地（自研传输见 docs/17 / 18）：
+// 配置合并、URL 拼接、头拍平等纯逻辑都留在其它包里，可以离线同步测试；
+// 真正碰网络的实现只有 src/httpconn/（自研 HTTP/1.1 栈，与 async 运行时的
+// 交互从此只在那一处）。
+// core/debug 用于 Debug 实现，
 // core/encoding/utf8 用于按分隔符读流时的文本解码，
 // core/buffer 用于读全量时把分块攒起来（中途失败也要能交出已读到的部分），
-// core/string 用于解析响应头里的 Content-Length（下载进度的 total），
-// async/gzip 用于解压 `Content-Encoding: gzip` 的响应体（见 decode.mbt）。
+// async/gzip 用于缓冲路径的内存解压（见 decode.mbt）。
 // abort 提供取消原语（`AbortSignal` 是 `PreparedRequest::signal` 的字段类型，
 // 也是本包取消作用域观察的对象）；它不依赖本项目的任何包，依赖方向仍是 DAG。
 import {
   "moonbitlang/async",
   "moonbitlang/async/gzip",
-  "moonbitlang/async/http",
   "moonbitlang/async/io",
   "moonbitlang/core/buffer",
   "moonbitlang/core/debug",
   "moonbitlang/core/encoding/utf8",
-  "moonbitlang/core/string",
   "q2316367743/moonhttp/abort",
   "q2316367743/moonhttp/config",
   "q2316367743/moonhttp/headers",
 }
 
-// socket 只给测试用：起一个本机 server 验证真实连接的流式读取。
-// （gzip 的编解码用例在白盒测试里，看得见生产 import 那份清单。）
-import {
-  "moonbitlang/async/socket",
-} for "test"
+// gzip 的编解码用例在白盒测试里，看得见生产 import 那份清单；
+// 真实连接的流式用例在 httpconn 包（唯一真实传输实现的所在地）。
 
 // alert_internal 是**有意**的：`open_wire`（自研传输层 httpconn 的响应体入口）
 // 的前提是「包外可以实现 `@io.Reader`」，而 trait 的必需方法 `_get_internal_buffer`

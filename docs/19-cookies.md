@@ -28,18 +28,16 @@ let _ = client.request(@moonhttp.Config::new("https://example.com/profile")) // 
 
 ## 前置改动：`RawResponse.set_cookies`
 
-实现本功能前，`Set-Cookie` 在传输边界就丢了：自研栈把 multimap 压平成单值
-`Headers`（只留最后一个值），旧栈的底层干脆把 cookie 解析走、不放进 headers。
+实现本功能前，`Set-Cookie` 在传输边界就丢了：multimap 压平成单值
+`Headers` 只留最后一个值（已删除的旧栈更干脆：底层把 cookie 解析走、不放进 headers）。
 所以第一步是给 `RawResponse` 加多值出口（`pub(all)` 结构加字段是**破坏性变更**，
 版本随之升 0.4.0）：
 
-- **自研栈**（`httpconn/transport.mbt` 的 `build_raw_response`）：压平循环里把
+- **现行**（`httpconn/transport.mbt` 的 `build_raw_response`）：压平循环里把
   `set-cookie`（大小写不敏感）逐条收进 `set_cookies`，**线上原文**。压平行为
   维持原样（`headers` 里仍是最后一个值——历史残留，不要依赖）；
-- **旧栈**（`transport/cookies.mbt` 的 `serialize_cookies`）：底层把 cookie 解析好
-  放在 `@http.Response::cookies`，从那里按字段**序列化还原**成 Set-Cookie 形态。
-  保真度说明：属性顺序、扩展属性可能与线上原文不同——jar 只消费
-  name / value 与过期 / 归属属性，不受影响；需要逐字节原文的场景用自研栈。
+  与旧栈从 `@http.Response::cookies` 序列化还原（属性顺序、扩展属性可能与原文不同）
+  相比，原文保真是新栈的一个改进。
 
 ## cookie 包（`src/cookie/`）
 

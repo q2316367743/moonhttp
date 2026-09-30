@@ -2,9 +2,11 @@
 // 来手里统一起来。
 //
 // Connection 实现 `@io.Reader + @io.Writer`，所以它能直接交给 `Tls::client`
-// 做 TLS 升级（隧道上 HTTPS 与直连 HTTPS 走同一条代码），也能交给
-// `ResponseBody::open_wire` 当响应体来源。pushback 用 `ReaderBuffer`：
-// 读状态行/头块的「多读一个字节」都留在缓冲里，进 body 阶段不丢。
+// 做 TLS 升级（隧道上 HTTPS 与直连 HTTPS 走同一条代码）。pushback 用
+// `ReaderBuffer`：读状态行/头块的「多读一个字节」都留在缓冲里、不丢——
+// 头阶段之后这些字节是**原始线上字节**，BodyReader（响应体）接管的正是它们：
+// 它经 `conn.read` 把缓冲余量与后续字节都当作线上输入过一遍分帧解码，
+// 自己另持一份输出缓冲（见 body_reader.mbt 的所有权注释）。
 
 ///|
 /// 线路本体：裸 TCP 或 TLS（TLS 的内层可以是 TCP，也可以是隧道）。
@@ -133,7 +135,7 @@ async fn connect_tcp(
 
 ///|
 /// 经代理拨号。SOCKS5 本轮是占位（docs/17 口径 3，握手字节属协议层，
-/// 下一个提交补齐）；CONNECT 代理的语义与旧栈一致（docs/09）：
+/// 下一个提交补齐）；CONNECT 代理的语义见契约文档 docs/09：
 /// http 目标也走隧道，凭据只落在 CONNECT 请求上。
 async fn dial_via_proxy(
   target : Target,
@@ -160,7 +162,7 @@ async fn dial_via_proxy(
 
 ///|
 /// 发 `CONNECT host:port` 并等到 2xx；此后这条连接就是到目标的裸管道。
-/// 非 2xx 翻译成人话（与旧栈的 ProxyError 映射同一条文案口径）：
+/// 非 2xx 翻译成人话（文案口径见 docs/09 的错误表）：
 /// `407` 需要认证最常见，把状态码带出来比一句「网络失败」有用。
 async fn establish_tunnel(
   conn : Connection,

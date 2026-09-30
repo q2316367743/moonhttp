@@ -17,9 +17,9 @@
 | `src/shortcuts.mbt` | 七个快捷方法的 `signal?` 参数（原样透传给 `request`） |
 | `src/util/request.mbt` | `build_prepared_request(config, signal?)`：把信号搬进 `PreparedRequest::signal` |
 | `src/transport/abort.mbt` | **机制的唯一落点**：`with_abort_scope`（协程级取消，进入时先查 `aborted()`）与 `aborted_failure`（读取前的检查） |
-| `src/transport/async_http.mbt` | `send` 把**整跳**（建连、写头、写 body、等响应头）包进取消作用域 |
+| `src/httpconn/transport.mbt` | `send` 把**整跳**（建连、TLS / CONNECT 握手、写头、写 body、等响应头）包进取消作用域（`with_abort_scope`） |
 | `src/transport/stream.mbt` | `ResponseBody` 持有信号：每次读取可取消、读入口先查取消 |
-| `src/transport/stream_lifecycle.mbt` | 响应体的构造与释放：`open` 先查 `aborted()`（已取消就立刻关连接），否则登记「取消即关闭」；`close()` 时注销 |
+| `src/transport/stream_lifecycle.mbt` | 响应体的构造与释放：`open_wire` 先查 `aborted()`（已取消就立刻关连接），否则登记「取消即关闭」；`close()` 时注销 |
 | `src/transport/stream_all.mbt` | 读全量的取消检查（`noraise` 的那条路） |
 | `src/transport/transport.mbt` | `PreparedRequest::signal` 字段、`TransportError::Cancelled(reason)` |
 | `src/http_error.mbt` | `ErrorCode::Cancelled` → `ERR_CANCELED`、`cancelled_error` / `abort_error`（文案与 `response` 落点）、`HttpError::is_cancelled` |
@@ -194,7 +194,7 @@ signal 为 None → 直接跑，不建任务组（零额外开销）
 1. **进入取消作用域时先查 `aborted()`**（`with_abort_scope` 开头）：已经取消就一步都不跑，
    直接抛 `Cancelled`。它挡住「跳与跳之间」——旧实现里这条是靠「登记即补触发」实现的
    （`attach` 到已取消的信号会立刻调 `task.cancel()`），现在改成看得见的检查。
-2. **读取入口先查 `aborted()`**（`aborted_failure`）与 **`ResponseBody::open` 的检查**
+2. **读取入口先查 `aborted()`**（`aborted_failure`）与 **`ResponseBody::open_wire` 的检查**
    （拿到的流已经死了就立刻关连接，随后任何读取都报取消）。
 
 检查与登记之间不会漏掉取消：另一条协程只在**挂起点**才可能运行，而「查一眼 → 登记」之间
@@ -210,7 +210,7 @@ I/O 路径时，必须自己在入口先查 `aborted()`**，别再指望「挂�
 | 时机 | 落点 | 行为 |
 |---|---|---|
 | 请求进入管线**之前** | `Client::request` / `open_stream` 里的 `check_cancelled`（合并配置之后、请求拦截器之前；信号来自入口的 `signal?`） | 立刻抛 `ERR_CANCELED`：**不发任何 I/O，也不跑请求拦截器**（拦截器可能带副作用） |
-| 每一跳发送**之中** | `AsyncHttpTransport::send` 的取消作用域包住 `send_head` | 打断挂起的建连 / 写头 / 写 body / 等响应头 |
+| 每一跳发送**之中** | 传输实现的取消作用域包住整跳（`with_abort_scope`） | 打断挂起的建连 / 写头 / 写 body / 等响应头 |
 | 进入一段 I/O **之前** | `with_abort_scope` 开头的 `aborted()` 检查 | 补上窗口期：重定向的两跳之间、两次响应体读取之间 |
 | 响应体读取**之中** | `read_or_fail` 的取消作用域（`read_some` / `read_until` / `read_all` / SSE 都经过它） | 打断挂起的读，抛 `TransportError::Cancelled` |
 | 取消已经发生**之后** | 读入口先查 `aborted_failure`；`ResponseBody` 自己挂在信号上的「取消即 `close()`」 | 报取消而**不是**退化成 EOF；同时立刻释放连接（调用方取消后不再读也不漏连接） |

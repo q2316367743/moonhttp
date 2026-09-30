@@ -6,9 +6,9 @@
 /// 走原来的解析流程）。这样 chunked / SSE 这类「边到边读」的协议才有落点：
 /// 响应头先用于判断状态码与内容类型，数据到了再一段段取。
 ///
-/// 内部有三种来源：旧栈的真实 HTTP 连接（`@http.Client`）、自研栈的连接流
-/// （`open_wire` 包进来的任意 `@io.Reader`），以及内存字节（Mock 与测试用）。
-/// 三者的读语义刻意保持一致（对齐 `@io.Reader`），Mock 才能真实代表网络侧：
+/// 内部有两种来源：自研传输层（httpconn）的连接流（`open_wire` 包进来的任意
+/// `@io.Reader`），以及内存字节（Mock 与测试用）。
+/// 两者的读语义刻意保持一致（对齐 `@io.Reader`），Mock 才能真实代表网络侧：
 /// - `read_some` 到 EOF 返回 `None`；
 /// - `read_until` 消费掉分隔符，且不把分隔符放进返回值；
 /// - 读到 EOF 会自动关闭底层连接，之后继续读仍然返回 `None`。
@@ -42,7 +42,6 @@ pub struct ResponseBody {
 /// 响应体的实际来源。多一个 `Closed` 变体是为了让 `close()` 幂等，
 /// 同时保证关闭之后再读不会碰到已经释放的连接。
 priv enum BodyInner {
-  Http(@http.Client)
   /// 自研传输层（httpconn）的连接流：一个已按 HTTP 分帧切好的 `@io.Reader`
   /// 加一个「关连接」的回调。`close` 是同步回调——连接关闭不涉及等待。
   Wire(WireBody)
@@ -138,21 +137,8 @@ pub async fn ResponseBody::read_some(
         Some(chunk)
       }
     }
-    Http(client) => {
-      let read = match max_len {
-        Some(limit) => () => client.read_some(max_len=limit)
-        None => () => client.read_some()
-      }
-      match read_or_fail(self.timeout, self.signal, read) {
-        None => {
-          self.close()
-          None
-        }
-        Some(chunk) => Some(chunk)
-      }
-    }
-    // Wire 与 Http 的读语义刻意逐行同构：超时/取消走同一个 read_or_fail，
-    // EOF（None）同样触发关闭——两种真实来源在使用侧必须无法区分。
+    // Wire 与 Memory 的读语义在生命周期上同构：EOF（None）同样触发关闭，
+    // 真实连接与内存体在使用侧必须无法区分。超时/取消走 read_or_fail。
     Wire(wire) => {
       let read = match max_len {
         Some(limit) => () => wire.reader.read_some(max_len=limit)
@@ -211,16 +197,7 @@ pub async fn ResponseBody::read_until(
         }
       }
     }
-    Http(client) =>
-      match
-        read_or_fail(self.timeout, self.signal, () => client.read_until(sep)) {
-        None => {
-          self.close()
-          None
-        }
-        Some(text) => Some(text)
-      }
-    // 与 Http 分支同构：SSE 的事件切分靠它，自研栈的流必须给出同样的形状
+    // SSE 的事件切分靠它：分隔符没出现就读到 EOF，读到的那段照常交出
     Wire(wire) =>
       match
         read_or_fail(self.timeout, self.signal, () => {
@@ -236,17 +213,12 @@ pub async fn ResponseBody::read_until(
 }
 
 ///|
-/// 手写 Debug 而不是 derive：底层 `@http.Client` 没有 Debug。
+/// 手写 Debug 而不是 derive：网络流不能把字节打印出来。
 /// 真实连接打印成占位符，内存体给出还没读完的字节数，
 /// `RawResponse` 因此可以继续 derive(Debug)。
 pub impl @debug.Debug for ResponseBody with fn to_repr(self) {
   match self.inner {
-    Http(_) =>
-      @debug.Repr::opaque_(
-        "ResponseBody",
-        @debug.Repr::literal("<http stream>"),
-      )
-    // 自研栈的连接流同样是「不可复制、不可窥视」的网络流，打印占位符
+    // 网络流「不可复制、不可窥视」，打印占位符
     Wire(_) =>
       @debug.Repr::opaque_(
         "ResponseBody",

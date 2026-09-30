@@ -1,11 +1,11 @@
 // httpconn 是自研 HTTP/1.x 的**实现层**（docs/17 口径 7）：拨号（TCP / TLS /
 // CONNECT 隧道）、请求写入、响应头读取、分帧响应体，并实现 transport 包的
-// `Transport` trait——与旧的 `AsyncHttpTransport` 双实现并存，
-// `Client::new(transport~: HttpConnTransport::new())` 即可切换。
+// `Transport` trait——2026-09-30 起是 `Client::new` 的缺省传输实现
+//（旧栈 AsyncHttpTransport 已删除，对照见 docs/18）。
 //
 // 依赖方向：httpconn → transport（拿 trait 与契约类型）+ httpconn → httpproto
-//（协议层的纯逻辑），不成环。async 运行时依赖只出现在 transport 与本包
-//（docs/17 落地后，「唯一依赖 async 的包」口径改为「transport 与 httpconn」）。
+//（协议层的纯逻辑），不成环。旧栈删除后，本包是唯一与 async HTTP 设施
+//（socket / tls / http 库）打交道的包；transport 只留 trait 与响应体流。
 //
 // gzip 的流式解压也由本包自持（docs/17 口径 4）：请求没声明 Accept-Encoding
 // 时由我们声明 gzip 并在响应侧解压——「谁解压谁声明」，见 docs/15。

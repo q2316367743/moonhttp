@@ -5,7 +5,7 @@ gzip 透明解压怪癖、`Client` opaque 导致连接池做不了、代理只�
 按 RFC 分**协议层**与**实现层**两个包，为 2026-10 的连接池打地基。
 **状态：第 1 期已落地（2026-09-29，分支 `feat/http-protocol`）**——协议层 `src/httpproto/`、
 实现层 `src/httpconn/`、`Transport` 双实现并存、自定义方法与 gzip 自持随期交付；
-实现细节与新旧栈对照见 `18-httpconn-transport.md`。七条口径照录如下，分支开发期间不得偏离。
+实现细节见 `18-httpconn-transport.md`（含与已删除旧栈的行为对照，历史记录）。七条口径照录如下，分支开发期间不得偏离。
 
 ## 已核实的可行性前提（动手前复核一遍）
 
@@ -15,7 +15,7 @@ gzip 透明解压怪癖、`Client` opaque 导致连接池做不了、代理只�
 | TLS | `@tls.Tls::client(任意读写流, verify?/host?/sni?/trust?)` 可包任意流 → **CONNECT/SOCKS 隧道上做 HTTPS 成立**；`TrustedRoot`（NoVerification/SystemRoot/CustomPemFile）与现有 `trust~` 一一对应 |
 | HTTP/2 | **gated**：`@tls` 公开 API 与 openssl 适配层均未暴露 ALPN（2026-09-29 全文检索零命中），h2 的 TLS 协商走不通 → 见口径第 1 条 |
 | SOCKS 代理 | 现有栈结构性做不到（代理参数只收 `@http.Client`、隧道只有 CONNECT）；自研栈里是纯增量小模块，见下 |
-| 传输层可替换 | `Client::new(config~, transport~)` 早已支持注入，新实现与 `AsyncHttpTransport` 双实现并存、灰度切换，超时 / 取消 / 进度 / 重定向 / 拦截器零改动 |
+| 传输层可替换 | `Client::new(config~, transport~)` 注入（2026-09-30 起缺省即 httpconn；旧 `AsyncHttpTransport` 已删除），超时 / 取消 / 进度 / 重定向 / 拦截器零改动 |
 
 ## 七条已定口径（2026-09-29 owner 拍板，分支启动后不得偏离）
 
@@ -45,7 +45,7 @@ gzip 透明解压怪癖、`Client` opaque 导致连接池做不了、代理只�
      close-delimited、无体规则（HEAD/204/304）、SOCKS5 握手字节。
    - **实现层**（async，包名占位 `httpconn`）：`Connection` 三态建连（TCP / TLS / CONNECT 或 SOCKS 隧道+TLS）、
      请求写入（一次性请求体一律 `Content-Length`）、响应读取、生命周期状态机，并实现 `transport` 包的 `Transport` trait
-     （依赖方向：`httpconn → transport`（拿 trait）+ `httpconn → httpproto`，不成环）；旧 `AsyncHttpTransport` 保留为回退。
+     （依赖方向：`httpconn → transport`（拿 trait）+ `httpconn → httpproto`，不成环）；旧栈曾保留为回退，2026-09-30 默认切换后整体删除。
 
 ## 分期
 
@@ -61,7 +61,7 @@ gzip 透明解压怪癖、`Client` opaque 导致连接池做不了、代理只�
 - `deflate` / `br`：`@gzip` 之外编解码器生态是空的，建议砍（沿用「不认识的编码原样交出」口径）。
 - 协议层 multimap → 门面单值 `Headers` 的压平规则（**已落地**：取最后一个值；`Set-Cookie` 走
   `RawResponse.set_cookies` 多值出口，见 `19-cookies.md`）。
-- 官方 `AsyncHttpTransport` 保留多久（建议长期保留为回退，逃生门不花钱）。
+- ~~官方 `AsyncHttpTransport` 保留多久~~（**已决（2026-09-30）：直接删除**——默认切到 httpconn 后旧栈成了要两头同步的死代码，且全部端到端用例已在新栈上验证；对 v0.3.1 的 mooncakes 下游是 breaking change，随下个版本发布。）
 - 包名定名（`httpproto` / `httpconn` 为占位）、分支名（建议 `feat/http-protocol`）。
 
 ## 启动后的文档联动清单

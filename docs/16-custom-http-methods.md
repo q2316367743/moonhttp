@@ -10,6 +10,10 @@
 > 下文「最小改动清单」第 1、2 条已实施，第 3 条的「新增错误码」没有做
 > （旧栈对 `Other` 报既有 `Unsupported` → `ERR_NOT_SUPPORTED`，指向注入新传输）。
 > 对上游的 issue 从「解锁请求」降级为「让官方实现也受益」，提交与否仍由 owner 定。
+>
+> **状态更新（2026-09-30，默认切换）**：缺省传输已切到 `HttpConnTransport`（旧栈删除），
+> **自定义方法在默认路径可用**——`Method::Other("PROPFIND")` 直接发，端到端用例见
+> `src/httpconn/stream_real_test.mbt`（请求行原样落线）。本文其余内容是历史调研记录。
 
 ## 约束证据（2026-09-29 逐条核实，改动前先复核是否仍然成立）
 
@@ -51,6 +55,8 @@
    「未知返回 `None`」的严格语义不变（生产代码没人调它，唯一调用在测试）。
 2. `src/transport/async_http.mbt`：`to_request_method` 覆盖 `Other` 分支映射到上游新入口；
    发送前对 token 字符做一次 RFC 7230 校验（防拼坏请求行），非法字符在**建连前**报错。
+   （第 2 条实际按自研路线落地：没有 `to_request_method` 这层，token 校验在
+   `src/httpconn/transport.mbt` 的 `send_head` 建连前做，请求行由 `httpproto` 原样渲染。）
 3. 错误面：本期未实现，故没有为它新增错误码。若未来要在「上游解锁前」先行开放 API（`Method::Other` +
    发送时报错），新增 `ErrorCode::NotImplemented`（`ERR_NOT_IMPLEMENTED`）即可，别复用网络类错误码。
 4. 同步 `docs/05-transport.md` 的「枚举映射」、本文档的状态、`README.mbt.md` 的「暂不支持」清单；

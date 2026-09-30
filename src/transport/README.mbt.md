@@ -1,6 +1,6 @@
 # transport —— 传输层契约
 
-传输层：把「真正把字节发出去」抽象成 `Transport` trait，上层只认 `PreparedRequest` / `RawResponse` 两个契约。自带基于 `moonbitlang/async` 的 `AsyncHttpTransport`，也可以在测试里换成 `MockTransport` 或自己的实现。
+传输层：把「真正把字节发出去」抽象成 `Transport` trait，上层只认 `PreparedRequest` / `RawResponse` 两个契约。真实的网络实现是 [`httpconn`](https://github.com/q2316367743/moonhttp/blob/master/src/httpconn/README.mbt.md) 包的自研 HTTP/1.1 栈（`HttpConnTransport`，`Client::new` 的缺省传输）；本包自带 `MockTransport` 供测试替换，也可以换成自己的实现。
 
 ```toml
 import {
@@ -33,12 +33,12 @@ import {
 
 ## 解压与响应头
 
-`Content-Encoding` 的解码工具也在这个包（只有它碰 async 运行时）：`decode_gzip(bytes)` 把一整份 gzip 字节解成实体字节，`declares_gzip(headers)` 判断响应是否声称自己是 gzip。**流里没有「内容编码」这一层**——交出去的 `ResponseBody` 永远是实体字节；自定义传输实现若要交 gzip 字节，就得把 `Content-Encoding` 一起交出去（让头与体说同一件事）。谁声明、谁解压、失败怎么报见
+缓冲路径的解压工具在这个包：`decode_gzip(bytes)` 把一整份 gzip 字节解成实体字节，`declares_gzip(headers)` 判断响应是否声称自己是 gzip。解压归属按「谁解压谁声明」：库自己声明 `Accept-Encoding` 的响应，交到你手里前已解掉（`Content-Encoding` / `Content-Length` 一并摘除）；用户自己声明 `Accept-Encoding` 的，流式路径字节与头原样交出（头与体说同一件事）。自定义传输实现同样守这条口径。谁声明、谁解压、失败怎么报见
 [`docs/15-response-compression.md`](https://github.com/q2316367743/moonhttp/blob/master/docs/15-response-compression.md)。
 
 ## 两个实现
 
-- **`AsyncHttpTransport`**：真实实现，基于 `moonbitlang/async`；代理用 `CONNECT` 隧道，http 与 https 目标都一样；每次请求新建连接（不做连接复用）。
+- **`HttpConnTransport`**（定义在 [`httpconn`](https://github.com/q2316367743/moonhttp/blob/master/src/httpconn/README.mbt.md) 包，`Client::new` 的缺省传输）：自研 HTTP/1.1 栈——TCP / TLS 直连与 `CONNECT` 隧道代理、gzip 自持、自定义方法原样落线；每次请求一条连接（发 `Connection: close`，连接池在路线图上），见 [`docs/18-httpconn-transport.md`](https://github.com/q2316367743/moonhttp/blob/master/docs/18-httpconn-transport.md)。
 - **`MockTransport`**：测试用，不碰网络。记录收到的每一份请求（`received()` / `request_count()` / `last_request()`），返回预置响应（`new(response)` 或 `from_responses([...])`，取完之后一直复用最后一个），也可以固定失败（`failing(error)` / `with_failure(error)`）。
 
 ## 用法

@@ -1,11 +1,9 @@
-// 自研 HTTP/1.x 传输实现：`Transport` trait 的第二个真实现。
-//
-// 与旧栈（`AsyncHttpTransport`）并存、注入切换（`Client::new(transport~)`），
-// 旧栈保留为回退与对照。相对旧栈它多出来的能力：
+// 自研 HTTP/1.x 传输实现：`Transport` trait 的真实实现，
+// 2026-09-30 起是 `Client::new` 的缺省 transport（旧栈 AsyncHttpTransport 已删除，
+// 对照见 docs/18）。它带来的能力：
 // - **自定义方法**：请求行由 httpproto 渲染，方法 token 原样落线
-//   （`PROPFIND` 等 WebDAV 方法第一天可用，docs/16 的解锁清单随之作废）；
-// - **gzip 自持**：声明与解压都在本实现内完成，不再依赖底层的
-//   「补了 Accept-Encoding 才透明解压」怪癖（docs/17 口径 4）；
+//   （`PROPFIND` 等 WebDAV 方法开箱即用，docs/16）；
+// - **gzip 自持**：声明与解压都在本实现内完成（docs/17 口径 4）；
 // - 连接生命周期可见（阶段 2 的连接池在这里打地基）。
 
 ///|
@@ -23,7 +21,7 @@ pub fn HttpConnTransport::new() -> HttpConnTransport {
 /// 发送一次请求：建连（含代理握手）→ 写头写体 → 等响应头，
 /// 然后把「还开着的连接」按分帧交给响应体流。
 ///
-/// 取消作用域包住**整跳**（与旧栈同一条纪律）：建连、TLS 握手、
+/// 取消作用域包住**整跳**（Transport 契约的一半）：建连、TLS 握手、
 /// CONNECT 握手、写头、写体（含上传进度回调）、等响应头。从上传进度
 /// 回调里取消也落在同一个子任务上，下一块写出去之前就会断。
 /// 响应体阶段的超时与取消由 `ResponseBody` 按**单次读取**管。
@@ -67,7 +65,7 @@ async fn send_head(
     build_raw_response(conn, request, meth, head)
   }
   try {
-    // timeout 为 None 或非正数时不加限制（与旧栈同一口径）
+    // timeout 为 None 或非正数时不加限制
     match request.timeout {
       Some(milliseconds) if milliseconds > 0 =>
         @async.with_timeout(milliseconds, attempt)
@@ -81,7 +79,21 @@ async fn send_head(
       raise @transport.TransportError::Malformed(message)
     @httpproto.ParseError::Unsupported(message) =>
       raise @transport.TransportError::Unsupported(message)
-    // 其余（建连、TLS、代理拒绝已在 dial 里翻好……）归网络层
+    // 自己人（dial / 读写辅助函数）抛的 TransportError 原样透传：
+    // 里面是翻好的文案（隧道 407 的「代理拒绝建立隧道：HTTP 407 …」等），
+    // 落到下面的 catch-all 会被包成「Network(TransportError.Network)」，
+    // 把人话冲成一句类型名。
+    @transport.TransportError::Network(message) =>
+      raise @transport.TransportError::Network(message)
+    @transport.TransportError::Malformed(message) =>
+      raise @transport.TransportError::Malformed(message)
+    @transport.TransportError::Unsupported(message) =>
+      raise @transport.TransportError::Unsupported(message)
+    @transport.TransportError::Cancelled(reason) =>
+      raise @transport.TransportError::Cancelled(reason)
+    @transport.TransportError::Timeout =>
+      raise @transport.TransportError::Timeout
+    // 其余（建连、TLS……）归网络层，保留原始文本
     error => raise @transport.TransportError::Network(error.to_string())
   }
 }
@@ -99,7 +111,7 @@ async fn send_head(
 /// （缓冲路径 `decode_response_body` / 流式按自描述原则交原字节），
 /// `identity` 声明（decompress: false）更是一概不动。解压后
 /// `Content-Encoding` 与 `Content-Length` 都成了假话，一并摘掉
-/// （`total` 随之归 `None`），与旧栈透明解压后的摘头口径一致。
+/// （`total` 随之归 `None`）。
 fn build_raw_response(
   conn : Connection,
   request : @transport.PreparedRequest,

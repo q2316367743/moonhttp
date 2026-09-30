@@ -3,8 +3,9 @@
 //   并用 pub using 再导出子包的类型；
 // - 编排「合并配置 → 拼 URL → 拍平头 → 传输 → 解码 → 校验」这条管线，
 //   其中纯逻辑那半在 util 包里，这里只留与门面类型接壤的部分。
-// 这里不直接依赖 async 传输实现，只通过 transport 包的 trait 交互，
-// 因此管线本身可以用 Mock 传输层做同步/异步测试。
+// 管线本身只通过 transport 包的 trait 交互，因此可以用 Mock 传输层做
+// 同步/异步测试；import httpconn 只为提供缺省传输实现（自研 HTTP/1.1 栈，
+// 见 docs/17 / 18）——它实现的是同一个 trait。
 //
 // core/json 是生产依赖（不是只为测试）：`Response::json` 是门面上的解析入口，
 // 它抛 `@json.ParseError`，不参与本项目的错误体系（见 facade.mbt）。
@@ -15,6 +16,7 @@ import {
   "q2316367743/moonhttp/config",
   "q2316367743/moonhttp/cookie",
   "q2316367743/moonhttp/headers",
+  "q2316367743/moonhttp/httpconn",
   "q2316367743/moonhttp/sse",
   "q2316367743/moonhttp/transport",
   "q2316367743/moonhttp/util",
@@ -31,9 +33,9 @@ import {
 //
 // `async/http` 与 `async/socket` 只给测试用：SSE 的验收用例要起一个本机
 // server，用真实连接证明「事件能在服务端停顿期间就到达」；代理的验收用例
-// 要起一个本机 CONNECT 代理。**生产代码不碰这两个包**——对底层库的依赖只
-// 出现在 src/transport/ 与 src/httpconn/（自研传输，docs/17 落地后口径从
-// 「唯一」改为「唯二」），这正是 docs/README.md 那条分层约束要的效果。
+// 要起一个本机 CONNECT 代理。**生产代码不碰 async/http**——旧栈删除后
+// （docs/17 / 18），对底层 HTTP 库的依赖为 0，网络交互只集中在
+// src/httpconn/（自研栈）；测试里的 `@http.Server` 只是起本机服务器的夹具。
 // `util` 在黑盒测试里直接 import：代理凭据落在哪个请求上属于拼装层的契约，
 // 除了端到端用例，还要有一条不走网络的断言。
 // core/json 给「响应体后处理」那几条用例用（`@json.Replacer::exclude`）；

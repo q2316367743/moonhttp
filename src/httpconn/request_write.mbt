@@ -6,8 +6,7 @@
 
 ///|
 /// 上传进度的分块大小：每写完这么多字节报告一次进度。
-/// 与旧栈（async_http.mbt）同一粒度——64 KiB 是「回调次数」与
-/// 「进度条平滑度」的常见折中，两栈报告节奏一致才好对照。
+/// 64 KiB 是「回调次数」与「进度条平滑度」的常见折中。
 const UPLOAD_CHUNK_SIZE : Int = 65536
 
 ///|
@@ -18,8 +17,7 @@ const UPLOAD_CHUNK_SIZE : Int = 65536
 ///   上层声明的 `identity`）就完全不动；
 /// - `Connection: close`：phase 1 每请求一条连接，声明 close 让服务端
 ///   立刻回收（docs/17 口径 4；keep-alive 随连接池一起来）；
-/// - `Content-Length`：phase 1 请求体一律定长（docs/17 口径 4），无体发 0，
-///   与旧栈「底层据此发 Content-Length: 0」的线上行为对齐。
+/// - `Content-Length`：phase 1 请求体一律定长（docs/17 口径 4），无体发 0。
 fn build_request_headers(
   request : @transport.PreparedRequest,
   target : Target,
@@ -61,7 +59,7 @@ async fn write_request_head(
 
 ///|
 /// 写请求体：有上传进度回调时按 `UPLOAD_CHUNK_SIZE` 分块写、逐块报告。
-/// 「报告了 = 已经交给内核」的口径与旧栈一致（write 不缓冲，一次 syscall；
+/// 「报告了 = 已经交给内核」的口径（write 不缓冲，一次 syscall；
 /// 见 docs/10-progress.md）。空 body 不触发任何回调——没有字节可报。
 async fn write_request_body(
   conn : Connection,

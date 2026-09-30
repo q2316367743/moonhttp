@@ -2,7 +2,7 @@
 
 对应 axios 的 `proxy`：**配了 `Config.proxy` 之后，请求全部经代理服务器转发**，支持到代理的基础认证（`Proxy-Authorization`）与 HTTPS 代理。
 
-一句话概括实现：**配置形状在 `config` 包，凭据落点在 `util` 包，隧道在 `transport` 包**——真正的 `CONNECT` 隧道由底层 `moonbitlang/async` 完成，本模块只负责把「连到哪儿、带什么凭据」翻译成它要的形状。
+一句话概括实现：**配置形状在 `config` 包，凭据落点在 `util` 包，隧道在 `httpconn` 包**——`CONNECT` 隧道由 httpconn 自己实现（2026-09-30 起；此前由已删除的旧栈委托底层完成），本模块负责把「连到哪儿、带什么凭据」翻译成隧道握手要的形状。
 
 ## 关键文件
 
@@ -13,7 +13,7 @@
 | `src/config/render.mbt` | `Config::to_string` 里的 `proxy` 臂 |
 | `src/util/request.mbt` | `build_prepared_request`：拼出代理地址、决定 `Proxy-Authorization` 的取值，并把它从目标请求头里取走 |
 | `src/transport/transport.mbt` | `ProxyEndpoint`（`url` + `authorization`）与 `PreparedRequest::proxy` 字段 |
-| `src/transport/async_http.mbt` | `open_proxy`：建一个干净的代理客户端交给底层；`ProxyError` → `TransportError::Network` 的翻译 |
+| `src/httpconn/connection.mbt` | `dial_via_proxy` + `establish_tunnel`：CONNECT 隧道握手；非 2xx 翻译成人话（407 带状态码），网络类失败归 `TransportError::Network` |
 | `src/client.mbt` | `prepare_request`：代理配置缺 host 时报 `ERR_INVALID_URL`（与「缺 url」分开报） |
 | `src/config/proxy_test.mbt` / `src/config/merge_wbtest.mbt` | 构建器 / 判定 / 渲染 / 合并的同步用例 |
 | `src/proxy_test.mbt` | 拼装契约（不走网络）与本机 CONNECT 代理的端到端用例（隧道、407、握手超时、缺 host） |
@@ -72,7 +72,7 @@ CONNECT 目标host:port  → 200 → 进入隧道 → 在隧道里发真正的�
 
 | 行为 | 说明 |
 |---|---|
-| 连接方式 | 底层对**所有**目标都用 `CONNECT` 隧道，**http 目标也走 CONNECT**（不是「把完整地址发进请求行」那种经典 HTTP 代理写法）。所以代理服务器必须支持 `CONNECT`，只支持 GET/POST 转发的简易代理不行 |
+| 连接方式 | 对**所有**目标都用 `CONNECT` 隧道，**http 目标也走 CONNECT**（不是「把完整地址发进请求行」那种经典 HTTP 代理写法）。所以代理服务器必须支持 `CONNECT`，只支持 GET/POST 转发的简易代理不行 |
 | 隧道数量 | 每个请求各建一条（重定向时**每一跳**各建一条），与本模块「不复用连接」的现状一致 |
 | https 目标 | 隧道之上再做一次目标的 TLS；两次 TLS 互相独立（到代理的那次由 `protocol` 决定，到目标的那次始终由目标地址决定） |
 | 超时 | CONNECT 握手在 `@async.with_timeout` 包住的那一段里，所以**握手也受 `timeout` 约束**（用例：`connect handshake respects the timeout`） |
@@ -88,7 +88,7 @@ CONNECT 目标host:port  → 200 → 进入隧道 → 在隧道里发真正的�
 | CONNECT 握手超时 | `Timeout`（`ECONNABORTED`） |
 | 代理配置缺 host | `InvalidUrl`（`ERR_INVALID_URL`），文案点名是代理的问题；请求根本没发出去 |
 
-没有为代理单开 `TransportError` 或 `ErrorCode` 变体：代理失败的处置方式与其它网络失败相同（换代理、加凭据、重试），多一个分类只会让调用方多写一个分支。CONNECT 被拒时错误里也不带响应——`ProxyError` 携带的那个 `Response` 属于代理而不是源站，混进错误里会让人误以为「目标服务器回了 407」。
+没有为代理单开 `TransportError` 或 `ErrorCode` 变体：代理失败的处置方式与其它网络失败相同（换代理、加凭据、重试），多一个分类只会让调用方多写一个分支。CONNECT 被拒时错误里也不带响应——代理的响应属于代理而不是源站，混进错误里会让人误以为「目标服务器回了 407」。
 
 ## 与 axios 的差异
 
@@ -96,7 +96,7 @@ CONNECT 目标host:port  → 200 → 进入隧道 → 在隧道里发真正的�
 |---|---|---|
 | 环境变量 | 默认读 `http_proxy` / `https_proxy`，`no_proxy` 列例外域 | **不读**。环境变量会让「同一份代码在不同机器上走向不同的出口」，配置即事实；要按环境切代理请显式传 `with_proxy(...)` |
 | 按请求关闭代理 | `proxy: false` 显式关掉（含环境变量提供的代理） | 不提供。需要绕开实例默认代理时另建一个不带代理的实例（`Config` 的 `None` 语义是「未提供、只能回退」，表达不了「显式关掉」） |
-| http 目标 | 经典代理写法：请求行里放完整地址，`Proxy-Authorization` 落在那个请求上 | 统一走 CONNECT 隧道（底层实现如此），凭据落在 CONNECT 上 |
+| http 目标 | 经典代理写法：请求行里放完整地址，`Proxy-Authorization` 落在那个请求上 | 统一走 CONNECT 隧道（httpconn 自己实现），凭据落在 CONNECT 上 |
 | 用户自定义的 `Proxy-Authorization` | 隧道模式下会随目标请求一起发出去 | 有代理时取走、只用于 CONNECT；没代理时不碰（见上一节） |
 | 代理协议 | `protocol` 字符串（`http` / `https`） | `ProxyProtocol` 枚举（拼错是编译错误） |
 | SOCKS | 不支持 | 不支持（只做 HTTP 隧道） |

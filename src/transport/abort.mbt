@@ -5,8 +5,8 @@
 // 这里把信号与子任务连起来：信号被取消 → 登记的子任务被 cancel →
 // 挂起中的 connect / read / write 立刻中断。
 //
-// 落点只有三处，都在本包内（对底层库的依赖只允许出现在 transport 里）：
-// - `AsyncHttpTransport::send`：每一跳的建连、写头、写 body、等响应头；
+// 落点只有三处，都在本包内：
+// - 真实传输（httpconn）的 `send`：每一跳的建连、写头、写 body、等响应头；
 // - `read_or_fail`：响应体每次读取（按块读、读全量与 SSE 都经过它）；
 // - `ResponseBody`：把「取消即关闭这条连接」登记到信号上。
 //

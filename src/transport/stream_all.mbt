@@ -21,8 +21,8 @@ const PROGRESS_CHUNK_SIZE : Int = 65536
 /// 口径与逐次读取不同（整段读完受一次 `timeout` 约束，见 `read_all_partial`），
 /// 分成多次读取会把这个口径改掉。
 ///
-/// `read` 是「单块读」的闭包（旧栈的 `client.read_some()` 与自研栈的
-/// `reader.read_some()` 同形），旧栈与新栈共用同一份进度循环。
+/// `read` 是「单块读」的闭包（自研栈连接流的 `reader.read_some()` 同形），
+/// 内存体模拟分块与真实连接共用同一份进度循环。
 ///
 /// `loaded` 从 0 起算，只统计**这次读取**取到的字节；`total` 是响应体的总长度
 /// （可能未知）。
@@ -95,24 +95,8 @@ pub async fn ResponseBody::read_all_partial(
       self.close()
       (tail, None)
     }
-    Http(client) => {
-      let buffer = @buffer.Buffer::Buffer()
-      // 失败不当异常走，而是作为值返回：调用方要的是「已读到的字节 + 错误」。
-      let failure : TransportError? = try {
-        read_or_fail(self.timeout, self.signal, () => {
-          drain_into(() => client.read_some(), buffer, self.total, on_progress)
-        })
-        None
-      } catch {
-        error => Some(error)
-      }
-      // 读完与失败都一样：这条连接没有别的用处，释放掉（`read_some` 的
-      // errdefer 已经关过一次，`close` 幂等）。
-      self.close()
-      (buffer.to_bytes(), failure)
-    }
-    // 自研栈的连接流与旧栈走完全同一份「读全量 + 进度」路径——
-    // 两种真实来源在缓冲路径上的可观察行为必须一致。
+    // 自研栈的连接流与内存体共用同一份「读全量 + 进度」路径——
+    // 真实来源与 Mock 在缓冲路径上的可观察行为必须一致。
     Wire(wire) => {
       let buffer = @buffer.Buffer::Buffer()
       let failure : TransportError? = try {
