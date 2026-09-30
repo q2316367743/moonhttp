@@ -47,6 +47,21 @@ chunked 解码是增量状态机（`httpproto/chunked.mbt`）：CRLF、行、数
 trailer 解析后**丢弃**（`docs/17` 待决问题的口径），chunk 扩展忽略；终止 chunk 之前连接关闭
 显式报 `Malformed`（把半截数据当完整响应比报错更糟）。
 
+## 请求侧自动头（`httpconn/request_write.mbt`）
+
+用户头原样保留在最前，自动头按 `set_if_absent` 跟在后面——用户显式设置的同名头永远赢：
+
+| 头 | 值 | 出处 |
+|---|---|---|
+| `Host` | 按 target 生成，默认端口省略（RFC 9112 §7.2） | 拨号栈自己建连，必须自己给 |
+| `Accept-Encoding: gzip` | 请求没声明时才补 | 谁解压谁声明（见下节与 `docs/15`） |
+| `User-Agent` | `moonhttp/0.4.0`，用户没设时才补 | GitHub 等服务端拒绝无 UA 请求；axios 的 node 适配器与 Python requests 同机制。版本号与 moon.mod 手工保持一致，升版本一起改 |
+| `Connection: close` | 总是 | phase 1 每请求一条连接（`docs/17` 口径 4；keep-alive 随连接池来） |
+| `Content-Length` | 字节数（无体发 0） | 请求体一律定长（`docs/17` 口径 4） |
+
+CONNECT 隧道请求（`establish_tunnel`）不在此列：它只带 `Host` 与可选的 `Proxy-Authorization`，
+对端是代理不是源站（`docs/09`）。契约用例在 `src/httpconn/request_write_wbtest.mbt`。
+
 ## gzip：谁解压谁声明（docs/15 的延伸）
 
 | 请求里的 `Accept-Encoding` | 谁写的 | 响应 gzip 时谁解 | 摘头 |

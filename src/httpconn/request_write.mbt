@@ -10,11 +10,19 @@
 const UPLOAD_CHUNK_SIZE : Int = 65536
 
 ///|
-/// 装配请求头。四条自动头各有出处：
+/// 默认 User-Agent。版本号与 moon.mod 的 version 手工保持一致——
+/// MoonBit 没有构建期注入，升版本时这里是唯一要跟着改的地方。
+/// GitHub 等服务端会直接拒绝无 UA 的请求，axios 的 node 适配器与
+/// Python requests 都是同一机制：用户没设就补一份库自己的。
+const DEFAULT_USER_AGENT : String = "moonhttp/0.4.0"
+
+///|
+/// 装配请求头。五条自动头各有出处：
 /// - `Host`：RFC 9112 §7.2，由栈按目标生成（重定向层已把用户显式 Host 丢掉）；
 /// - `Accept-Encoding: gzip`：**谁解压谁声明**（docs/15）——请求没声明时
 ///   由我们声明并负责响应侧解压；用户声明过（含 `decompress: false` 时
 ///   上层声明的 `identity`）就完全不动；
+/// - `User-Agent`：`DEFAULT_USER_AGENT`，见上；
 /// - `Connection: close`：phase 1 每请求一条连接，声明 close 让服务端
 ///   立刻回收（docs/17 口径 4；keep-alive 随连接池一起来）；
 /// - `Content-Length`：phase 1 请求体一律定长（docs/17 口径 4），无体发 0。
@@ -28,6 +36,7 @@ fn build_request_headers(
   }
   headers.set_if_absent("Host", host_header(target))
   headers.set_if_absent("Accept-Encoding", "gzip")
+  headers.set_if_absent("User-Agent", DEFAULT_USER_AGENT)
   headers.set_if_absent("Connection", "close")
   let length = match request.body {
     Some(bytes) => bytes.length()

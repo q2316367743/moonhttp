@@ -28,6 +28,8 @@ import {
   每请求一条连接、发 `Connection: close`（连接池是第 2 期）。
 - **自定义方法**：`PROPFIND` 等按原样落进请求行；token 校验在**建连前**
   （拼不进请求行的方法不值得一次握手）。
+- **默认 `User-Agent`**：用户没设时自动补 `moonhttp/0.4.0`（版本号与 moon.mod 一致）；
+  显式设置的同名头永远优先。GitHub 等服务端会拒绝无 UA 的请求。
 - **gzip 自持**：请求没声明 `Accept-Encoding` 时由本实现声明 `gzip` 并在响应侧流式解压，
   解压后摘掉 `Content-Encoding` / `Content-Length`（「谁解压谁声明」，见
   [`docs/15-response-compression.md`](https://github.com/q2316367743/moonhttp/blob/master/docs/15-response-compression.md)）。
