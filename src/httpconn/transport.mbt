@@ -91,7 +91,8 @@ async fn send_head(
 /// 组装带连接所有权的 `RawResponse`。
 ///
 /// 压平规则（docs/17 待决问题的落地）：同名头取最后一个值；
-/// `Set-Cookie` 的多值透出留待单独设计（与 docs/05 挂起的「响应 cookie」一起）。
+/// `Set-Cookie` 的多值全量收集进 `set_cookies`（docs/05 / 17 挂起的
+/// 「响应 cookie」落在这里，cookie jar 的自动维护吃的是这份列表）。
 ///
 /// gzip（谁解压谁声明，docs/15）：只有「请求没声明 Accept-Encoding、
 /// 由我们声明了 gzip」这条路径才解压——用户自己声明的交给上层
@@ -106,8 +107,12 @@ fn build_raw_response(
   head : ResponseHead,
 ) -> @transport.RawResponse raise @transport.TransportError {
   let mut headers = @headers.Headers::new()
+  let set_cookies : Array[String] = []
   for entry in head.headers.entries {
     let (name, value) = entry
+    if name.to_lower() == "set-cookie" {
+      set_cookies.push(value)
+    }
     headers = headers.set(name, value)
   }
   let framing = @httpproto.body_framing(meth == "HEAD", head.code, head.headers) catch {
@@ -134,6 +139,7 @@ fn build_raw_response(
     status: head.code,
     status_text: head.reason,
     headers,
+    set_cookies,
     // 连接的所有权在这里移交：读到 EOF 或 close() 时释放
     //（errdefer 只覆盖到这一行为止的失败路径）。
     body: @transport.ResponseBody::open_wire(

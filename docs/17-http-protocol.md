@@ -38,7 +38,9 @@ gzip 透明解压怪癖、`Client` opaque 导致连接池做不了、代理只�
    （「测试比代码多」的那部分成本在这里，不在真实网络靶子上）。
 7. **按 RFC 分两包：协议层 + 实现层**（净室实现，依据 RFC 9110 / 9112 / 1928 / 1929，不通读上游源码）：
    - **协议层**（纯逻辑，包名占位 `httpproto`）：请求行 / 状态行、头解析（含 obs-fold 与**协议层 multimap**——
-     HTTP 允许重复头如 `Set-Cookie`，门面仍是单值 `Headers`，压平规则在门面层定，顺带解锁 docs/05 挂起的「响应 cookie」）、
+     HTTP 允许重复头如 `Set-Cookie`，门面仍是单值 `Headers`；压平规则后来定为「同名取最后一个值、
+     `Set-Cookie` 全量另走 `RawResponse.set_cookies` 多值出口」，`docs/05` 挂起的「响应 cookie」随之在
+     `docs/19-cookies.md` 落地）、
      chunked 编解码（解码含 trailer / extension / CRLF 跨块，编码为下一期流式上传预留）、content-length、
      close-delimited、无体规则（HEAD/204/304）、SOCKS5 握手字节。
    - **实现层**（async，包名占位 `httpconn`）：`Connection` 三态建连（TCP / TLS / CONNECT 或 SOCKS 隧道+TLS）、
@@ -57,7 +59,8 @@ gzip 透明解压怪癖、`Client` opaque 导致连接池做不了、代理只�
 
 - `Expect: 100-continue` 做不做（建议缓）；响应 trailer 要不要透出（h1 场景建议先丢弃）。
 - `deflate` / `br`：`@gzip` 之外编解码器生态是空的，建议砍（沿用「不认识的编码原样交出」口径）。
-- 协议层 multimap → 门面单值 `Headers` 的压平规则（建议：取最后一个值，`Set-Cookie` 后续单独设计）。
+- 协议层 multimap → 门面单值 `Headers` 的压平规则（**已落地**：取最后一个值；`Set-Cookie` 走
+  `RawResponse.set_cookies` 多值出口，见 `19-cookies.md`）。
 - 官方 `AsyncHttpTransport` 保留多久（建议长期保留为回退，逃生门不花钱）。
 - 包名定名（`httpproto` / `httpconn` 为占位）、分支名（建议 `feat/http-protocol`）。
 

@@ -251,3 +251,27 @@ test "serialize_params honours explicit number repr" {
   }
   assert_eq(@url.serialize_params(params), "price=1.50&count=1000")
 }
+
+///|
+/// `url_host` 供 cookie 的域匹配使用：小写、去 userinfo、**去端口**
+/// （RFC 6265 的 domain 匹配与端口无关），IPv6 字面量保留方括号。
+test "url_host extracts host without port" {
+  assert_eq(@url.url_host("https://Example.COM:8443/a/b"), Some("example.com"))
+  assert_eq(
+    @url.url_host("http://user:pw@Host.example/x"),
+    Some("host.example"),
+  )
+  assert_eq(@url.url_host("https://[::1]:8080/x"), Some("[::1]"))
+  // 默认端口与非默认端口一个样：host 只回答「哪台机器」
+  assert_eq(@url.url_host("http://a.com:80/"), Some("a.com"))
+  assert_eq(@url.url_host("/relative/only"), None)
+}
+
+///|
+/// `url_path` 供 cookie 的路径匹配使用：以 `/` 开头，缺路径时按 `/` 论。
+test "url_path extracts request path" {
+  assert_eq(@url.url_path("https://example.com/a/b?x=1#frag"), Some("/a/b"))
+  assert_eq(@url.url_path("https://example.com"), Some("/"))
+  assert_eq(@url.url_path("https://example.com?x=1"), Some("/"))
+  assert_eq(@url.url_path("not a url"), None)
+}

@@ -25,6 +25,7 @@ fn byte_response(
     status: 200,
     status_text: "OK",
     headers,
+    set_cookies: [],
     body: @transport.ResponseBody::from_bytes(body),
   }
 }

@@ -200,7 +200,20 @@ let stop = @moonhttp.AbortController::new()
 
 ### 自动重定向
 
-`max_redirects` 默认 5 跳，设成 `0` 就是不跟随（3xx 原样交给状态码校验），三个入口都跟。跨 host 跟随时会丢掉 `Authorization` / `Cookie` 这类凭据；跟到超限抛 `TooManyRedirects`，错误里带着最后那个 3xx 响应。
+`max_redirects` 默认 5 跳，设成 `0` 就是不跟随（3xx 原样交给状态码校验），三个入口都跟。跨 host 跟随时会丢掉 `Authorization` / `Cookie` 这类**显式**凭据；挂了 cookie 罐的客户端不受这条影响——罐里的 cookie 每跳按新地址重新做域匹配（见下一节）。跟到超限抛 `TooManyRedirects`，错误里带着最后那个 3xx 响应。
+
+### Cookie 自动维护
+
+创建实例时挂一个 `CookieJar`，之后的 cookie 维护就全自动：请求按 URL 自动携带、响应的 `Set-Cookie` 自动解析入库、过期自动失效；重定向的每一跳都按当跳地址重新匹配。不传罐（缺省）则完全不碰 cookie，行为与从前一致：
+
+```moonbit nocheck
+let jar = @moonhttp.CookieJar::new()
+let client = @moonhttp.Client::new(cookie_jar=jar)
+ignore(client.request(@moonhttp.Config::new("https://example.com/login")))    // 响应种下会话 cookie
+ignore(client.request(@moonhttp.Config::new("https://example.com/profile")))  // 自动带上
+```
+
+规则对齐 RFC 6265 的精简版：没带 `Domain` 属性的 cookie 只回当初那台主机；带 `Domain` 的对子域可见（`Secure` 只随 https 发送，端口不参与匹配）；`Max-Age` 优先于 `Expires`，`Max-Age=0` 或已过期的 `Expires` 按删除处理，无过期属性就是会话 cookie（随 jar 存活）。你自己在请求里显式设置的 `Cookie` 头永远优先。`instance.create(config)` 派生的实例与父实例共享同一个罐，换默认值不丢会话状态。已知边界：没有公共后缀列表（`Domain=com` 这类不会被拒绝），`Expires` 只认标准格式（`Sun, 06 Nov 1994 08:49:37 GMT`）。 jar 也可以单独用：`store(url, set_cookie)` 喂、`cookie_header(url)` 取，两个 `Client` 挂同一个罐即共享登录态。
 
 ### 代理
 
@@ -302,7 +315,6 @@ println(mock.last_request().unwrap().url) // 已经拼好 base_url 与 query 的
 
 - **请求体流式上传**：请求体目前是一次性字节，表单含文件时整块驻留内存；计划下一期做可写流，让调用方一段段喂数据。
 - **连接复用**：每次请求新建连接，计划做连接池以省掉重复握手。
-- **cookie**：不管理 cookie（没有 `withCredentials` / `xsrf*`，响应里的 `Set-Cookie` 也读不到）；计划做跨请求复用。
 - **SSE 自动重连**：`id` / `retry` 已经作为持久状态带出来了，按 `retry` 间隔重订阅留给上层；计划内置。
 - **响应体自动解析**：读法由你在 `text()` / `bytes()` / `json()` 里显式选；静态类型下「猜内容类型」要先重新设计响应类型的形态，留待后续版本。
 - **`transformRequest` / `transformResponse`**：不做成独立配置项——用两段拦截器代替（请求侧改 body、响应侧改正文，见上面「拦截器」一节）。

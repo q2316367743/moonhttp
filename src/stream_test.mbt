@@ -117,6 +117,7 @@ async test "is_event_stream is false without a content type" {
     status: 200,
     status_text: "OK",
     headers: @transport.Headers::new(),
+    set_cookies: [],
     body: @transport.ResponseBody::from_bytes(@utf8.encode("plain")),
   })
   let response = client.stream(@moonhttp.Config::new("https://example.com/raw"))

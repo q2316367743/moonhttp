@@ -13,6 +13,7 @@ fn raw_response(
     status,
     status_text,
     headers: @transport.Headers::new().set("Content-Type", "application/json"),
+    set_cookies: [],
     body: @transport.ResponseBody::from_bytes(@utf8.encode(body)),
   }
 }
@@ -27,6 +28,7 @@ fn sse_response(body : String) -> @transport.RawResponse {
     status: 200,
     status_text: "OK",
     headers: @transport.Headers::new().set("Content-Type", "text/event-stream"),
+    set_cookies: [],
     body: @transport.ResponseBody::from_bytes(@utf8.encode(body)),
   }
 }

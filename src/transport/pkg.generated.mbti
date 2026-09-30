@@ -69,6 +69,7 @@ pub(all) struct RawResponse {
   status_text : String
   headers : @headers.Headers
   body : ResponseBody
+  set_cookies : Array[String]
 } derive(@debug.Debug)
 pub fn RawResponse::to_repr(Self) -> @debug.Repr
 

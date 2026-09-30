@@ -33,7 +33,7 @@
 3. **拼完整地址**：`build_full_path(base_url, url, allow_absolute_urls)`，再 `build_url(url, params)` 追加 query（配置里有 `params_serializer` 时用自定义序列化器替换「params → query 文本」那一步，见下）。
 4. **拍平头**：`flatten_headers(common_headers, method_headers, headers, method)`，优先级 `common` < 按方法 < 请求级平铺。
 5. **取请求体**：`Config::serialize_body()` 给出字节与**建议**的 `Content-Type`（序列化在 `config` 包内完成，见 `07-request-body.md`），有 `auth` 则补 `Authorization`。补默认头一律用 `Headers::set_if_absent`，用户显式设置的同名头永远优先。有 `proxy` 时，`Proxy-Authorization` 在这一步从目标头里取走、改落在 CONNECT 请求上（代理凭据不该发给源站，见 `09-proxy.md`）。
-6. **发送**：交给 `Transport::send`（契约见 `05-transport.md`）。配了代理时先与代理建立 CONNECT 隧道，再在隧道里发出请求（见 `09-proxy.md`）。失败映射见 `04-errors.md`。收到 3xx 且带 `Location` 时**自动跟随重定向**（最多 `max_redirects` 跳，默认 5），一直跟到最后一跳——这段循环在 `Client::send_following_redirects`，规则见 `08-redirects.md`。
+6. **发送**：交给 `Transport::send`（契约见 `05-transport.md`）。配了代理时先与代理建立 CONNECT 隧道，再在隧道里发出请求（见 `09-proxy.md`）。失败映射见 `04-errors.md`。收到 3xx 且带 `Location` 时**自动跟随重定向**（最多 `max_redirects` 跳，默认 5），一直跟到最后一跳——这段循环在 `Client::send_following_redirects`，规则见 `08-redirects.md`。挂了 cookie 罐时，这段循环还负责**每跳**的 cookie 注入（发出前按当跳 URL 补 `Cookie`，显式头优先）与捕获（返回后把 `RawResponse.set_cookies` 入库），见 `19-cookies.md`。
 7. **读出响应体**：把响应体读到 EOF，字节原样放进 `Response`（解码不在这里，见下）。
 8. **校验状态码**：`validate_status` 不通过时给出带响应的 `HttpError`。这一步与前面几步的失败**分流**：第 1~7 步的失败（被拦下、连不上、超时、取消、重定向超限、读体失败）走请求侧错误处理器，第 8 步的失败走响应侧错误处理器（见下）。
 

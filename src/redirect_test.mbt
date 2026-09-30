@@ -12,6 +12,7 @@ fn redirect_response(
     status,
     status_text: "Found",
     headers: @transport.Headers::new().set("Location", location),
+    set_cookies: [],
     body: @transport.ResponseBody::from_bytes(@utf8.encode(body)),
   }
 }

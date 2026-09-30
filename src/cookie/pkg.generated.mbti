@@ -1,0 +1,18 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316367743/moonhttp/cookie"
+
+// Values
+
+// Errors
+
+// Types and methods
+pub struct CookieJar {
+  // private fields
+}
+pub fn CookieJar::cookie_header(Self, String) -> String?
+pub fn CookieJar::new() -> Self
+pub fn CookieJar::store(Self, String, String) -> Unit
+
+// Type aliases
+
+// Traits

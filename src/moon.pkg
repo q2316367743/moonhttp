@@ -13,6 +13,7 @@ import {
   "moonbitlang/core/json",
   "q2316367743/moonhttp/abort",
   "q2316367743/moonhttp/config",
+  "q2316367743/moonhttp/cookie",
   "q2316367743/moonhttp/headers",
   "q2316367743/moonhttp/sse",
   "q2316367743/moonhttp/transport",

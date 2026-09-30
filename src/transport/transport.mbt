@@ -136,6 +136,11 @@ pub(all) struct RawResponse {
   status_text : String
   headers : @headers.Headers
   body : ResponseBody
+  /// `Set-Cookie` 的**全部值**，按响应里的出现顺序。它是多值头
+  /// （RFC 9110 §5.2 明确不许合并），不能走单值的 `headers`——两个内置
+  /// 传输层都在这里补全量，`headers` 里那份「只有一个值」的残留不要依赖。
+  /// cookie jar（`@moonhttp.CookieJar`）自动维护用的就是这份列表。
+  set_cookies : Array[String]
 } derive(Debug)
 
 ///|

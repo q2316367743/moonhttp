@@ -6,6 +6,7 @@ import {
   "moonbitlang/core/json",
   "q2316367743/moonhttp/abort",
   "q2316367743/moonhttp/config",
+  "q2316367743/moonhttp/cookie",
   "q2316367743/moonhttp/headers",
   "q2316367743/moonhttp/sse",
   "q2316367743/moonhttp/transport",
@@ -40,7 +41,7 @@ pub fn Client::defaults(Self) -> @config.Config
 pub async fn Client::delete(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
 pub async fn Client::get(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
 pub async fn Client::head(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
-pub fn Client::new(config? : @config.Config, transport? : &@transport.Transport, interceptors? : Interceptors) -> Self
+pub fn Client::new(config? : @config.Config, transport? : &@transport.Transport, interceptors? : Interceptors, cookie_jar? : @cookie.CookieJar) -> Self
 pub async fn Client::options(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
 pub async fn Client::patch(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
 pub async fn Client::post(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
@@ -136,6 +137,8 @@ pub using @abort {type AbortSignal}
 pub using @config {type Auth}
 
 pub using @config {type Config}
+
+pub using @cookie {type CookieJar}
 
 pub using @config {type FormData}
 

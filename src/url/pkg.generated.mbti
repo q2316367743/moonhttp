@@ -18,6 +18,10 @@ pub fn serialize_params(Json) -> String
 
 pub fn url_authority(String) -> String?
 
+pub fn url_host(String) -> String?
+
+pub fn url_path(String) -> String?
+
 pub fn url_scheme(String) -> String?
 
 // Errors

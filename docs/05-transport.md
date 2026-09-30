@@ -9,6 +9,7 @@
 | `src/transport/stream_lifecycle.mbt` | `ResponseBody` 的构造与释放（`from_bytes` / `open` / `rewind` / `close`），含取消登记 |
 | `src/transport/stream_all.mbt` | `ResponseBody` 的「读全量」三件套（`drain_into` / `read_all_partial` / `read_all`）与下载进度的逐块报告 |
 | `src/transport/async_http.mbt` | 真实实现（唯一对接 `moonbitlang/async` 的文件），含上传进度的分块写、把底层已解掉的 `Content-Encoding` 摘掉 |
+| `src/transport/cookies.mbt` | 旧栈的 Set-Cookie 出口：把底层 `@http.Response::cookies` 序列化还原成头值喂给 `RawResponse::set_cookies`（保真度说明与自研栈的原文收集对照见 `19-cookies.md`） |
 | `src/transport/decode.mbt` | `Content-Encoding` 的解码工具：`decode_gzip`（整份字节的内存解压）与 `declares_gzip`（认定 gzip 的唯一判据），见 `15-response-compression.md` |
 | `src/transport/mock.mbt` | 测试用实现：记录请求、按队列返回响应、可注入失败 |
 | `src/transport/transport_test.mbt` | 传输层自身的用例（含不依赖外网的真实实现用例） |
@@ -43,6 +44,7 @@ pub(open) trait Transport {
 | `status_text` | 原因短语 |
 | `headers` | 响应头（本项目自己的 `Headers`，大小写不敏感） |
 | `body` | **响应体流**（`ResponseBody`），不是字节 |
+| `set_cookies` | `Set-Cookie` 的**全部值**（保序）。多值头（RFC 9110 §5.2 不许合并）不能走单值的 `headers`；cookie jar 自动维护吃的就是这份列表，见 `19-cookies.md` |
 
 `TransportError` 有五类：`Timeout` / `Network(String)` / `Unsupported(String)` / `Malformed(String)` / `Cancelled(String?)`。
 前四类覆盖「网络世界里可能出什么事」加上「响应本身读不出来」——`Malformed` 表示响应体与它声称的 `Content-Encoding`
@@ -194,7 +196,7 @@ pub impl Transport for MyTransport with fn send(self, request) {
 | 代理 | 已支持（`PreparedRequest::proxy`） | 底层 `Client::Client(uri, proxy~)` 的 CONNECT 隧道；凭据落在代理客户端自己的持久头上。契约与注意事项见 `09-proxy.md` |
 | TLS 校验开关 | 固定为默认（校验） | `Client::Client(trust~ / verify~)` |
 | 自定义请求方法 | **已支持**（`Method::Other(String)`，自研传输 `HttpConnTransport` 原样发送；旧栈在建连前报 `ERR_NOT_SUPPORTED`） | 自研路径见 `18-httpconn-transport.md`；旧栈受底层封闭枚举所限（证据与上游 issue 见 `16-custom-http-methods.md`） |
-| 响应 cookie | 读不到 `Set-Cookie` | 底层把响应 cookie 单独放在 `Response::cookies` 里，没有并进 headers。要暴露需要先决定多值头的表示（本项目的 `Headers` 一个名字只能有一个值） |
+| 响应 cookie | **已支持**（`RawResponse.set_cookies` 多值出口 + `Client::new(cookie_jar~)` 的自动维护）：自研栈原文收集、旧栈从底层 `Response::cookies` 序列化还原 | 契约与实现见 `19-cookies.md` |
 | SSE 事件解析 | 已实现，但**不在本模块** | 传输层只交出字节流；事件边界与 `event:` / `data:` 字段语义在 `sse` 包（`SseParser`），接到 HTTP 上的入口是根包的 `Client::sse` / `SseStream`，见 `06-sse.md`。分层的意义是「字节怎么来」与「字节怎么解」各自独立演进：换成别的字节来源（WebSocket、文件）也能复用同一个解析器 |
 
 改动这些能力时请只动 `src/transport/` 与 `src/httpconn/`——它们是本模块唯二对接 `moonbitlang/async` 的包（`src/transport/*.mbt` 都可以改，不限于 `async_http.mbt`）。`PreparedRequest` 的字段语义不要动（加字段是加能力，比如 `proxy`；改已有字段的含义不是）；`PreparedRequest` / `RawResponse` 的结构变化（例如本次 `body` 由字节改成流、`proxy` 字段的加入）必须同步本节与 `03-request-pipeline.md`，因为它们出现在公开签名里。

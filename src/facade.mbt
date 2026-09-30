@@ -72,6 +72,12 @@ pub using @sse {type SseEvent, type SseParser}
 /// 传输层抽象也一并再导出：自定义传输实现是公开的扩展点。
 pub using @transport {trait Transport}
 
+///|
+/// cookie 罐再导出：`Client::new(cookie_jar~)` 的入参类型。
+/// 传入后请求按 URL 自动携带、响应自动存取、过期自动失效，
+/// 契约见 `docs/19-cookies.md`。
+pub using @cookie {type CookieJar}
+
 // ---------------------------------------------------------------------------
 // 2. Response —— 读完的响应：字节在手，读法由调用方选
 // ---------------------------------------------------------------------------

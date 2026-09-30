@@ -16,6 +16,7 @@ fn bytes_response(size : Int) -> @transport.RawResponse {
     headers: @transport.Headers::new().set(
       "Content-Type", "application/octet-stream",
     ),
+    set_cookies: [],
     body: @transport.ResponseBody::from_bytes(Bytes::make(size, b'x')),
   }
 }

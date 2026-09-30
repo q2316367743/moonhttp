@@ -20,11 +20,14 @@ moonhttp/
     ├── *_wbtest.mbt             根包白盒测试（覆盖只能从包内部触达的分支）
     ├── abort/                   取消原语：AbortController / AbortSignal / AbortError（纯状态，不碰 async）
     ├── config/                  配置的形状、合并契约、默认值、构建器、请求体序列化、重定向的下一跳规则与代理配置
+    ├── cookie/                  cookie 罐：Set-Cookie 解析、归属与匹配、自动过期（纯逻辑，见 19-cookies.md）
     ├── headers/                 大小写不敏感的 Headers
     ├── sse/                     SSE 事件解析（纯逻辑：吃字节、吐事件）
-    ├── url/                     绝对地址判定、拼接、params 序列化、Location 的相对解析
+    ├── url/                     绝对地址判定、拼接、params 序列化、Location 的相对解析、host / path 提取
     ├── util/                    纯函数层：拼请求、编解码、Content-Type 与状态码判定
     ├── transport/               传输层：trait + 真实实现 + Mock + 响应体流
+    ├── httpconn/                自研 HTTP/1.x 实现层（拨号 / 隧道 / 写读，见 18-httpconn-transport.md）
+    ├── httpproto/               自研 HTTP/1.x 协议层（纯逻辑：请求行 / 状态行 / 头块 / 分帧，见 18-httpconn-transport.md）
     └── main/                    可运行示例（本地手动测试，不随包发布）
 ```
 
@@ -69,7 +72,8 @@ headers ─┬─→ config ──┤
 url ─────┘            │
 url ──────────────────┼─→ util ──┐
 transport ────────────┘          ├─→ （根包：门面 + 编排）──→ Client / request / stream / sse
-sse ─────────────────────────────┘
+sse ─────────────────────────────┤
+cookie ──────────────────────────┘
 ```
 
 - `config` 依赖 `headers`（配置里有头字段）与 `url`（urlencoded 请求体复用 query 的序列化器），
@@ -77,6 +81,9 @@ sse ─────────────────────────�
   `Config.data` 是私有字段，跨包连记录字面量都写不出来，所以合并必须与 `Config` 同包（理由见 `02-config-merge.md`）；
 - `url` 不依赖任何本项目的包（只吃字符串和 `Json`），因此它同时被 `config`（编码请求体）与 `util`（拼地址与 query）用到，不成环；
 - `sse` 也不依赖本项目的包（只吃字节），所以它是这层里唯一能被任意字节来源复用的包；
+- `cookie` 依赖 `url`（`url_host` / `url_path` / `url_scheme` 做请求 URL 的零件提取）与
+  `core/env`（`now()` 当过期时钟），不碰 async——它的状态挂在根包的 `Client` 上
+  （`Client::new(cookie_jar~)`），见 `19-cookies.md`；
 - `abort` 也不依赖本项目的包（纯状态机：`AbortController` / `AbortSignal` / `AbortError`）：`transport` 用它做取消作用域的观察对象，根包用它做三个入口 `signal?` 参数的类型——**`config` 不认识它**：信号不是配置字段，放进实例默认值会让这个实例之后的所有请求一起失效（见 `12-cancellation.md`）；
 - `transport` 依赖 `config` / `headers` / `abort`（`PreparedRequest` 的字段类型），**并且是唯一依赖 `moonbitlang/async` 的包**；
 - `util` 依赖 `abort` / `config` / `headers` / `url` / `transport`（拼请求要用到它们），但它不认识任何门面类型——这正是它能待在根包外面的唯一理由；

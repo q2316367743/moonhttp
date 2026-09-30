@@ -35,6 +35,11 @@ pub struct Client {
   priv transport : &@transport.Transport
   /// 拦截器链，对应 axios 实例上的 `interceptors`（见 `interceptors.mbt`）
   priv interceptors : Interceptors
+  /// cookie 存储罐；`None` 表示不做任何 cookie 自动维护（行为与从前一致）。
+  /// 只能在 `new` 时传入（与信号不进 Config 同理：它是有状态的运行时对象，
+  /// 不是逐请求合并的配置）；`create` 派生的实例与父实例共享**同一个** jar
+  /// （与拦截器链的继承口径一致，见 `docs/19-cookies.md`）。
+  priv cookie_jar : @cookie.CookieJar?
 }
 
 ///|
@@ -45,11 +50,14 @@ pub struct Client {
 ///   `@config.defaults()` 固定提供）；
 /// - `transport`：传输层实现，缺省是真正走网络的 `AsyncHttpTransport`；
 ///   测试或特殊场景可以注入自己的实现（例如 `MockTransport`）；
-/// - `interceptors`：请求 / 响应拦截器，缺省是一条都不挂（`Interceptors::new()`）。
+/// - `interceptors`：请求 / 响应拦截器，缺省是一条都不挂（`Interceptors::new()`）；
+/// - `cookie_jar`：cookie 存储罐，缺省不挂（不做 cookie 维护）。传入后
+///   请求按 URL 自动携带、响应自动存取、过期自动失效（`docs/19-cookies.md`）。
 pub fn Client::new(
   config? : Config,
   transport? : &@transport.Transport,
   interceptors? : Interceptors,
+  cookie_jar? : @cookie.CookieJar,
 ) -> Client {
   let defaults = match config {
     Some(config) => @config.merge_config(@config.defaults(), config)
@@ -63,7 +71,7 @@ pub fn Client::new(
     Some(interceptors) => interceptors
     None => Interceptors::new()
   }
-  { defaults, transport, interceptors, }
+  { defaults, transport, interceptors, cookie_jar, }
 }
 
 ///|
@@ -73,15 +81,18 @@ pub fn Client::new(
 /// `base_url`、公共头等设置。注意 axios 的 `instance.create` 合并的是
 /// 该实例自己的 defaults、与全局 defaults 无关，这里的行为一致。
 ///
-/// **拦截器也继承**：派生实例与父实例用同一份链。与 axios 不同（`axios.create()`
-/// 造出来的是没有拦截器的新实例），这里选继承——`create` 在本项目是「同一个实例
-/// 换套默认值」，而换一套默认值就该照样带上认证头、日志这些横切逻辑。
-/// 确实要不带拦截器的实例，用 `Client::new(config~)` 新造一个。
+/// **拦截器与 cookie 罐也继承**：派生实例与父实例用同一份链、同一个 jar。
+/// 与 axios 不同（`axios.create()` 造出来的是没有拦截器的新实例），这里选
+/// 继承——`create` 在本项目是「同一个实例换套默认值」，而换一套默认值就该
+/// 照样带上认证头、日志这些横切逻辑，也不该丢掉登录攒下来的会话状态。
+/// 确实要不带拦截器（或换一个空 cookie 罐）的实例，用 `Client::new(config~)`
+/// 新造一个。
 pub fn Client::create(self : Client, config : Config) -> Client {
   {
     defaults: @config.merge_config(self.defaults, config),
     transport: self.transport,
     interceptors: self.interceptors,
+    cookie_jar: self.cookie_jar,
   }
 }
 
@@ -551,6 +562,49 @@ async fn decode_response_body(
 }
 
 ///|
+/// 挂了 cookie 罐时按请求 URL 算出该带的 `Cookie` 头并**补**到请求上。
+///
+/// 走 `set_if_absent`：用户（或请求拦截器）显式设置的 `Cookie` 头永远优先，
+/// 与 Content-Type / Authorization / Accept-Encoding 的补默认头口径一致。
+/// 没挂罐、或 jar 认为这跳没有该带的 cookie 时原样返回。
+fn Client::attach_cookie(
+  self : Client,
+  prepared : @transport.PreparedRequest,
+) -> @transport.PreparedRequest {
+  match self.cookie_jar {
+    None => prepared
+    Some(jar) =>
+      match jar.cookie_header(prepared.url) {
+        None => prepared
+        Some(value) =>
+          {
+            ..prepared,
+            headers: prepared.headers.set_if_absent("Cookie", value),
+          }
+      }
+  }
+}
+
+///|
+/// 把一跳响应里的 Set-Cookie 全量喂给 cookie 罐（没挂罐时什么都不做）。
+///
+/// 放在**每跳 `send` 返回之后**：响应头到手即可入库，不必等响应体读完——
+/// 登录流的中途 3xx 一样会种 cookie，读体失败也不该丢掉已到手的会话状态。
+fn Client::capture_cookies(
+  self : Client,
+  url : String,
+  set_cookies : Array[String],
+) -> Unit {
+  match self.cookie_jar {
+    None => ()
+    Some(jar) =>
+      for set_cookie in set_cookies {
+        jar.store(url, set_cookie)
+      }
+  }
+}
+
+///|
 /// 发送一次请求，需要时自动跟随重定向；返回**最后一跳**的原始响应与产出它的配置。
 ///
 /// 拦截器**不在**这一层：本函数每跟随一跳就调一次 `transport.send`，把拦截器
@@ -558,13 +612,17 @@ async fn decode_response_body(
 /// 两段拦截器因此都落在本函数之外，整条重定向链只跑一次，见 `docs/11-interceptors.md`。
 ///
 /// 分工：跟不跟、下一跳长什么样是纯逻辑（`@config.Config::next_redirect`，
-/// 规则对齐 follow-redirects）；这里只做那层做不到的三件事：
+/// 规则对齐 follow-redirects）；这里只做那层做不到的四件事：
 /// 1. **计数与上限**：最多跟 `max_redirects` 跳，第 `max_redirects + 1` 个
 ///    重定向就抛 `TooManyRedirects`；
 /// 2. **释放连接**：跟随之前先关掉 3xx 的响应体——那段正文不要了，留着不读
 ///    会漏一条没人管的连接（等价 follow-redirects 的 `response.destroy()`）；
 /// 3. **每跳的错误现场**：传输失败时用**这一跳**的配置翻译错误，
-///    与单跳时的规则一致。
+///    与单跳时的规则一致；
+/// 4. **每跳的 cookie**：挂了 cookie 罐时，发出前按这一跳的 URL 注入
+///    `Cookie`（显式头优先），返回后把这一跳的 `Set-Cookie` 入库——跨域
+///    重定向时 jar 按域匹配自然不再携带旧域的 cookie，与 `next_redirect`
+///    剥显式 Cookie 头的规则互补（见 `docs/19-cookies.md`）。
 ///
 /// `max_redirects <= 0` 时完全不跟随：3xx 原样返回，由状态码校验判定成败
 /// ——与 axios 的 `maxRedirects: 0` 一致（那种配置下它连 follow-redirects 都不进）。
@@ -588,11 +646,14 @@ async fn Client::send_following_redirects(
 ) -> (@transport.RawResponse, Config) raise HttpError {
   let limit = merged.max_redirects.unwrap_or(5)
   let mut config = merged
-  let mut prepared = prepare_request(config, signal, buffered)
+  let mut prepared = self.attach_cookie(
+    prepare_request(config, signal, buffered),
+  )
   // 发送：这一步失败说明响应头还没到手，错误里没有响应可挂。
   let mut raw = self.transport.send(prepared) catch {
     error => raise transport_error(error, config, None)
   }
+  self.capture_cookies(prepared.url, raw.set_cookies)
   // 不跟随：3xx 原样交出去（默认的 2xx 校验会把它判成失败）。
   if limit <= 0 {
     return (raw, config)
@@ -634,10 +695,11 @@ async fn Client::send_following_redirects(
         config = next
         // 信号跟着每一跳走：取消落在两跳之间时，由传输层进入作用域时那次
         // `aborted()` 检查挡住（见 `docs/12-cancellation.md` 的「两条兜底」）。
-        prepared = prepare_request(config, signal, buffered)
+        prepared = self.attach_cookie(prepare_request(config, signal, buffered))
         raw = self.transport.send(prepared) catch {
           error => raise transport_error(error, config, None)
         }
+        self.capture_cookies(prepared.url, raw.set_cookies)
       }
     }
   }

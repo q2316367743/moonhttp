@@ -33,6 +33,7 @@ fn gzip_response(
     status,
     status_text: "OK",
     headers,
+    set_cookies: [],
     body: @transport.ResponseBody::from_bytes(body),
   }
 }

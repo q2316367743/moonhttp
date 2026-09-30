@@ -1,0 +1,18 @@
+// cookie 包是**纯逻辑**包：解析 Set-Cookie、按 RFC 6265 的精简规则存储与
+// 匹配、按毫秒时间戳自动过期。不碰网络、不碰 async，用同步测试覆盖。
+//
+// 依赖方向：cookie → core + url（url_host / url_path / url_scheme 只做请求
+// URL 的零件提取），不依赖根包与传输层，仍是 DAG。过期判断的时钟用
+// core/env 的 now()（Unix 毫秒）而不是 @async.now()：后者会把 async 运行时
+// 拖进来，破坏「同步测试可覆盖」这条与 sse / headers / url 一致的惯例。
+// core/string 提供 `parse_int`（Expires 日期与 Max-Age 的数字解析口径）。
+import {
+  "moonbitlang/core/env",
+  "moonbitlang/core/string",
+  "q2316367743/moonhttp/url",
+}
+
+// 黑盒测试要自己 import 用到的包：它不继承本包上面的 import。
+import {
+  "q2316367743/moonhttp/cookie",
+} for "test"

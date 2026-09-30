@@ -5,6 +5,7 @@ fn ok_response(body : Bytes) -> @transport.RawResponse {
     status: 200,
     status_text: "OK",
     headers: @transport.Headers::new().set("Content-Type", "text/plain"),
+    set_cookies: [],
     body: @transport.ResponseBody::from_bytes(body),
   }
 }

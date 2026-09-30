@@ -114,6 +114,7 @@ async test "sse accepts an event stream content type with parameters" {
     headers: @transport.Headers::new().set(
       "Content-Type", "Text/Event-Stream; charset=utf-8",
     ),
+    set_cookies: [],
     body: @transport.ResponseBody::from_bytes(@utf8.encode("data: ok\n\n")),
   })
   let events = client.sse(@moonhttp.Config::new("https://example.com/events"))

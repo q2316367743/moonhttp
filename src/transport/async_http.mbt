@@ -294,6 +294,9 @@ pub impl Transport for AsyncHttpTransport with fn send(self, request) {
       request,
       from_http_headers(response.headers),
     ),
+    // 底层把 Set-Cookie 单独收进 `Response::cookies`（单值的 headers 里没有
+    // 它），序列化还原成头值喂给多值出口（见 cookies.mbt）。
+    set_cookies: serialize_cookies(response.cookies),
     // 响应体还没读：连接的所有权转移给这个流，读到 EOF 或 close() 时关闭。
     // 不在这里读全，是为了让 chunked / SSE 这类协议能边到边读。
     // `Content-Length` 一并交出去，它是下载进度的 total（可能没有，见 content_length）；
