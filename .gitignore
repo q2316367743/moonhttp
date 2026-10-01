@@ -6,3 +6,5 @@ target
 .moonagent/
 uncovered.log
 .zcode
+# 共享靶子 server 的运行日志（test/run.sh 重定向产物）
+test/server.log

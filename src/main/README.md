@@ -2,7 +2,7 @@
 
 不是库的一部分，而是一组可运行的示例程序，本地手动测试用：**每个方向一个包、单独 `moon run`**。
 
-不用 `test` 块，而是真实发请求、把结果 `println` 出来（打本机靶子时由示例自己起 server）；不进 `moon test`，也不随包发布。
+不用 `test` 块，而是真实发请求、把结果 `println` 出来；不进 `moon test`，也不随包发布。
 
 ## 快速上手（`src/main`）
 
@@ -12,10 +12,12 @@ moon run src/main   # 需要联网
 
 依次演示：创建实例、纯文本响应、JSON 响应、查询参数与实例派生、错误处理、拦截器。逐段注释见 [`main.mbt`](https://github.com/q2316367743/moonhttp/blob/master/src/main/main.mbt)。
 
-## 七个方向的示例
+## 九个方向的示例
 
 | 包 | 跑法 | 覆盖什么 | 前置条件 |
 |---|---|---|---|
+| `transport` | `bash test/run.sh`（或先 `python3 test/server.py` 再 `moon run src/main/transport`） | 自研传输层（docs/18）的新语义：gzip 三态（缓冲 / 流式 / 关闭 / 用户自声明）、大响应体（3 MiB 定长 + 2 MiB chunked）、默认 User-Agent 与覆盖、拒连与缺 url 的分类、超时、`PROPFIND` 自定义方法原样落线、HTTP/1.0 兼容 | 本机靶子（`test/server.py`，离线） |
+| `cookies` | 同上（`moon run src/main/cookies`） | Cookie 自动维护（docs/19）：种下 → 自动携带、显式 Cookie 头优先、同名刷新、`Path` 限定、`Max-Age=0` 删除、派生实例共享罐、跨 host 不带 | 本机靶子（`test/server.py`，离线） |
 | `basics` | `moon run src/main/basics` | 状态行与响应头、查询参数（含自定义 `paramsSerializer`）、二进制响应、`response_encoding` 的读法、204 空正文、4xx / 5xx 的错误分类、`validate_status`、超时 | 联网（真实站点打华为云镜像） |
 | `methods` | `moon run src/main/methods` | 八种请求方式；请求体四形态（raw / json / urlencoded / multipart）；响应内容形态（JSON / 文本 / 二进制 / 201 / 204 / 分块 / 非法 JSON） | 无（全部打本机 echo server） |
 | `proxy` | `moon run src/main/proxy` | 代理 URL 拆成 host / port、直连对照、走代理打 GitHub、出口 IP 对比、代理端口没人监听、缺 host | 本机 HTTP 代理在 `http://127.0.0.1:7890`（改文件头的 `proxy_url` 可换）+ 联网 |
@@ -26,6 +28,6 @@ moon run src/main   # 需要联网
 
 ## 三个约定
 
-- **靶子优先放本机**：除「代理」「真实下载」「SSE」三段外，用例都在示例内部起一个本机 server 当靶子——离线可跑、结果确定；而且**服务端视角的回显**（echo server 把收到的头回吐出来）才是「头真的发出去了」这类结论的证据。已知问题与取舍记录见 [docs/13](../docs/13-runnable-examples.md)。
+- **靶子优先放本机**：`transport` 与 `cookies` 打 [`test/`](../test/README.md) 的 Python 共享靶子（一条 `bash test/run.sh` 起靶子跑完两个包）；其余示例在示例内部自起本机 server——离线可跑、结果确定。两种来路的道理相同：**服务端视角的回显**（server 把收到的头回吐出来）才是「头真的发出去了」这类结论的证据。已知问题与取舍记录见 [docs/13](../docs/13-runnable-examples.md)。
 - **需要外网的用例一律包在 `try` / `catch` 里**：断网、代理没起、站点变动都只打印一行错误分类，不会 panic，也不会带崩后面的段落。
 - **`pkg.generated.mbti` 都是空的**：示例程序不对外暴露任何 API；文件由 `moon info` 生成，要提交。

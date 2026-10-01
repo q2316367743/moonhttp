@@ -1,0 +1,21 @@
+// 示例：自研传输层（httpconn，docs/18）带来的新语义，打 test/server.py 起的
+// 共享靶子（先 `bash test/run.sh` 或 `python3 test/server.py`）：
+//
+// - gzip 三态（docs/15「谁解压谁声明」）：缓冲路径门面声明 `gzip, identity`、
+//   流式路径 httpconn 自声明 `gzip` 并透明解压、`with_decompress(false)` 声明
+//   `identity` 谁都不压；
+// - 大响应体（定长 / chunked 两种分帧的多 MiB 读取）；
+// - 默认 User-Agent 与显式覆盖；
+// - 连接失败的两条分类（拒连 ERR_NETWORK、缺 url ERR_INVALID_URL）；
+// - 自定义方法（docs/16）：`Method::Other("PROPFIND")` 原样落线——靶子是
+//   Python server，官方 MoonBit server 的封闭枚举收不了这个方法；
+// - HTTP/1.0 兼容（无 Content-Length、靠连接关闭收尾）。
+//
+// 用 `moon run src/main/transport` 执行。本包不随模块发布（.moonignore 排除）。
+import {
+  "moonbitlang/async",
+  "moonbitlang/core/encoding/utf8",
+  "q2316367743/moonhttp",
+}
+
+pkgtype(kind: "executable")

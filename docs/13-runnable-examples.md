@@ -16,10 +16,14 @@
 
 ## 目录与靶子
 
-七个方向各一个包，另有原来的快速上手示例（`src/main/main.mbt`，不动它——根 `README.mbt.md` 引用着它）。
+九个方向各一个包，另有原来的快速上手示例（`src/main/main.mbt`，不动它——根 `README.mbt.md` 引用着它）。
+
+靶子有两种来路：早期六个包**自起**本机 server；`transport` 与 `cookies` 打 [`test/`](../test/README.md) 里的 **Python 共享靶子**（`test/server.py`，`bash test/run.sh` 一条命令起靶子跑完全部）——官方 `@http.Server` 的 `RequestMethod` 是封闭枚举收不了 `PROPFIND`，gzip / HTTP/1.0 / 原始分帧在 MoonBit 侧造起来也别扭，这些语义交给成熟运行时摆正，示例包本身只发请求。
 
 | 包 | 靶子 | 为什么是这个靶子 |
 |---|---|---|
+| `transport` | `test/` 的 Python 共享靶子 | 自研栈的新语义（gzip 三态 / 大响应体 / UA / WebDAV 方法 / HTTP/1.0）需要在线上精确控帧与自定义方法回显，Python 全都做得到（见 docs/18） |
+| `cookies` | `test/` 的 Python 共享靶子 | Set-Cookie 的种 / 刷 / 删 / Path 限定全在查询参数里可配，一条路由覆盖全部场景（见 docs/19） |
 | `basics` | 自起本机 server + 华为云镜像 | 状态码 / 头 / 超时这些行为必须确定，故用本机；真实站点只用来证明「真网络也走得通」 |
 | `methods` | 自起本机 echo server | 方法、请求体形态、响应内容形态都要「服务端视角的证据」，echo server 一次全给 |
 | `proxy` | 本机代理（`http://127.0.0.1:7890`）+ 真实站点 | 代理是环境相关的东西，只能打真实代理；出口 IP 对比是「流量真的从代理出去」的唯一硬证据 |
@@ -36,11 +40,12 @@
 
 ## 加一个新示例（清单）
 
-1. 建目录 `src/main/<方向>/`，写 `moon.pkg`：`pkgtype(kind: "executable")` + 只 import 用到的包（`moonbitlang/async` 是 async main 必需；起本机 server 才要 `async/http` + `async/socket`）。
-2. 写 `main.mbt`：`async fn main`，≤300 行（RL-04，`src/main` 不在根包例外里）；文件头用 `///|` 文档注释写清「演示什么、靶子是谁、怎么跑」。
-3. 跑 `moon info`（生成空的 `pkg.generated.mbti`，**要提交**，否则 CI 的接口门禁会挂）与 `moon fmt`。
-4. 更新 [`src/main/README.md`](../src/main/README.md) 的索引表与本文的靶子表。
-5. 别写 `test` 块；`.moonignore` 已经排除了整个 `src/main/`，不用再管发布。
+1. 建目录 `src/main/<方向>/`，写 `moon.pkg`：`pkgtype(kind: "executable")` + 只 import 用到的包（`moonbitlang/async` 是 async main 必需；自起本机 server 才要 `async/http` + `async/socket`，打共享靶子则一个都不用加）。
+2. 先想清楚靶子：线上语义复杂（自定义方法、控帧、gzip、cookie 场景）就往 `test/server.py` 加一条路由；只是确定性的 echo / 慢响应，自起本机 server 也行。
+3. 写 `main.mbt`：`async fn main`，≤300 行（RL-04，`src/main` 不在根包例外里）；文件头用 `///|` 文档注释写清「演示什么、靶子是谁、怎么跑」。
+4. 跑 `moon info`（生成空的 `pkg.generated.mbti`，**要提交**，否则 CI 的接口门禁会挂）与 `moon fmt`。
+5. 更新 [`src/main/README.md`](../src/main/README.md) 的索引表与本文的靶子表。
+6. 别写 `test` 块；`.moonignore` 已经排除了整个 `src/main/`，不用再管发布。
 
 ## 已知问题（示例跑出来的）
 
@@ -69,7 +74,7 @@
 
 现象：取消 HTTPS 下载时，有时拿到 `ERR_CANCELED`（正确），有时拿到 `ERR_NETWORK` + `OSError("@socket.Tcp::read(): Bad file descriptor")`。取消本身是生效的（进度停住、错误里带着半截响应）。
 
-机理：取消链路上「关闭连接」（`ResponseBody::open_wire` 时登记）排在「中断子任务」（`read_or_fail` 时登记）**前面**，所以在线的那次读可能先撞上「描述符已关闭」；`src/transport/stream.mbt` 的 `read_or_fail` 兜底把非超时错误一律归成 `Network`，于是分类丢了。（本条是旧栈时期的现象，新栈机理相同、是否复现待实测。）
+机理：取消链路上「关闭连接」（`ResponseBody::open_wire` 时登记）排在「中断子任务」（`read_or_fail` 时登记）**前面**，所以在线的那次读可能先撞上「描述符已关闭」；`src/transport/stream.mbt` 的 `read_or_fail` 兜底把非超时错误一律归成 `Network`，于是分类丢了。（本条是旧栈时期观察到的；2026-10-01 在自研栈上实测一次未复现——`progress` 示例的 HTTPS 5% 取消干净落在 `ERR_CANCELED`、半截 5.4 MiB 保住了，但「关连接与中断谁先到」的竞争机理还在，换网络换负载多跑几次才能下结论。）
 
 绕法：示例照实打印（`src/main/progress` 在分类不是 `ERR_CANCELED` 时会多打一行说明）。
 

@@ -1,0 +1,12 @@
+// 示例：Cookie 自动维护（docs/19）的真实链路，打 test/server.py 起的共享靶子
+// （先 `bash test/run.sh` 或 `python3 test/server.py`）。罐只在 `Client::new`
+// 时挂，挂上后请求自动携带、响应自动入库、过期自动失效——各段用例的证据
+// 全部取服务端回显（/cookies/whoami 与 /final 回吐收到的 Cookie 头）。
+//
+// 用 `moon run src/main/cookies` 执行。本包不随模块发布（.moonignore 排除）。
+import {
+  "moonbitlang/async",
+  "q2316367743/moonhttp",
+}
+
+pkgtype(kind: "executable")
