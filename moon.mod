@@ -35,5 +35,5 @@ source = "src"
 description = "axios 风格的 MoonBit HTTP 客户端：实例与配置合并、四种请求体形态、流式与 SSE、自动重定向"
 
 import {
-  "moonbitlang/async@0.22.2",
+  "moonbitlang/async@0.22.4",
 }
