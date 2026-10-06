@@ -14,7 +14,7 @@ moon add q2316367743/moonhttp
 
 ```toml
 import {
-  "q2316367743/moonhttp@0.4.0",
+  "q2316367743/moonhttp@0.5.0",
 }
 ```
 
