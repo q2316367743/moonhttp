@@ -36,7 +36,8 @@
 /// 约定：凡是出现在公开签名里的类型，都在定义它的包里再导出一次，
 /// 因此各层之间不会出现「要用这个 API 却不知道类型该从哪 import」的情况。
 /// 请求体的相关类型也一并再导出：`with_data_from_form` 的入参是 `FormData`，
-/// `serialize_body` 的返回值是 `SerializedBody`，用它们不该再 import 一个 `@config`。
+/// `serialize_body` 的返回值是 `SerializedBody`，流式请求体（docs/20）的载荷
+/// 是 `StreamBody`——自定义传输实现按 `RequestBody::Stream` 解构时要用到它。
 /// 进度回调的两个类型同理：`with_on_upload_progress` 的入参是 `ProgressCallback`。
 pub using @config {
   type Config,
@@ -49,6 +50,7 @@ pub using @config {
   type FormValue,
   type FormFile,
   type SerializedBody,
+  type StreamBody,
   type ProgressEvent,
   type ProgressCallback,
 }

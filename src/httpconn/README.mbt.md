@@ -24,7 +24,8 @@ import {
 
 ## 行为要点
 
-- **协议**：HTTP/1.0 / 1.1（h2 等上游 ALPN）；请求体一律 `Content-Length`（无体发 0），
+- **协议**：HTTP/1.0 / 1.1（h2 等上游 ALPN）；缓冲请求体一律 `Content-Length`（无体发 0），
+  流式请求体按 `content_length` 的有无定长或 chunked（`docs/20`，分帧头由栈接管），
   每请求一条连接、发 `Connection: close`（连接池是第 2 期）。
 - **自定义方法**：`PROPFIND` 等按原样落进请求行；token 校验在**建连前**
   （拼不进请求行的方法不值得一次握手）。

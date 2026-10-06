@@ -1,5 +1,8 @@
 // config 包只描述「请求配置」的数据形状、默认值、构建器、请求体序列化与配置合并，
-// 不依赖 async 运行时，因此可以用普通同步测试覆盖。
+// 不执行任何 IO，因此可以用普通同步测试覆盖。
+// 一个例外是流式请求体（docs/20）：`StreamBody` 的字段类型是 `@io.Reader`，
+// 为此 import 了 moonbitlang/async/io——但只是**类型引用**（把用户造好的读取流
+// 原样转交给传输层），本包不调用任何 async 函数，同步测试的口径不变。
 // debug 仅用于实现 Debug（测试断言需要），headers 用于头集合类型，
 // buffer / utf8 用于把请求体编码成字节，random 用于生成 multipart boundary；
 // url 只用来复用 query 的序列化器（urlencoded 请求体与 query 是同一套规则）——
@@ -7,6 +10,7 @@
 // 取消信号**不在本包**：它不是配置字段，而是三个入口的参数（见 12-cancellation.md），
 // 所以 config 连 abort 包都不认识。
 import {
+  "moonbitlang/async/io",
   "moonbitlang/core/buffer",
   "moonbitlang/core/debug",
   "moonbitlang/core/encoding/utf8",

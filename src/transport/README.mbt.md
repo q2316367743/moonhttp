@@ -13,7 +13,7 @@ import {
 | 类型 | 内容 |
 |---|---|
 | `Transport`（trait） | 只有一个方法：`async fn send(Self, PreparedRequest) -> RawResponse raise TransportError` |
-| `PreparedRequest` | 方法、完整 URL、拍平后的头、body 字节、超时、代理端点、上传进度回调、取消信号 |
+| `PreparedRequest` | 方法、完整 URL、拍平后的头、body（`RequestBody?`：`Buffered(Bytes)` 或 `Stream(StreamBody)`）、超时、代理端点、上传进度回调、取消信号 |
 | `RawResponse` | 状态码、状态短语、响应头、响应体**流** `ResponseBody` |
 | `ProxyEndpoint` | `{ url, authorization? }`：隧道地址与 CONNECT 的凭据 |
 | `TransportError` | `Timeout` / `Network(String)` / `Unsupported(String)` / `Malformed(String)` / `Cancelled(String?)`；上层看到的 `HttpError` 分类就来自它（`Malformed` 是「响应体与它声称的 `Content-Encoding` 不符」，报 `ERR_BAD_RESPONSE`），取消的载荷是取消理由 |
@@ -61,7 +61,7 @@ let client = @moonhttp.Client::new(transport~)
 ```moonbit nocheck
 ///|
 pub impl Transport for MyTransport with fn send(self, request) {
-  // request  : PreparedRequest（方法、完整地址、已拍平的头、body、超时）
+  // request  : PreparedRequest（方法、完整地址、已拍平的头、body（缓冲或流式）、超时）
   // 返回      : RawResponse（状态码、状态短语、响应头、响应体流）
   ...
 }

@@ -2,6 +2,7 @@
 package "q2316367743/moonhttp/config"
 
 import {
+  "moonbitlang/async/io",
   "moonbitlang/core/debug",
   "q2316367743/moonhttp/headers",
 }
@@ -30,6 +31,11 @@ pub fn Auth::not_equal(Self, Self) -> Bool
 pub fn Auth::to_repr(Self) -> @debug.Repr
 pub fn Auth::to_string(Self) -> String
 
+pub(all) enum BodyPayload {
+  Buffered(SerializedBody)
+  Stream(StreamBody)
+}
+
 pub(all) struct Config {
   url : String?
   http_method : Method?
@@ -52,6 +58,8 @@ pub(all) struct Config {
   // private fields
 } derive(Default)
 pub fn Config::default() -> Self
+pub fn Config::extract_body(Self) -> BodyPayload
+pub fn Config::has_stream_body(Self) -> Bool
 pub fn Config::new(String) -> Self
 pub fn Config::next_redirect(Self, String, Int, String?) -> Self?
 pub fn Config::output(Self, &Logger) -> Unit
@@ -65,6 +73,7 @@ pub fn Config::with_common_header(Self, StringView, String) -> Self
 pub fn Config::with_data_from_form(Self, FormData) -> Self
 pub fn Config::with_data_from_json(Self, Json) -> Self
 pub fn Config::with_data_from_str(Self, String) -> Self
+pub fn Config::with_data_from_stream(Self, &@io.Reader, content_length? : Int) -> Self
 pub fn Config::with_data_from_urlencoded(Self, Json) -> Self
 pub fn Config::with_decompress(Self, Bool) -> Self
 pub fn Config::with_header(Self, StringView, String) -> Self
@@ -173,6 +182,11 @@ pub fn ResponseEncoding::to_string(Self) -> String
 pub(all) struct SerializedBody {
   bytes : Bytes?
   content_type : String?
+}
+
+pub(all) struct StreamBody {
+  reader : &@io.Reader
+  content_length : Int?
 }
 
 // Type aliases

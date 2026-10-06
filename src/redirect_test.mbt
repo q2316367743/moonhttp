@@ -81,7 +81,7 @@ async test "a 302 rewrites POST to GET and drops the entity" {
   assert_true(sent[0].body is Some(_))
   assert_eq(sent[0].headers.get("Content-Type"), Some("application/json"))
   assert_eq(sent[1].http_method, @moonhttp.Method::Get)
-  assert_eq(sent[1].body, None)
+  assert_eq(buffered_body(sent[1]), None)
   assert_eq(sent[1].headers.has("Content-Type"), false)
 }
 
@@ -261,4 +261,58 @@ async test "sse follows a redirect over a real connection" {
     assert_eq(events.next_event().unwrap().data, "hello")
     assert_eq(events.next_event(), None)
   }
+}
+
+///|
+/// 流式请求体 + 需要原样重发 body 的重定向（307）：明确报错，
+/// 而不是拿已耗尽的流重放出一个空 body（docs/20）。错误分类是
+/// `NotSupported`，并按「失败带上已收到的响应」挂上那个 3xx。
+async test "307 with stream body fails instead of replaying an empty body" {
+  let (read_end, _write_end) = @io.pipe()
+  let reader : &@io.Reader = read_end
+  let (client, _mock) = client_with_chain([
+    redirect_response(307, "/next", "moved"),
+    @transport.RawResponse::{
+      status: 200,
+      status_text: "OK",
+      headers: @transport.Headers::new(),
+      set_cookies: [],
+      body: @transport.ResponseBody::from_bytes(b"never reached"),
+    },
+  ])
+  let config = @moonhttp.Config::new("https://api.example.com/upload")
+    .with_method(@moonhttp.Method::Put)
+    .with_data_from_stream(reader)
+  let error = request_error(client, config)
+  assert_eq(error.code(), @moonhttp.ErrorCode::NotSupported)
+  // 失败时带上已收到的响应：那个 3xx 就是排查线索
+  assert_true(error.info().response is Some(_))
+}
+
+///|
+/// 降级成 GET 的跳转（303）对流式 body 照常跟随：data 在 `next_redirect`
+/// 里已清掉，第二跳是不带 body 的 GET——流式形态不影响这条路。
+async test "303 still follows with a stream body by dropping it" {
+  let (read_end, _write_end) = @io.pipe()
+  let reader : &@io.Reader = read_end
+  let (client, mock) = client_with_chain([
+    redirect_response(303, "/done", "see other"),
+    @transport.RawResponse::{
+      status: 200,
+      status_text: "OK",
+      headers: @transport.Headers::new(),
+      set_cookies: [],
+      body: @transport.ResponseBody::from_bytes(b"done"),
+    },
+  ])
+  let config = @moonhttp.Config::new("https://api.example.com/upload")
+    .with_method(@moonhttp.Method::Put)
+    .with_data_from_stream(reader)
+  let response = client.request(config)
+  assert_eq(response.status, 200)
+  let sent = mock.received()
+  // 第二跳是不带 body 的 GET；首跳的流被 Mock 记录但不消费
+  assert_eq(sent.length(), 2)
+  assert_true(sent[1].body is None)
+  assert_true(sent[0].body is Some(@transport.RequestBody::Stream(_)))
 }

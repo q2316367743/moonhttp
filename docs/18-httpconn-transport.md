@@ -57,7 +57,8 @@ trailer 解析后**丢弃**（`docs/17` 待决问题的口径），chunk 扩展�
 | `Accept-Encoding: gzip` | 请求没声明时才补 | 谁解压谁声明（见下节与 `docs/15`） |
 | `User-Agent` | `moonhttp/0.4.0`，用户没设时才补 | GitHub 等服务端拒绝无 UA 请求；axios 的 node 适配器与 Python requests 同机制。版本号与 moon.mod 手工保持一致，升版本一起改 |
 | `Connection: close` | 总是 | phase 1 每请求一条连接（`docs/17` 口径 4；keep-alive 随连接池来） |
-| `Content-Length` | 字节数（无体发 0） | 请求体一律定长（`docs/17` 口径 4） |
+| `Content-Length` | 缓冲请求体的字节数（无体发 0）；流式请求体给了 `content_length` 时为声明值 | 缓冲形态维持 `docs/17` 口径 4 |
+| `Transfer-Encoding: chunked` | 流式请求体未给 `content_length` 时 | 请求侧 chunked 编码（`docs/20`）；这两个头对流式请求体由栈全权接管，用户预设的被摘掉 |
 
 CONNECT 隧道请求（`establish_tunnel`）不在此列：它只带 `Host` 与可选的 `Proxy-Authorization`，
 对端是代理不是源站（`docs/09`）。契约用例在 `src/httpconn/request_write_wbtest.mbt`。

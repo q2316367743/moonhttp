@@ -13,6 +13,7 @@
 
 路由一览（各段的断言见对应示例包的 cases 文件）：
   ANY  /echo                     回显方法/路径/query/头/请求体（JSON）
+  ANY  /upload                   读干净任意分帧的请求体，回执字节数与摘要（流式上传的靶子）
   GET  /gzip                     按 Accept-Encoding 决定 gzip 与否，声明回吐在 X-Accept-Encoding
   GET  /bytes?n=&fill=           定长二进制（Content-Length 分帧）
   GET  /bytes-chunked?n=         同样字节数（chunked 分帧）
@@ -33,6 +34,7 @@
 
 import argparse
 import gzip
+import hashlib
 import json
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -50,6 +52,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/echo":
                 self._reply_json(self._echo())
+            elif path == "/upload":
+                self._upload()
             elif path == "/gzip":
                 self._gzip()
             elif path == "/bytes":
@@ -99,6 +103,42 @@ class Handler(BaseHTTPRequestHandler):
             "body_len": len(body),
             "body_preview": body.decode("utf-8", "replace")[:240],
         }
+
+    def _upload(self):
+        # 读干净任意分帧（Content-Length 或 chunked）的请求体并回执收到多少：
+        # 客户端流式上传的两种线上形态（docs/20）都从这里拿到服务端视角的证据。
+        body = self._read_request_body()
+        self._reply_json({
+            "method": self.command,
+            "framing": self._request_framing(),
+            "received_bytes": len(body),
+            "sha256_prefix": hashlib.sha256(body).hexdigest()[:16],
+        })
+
+    def _request_framing(self):
+        if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+            return "chunked"
+        return "content-length"
+
+    def _read_request_body(self):
+        # Python 的 http.server 不会自动解码 chunked 请求体，这里手写一个
+        # 最小解码（hex 长度行 + 数据 + CRLF，直到 0 长度终止帧）
+        if self._request_framing() == "chunked":
+            out = bytearray()
+            while True:
+                size_line = self.rfile.readline().strip()
+                size = int(size_line.split(b";")[0], 16)
+                if size == 0:
+                    # 终止帧后的 trailer 节读到空行为止（本项目不发 trailer）
+                    while True:
+                        line = self.rfile.readline()
+                        if line in (b"\r\n", b"\n", b""):
+                            break
+                    break
+                out += self.rfile.read(size)
+                self.rfile.read(2)  # chunk 数据后的 CRLF
+            return bytes(out)
+        return self._read_body()
 
     def _gzip(self):
         accept = self.headers.get("Accept-Encoding", "")

@@ -174,6 +174,8 @@ pub using @sse {type SseEvent}
 
 pub using @sse {type SseParser}
 
+pub using @config {type StreamBody}
+
 pub using @transport {trait Transport}
 
 // Traits

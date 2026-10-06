@@ -5,6 +5,17 @@
 // 按 RL-04 为根包文件开出的例外处理——上限 1000 行，并在此声明。
 
 ///|
+/// 读出请求记录里**缓冲形态**的请求体字节；流式形态或无 body 返回 `None`。
+/// `PreparedRequest::body` 自流式上传（docs/20）起是 `RequestBody?` 枚举，
+/// 根包这些用例只用缓冲形态；流式泵送的线上行为归 httpconn 的真测。
+fn buffered_body(request : @transport.PreparedRequest) -> Bytes? {
+  match request.body {
+    Some(@transport.RequestBody::Buffered(bytes)) => Some(bytes)
+    _ => None
+  }
+}
+
+///|
 /// 完整走一遍「实例默认配置 + 请求配置 → 合并 → 拼 URL → 拍平头 → 发送 → 解码」。
 ///
 /// 这个用例是整条管线的总检：默认值里的 base_url 与公共头、
@@ -41,7 +52,7 @@ async test "request merges defaults builds url and reads body" {
   assert_eq(sent.headers.get("Accept"), Some("application/vnd.api+json"))
   assert_eq(sent.headers.get("X-Get-Only"), Some("1"))
   // 没有 data 时不带 body
-  assert_eq(sent.body, None)
+  assert_eq(buffered_body(sent), None)
 }
 
 ///|
@@ -84,7 +95,10 @@ async test "json body sets content type only when absent" {
   )
   let sent = mock.last_request().unwrap()
   assert_eq(sent.headers.get("Content-Type"), Some("application/json"))
-  assert_eq(@utf8.decode_lossy(sent.body.unwrap()), "{\"name\":\"moon\"}")
+  assert_eq(
+    @utf8.decode_lossy(buffered_body(sent).unwrap()),
+    "{\"name\":\"moon\"}",
+  )
   // 用户显式指定 Content-Type 时保持原样
   ignore(
     client.request(
@@ -112,7 +126,7 @@ async test "string body is sent verbatim without content type" {
     ),
   )
   let sent = mock.last_request().unwrap()
-  assert_eq(@utf8.decode_lossy(sent.body.unwrap()), "raw text body")
+  assert_eq(@utf8.decode_lossy(buffered_body(sent).unwrap()), "raw text body")
   assert_eq(sent.headers.get("Content-Type"), None)
   // 想发 JSON 文本就自己声明类型：这条路径发出去的东西一个字节都不动
   ignore(
@@ -124,7 +138,10 @@ async test "string body is sent verbatim without content type" {
     ),
   )
   let sent = mock.last_request().unwrap()
-  assert_eq(@utf8.decode_lossy(sent.body.unwrap()), "{\"pre\":\"serialized\"}")
+  assert_eq(
+    @utf8.decode_lossy(buffered_body(sent).unwrap()),
+    "{\"pre\":\"serialized\"}",
+  )
   assert_eq(sent.headers.get("Content-Type"), Some("application/json"))
 }
 
@@ -146,7 +163,7 @@ async test "urlencoded body sets its content type" {
     Some("application/x-www-form-urlencoded"),
   )
   assert_eq(
-    @utf8.decode_lossy(sent.body.unwrap()),
+    @utf8.decode_lossy(buffered_body(sent).unwrap()),
     "user=alice&password=s3cret",
   )
   // 同一条路径上用户显式设的类型优先（值里多带一个 charset 也照原样发）
@@ -188,7 +205,7 @@ async test "form body goes out as multipart" {
   )
   // boundary 从头里取出来，正文必须严格按它分段，并以结束分隔符收尾
   let boundary = content_type.after("boundary=").unwrap().to_owned()
-  let body = @utf8.decode_lossy(sent.body.unwrap())
+  let body = @utf8.decode_lossy(buffered_body(sent).unwrap())
   assert_true(
     body.contains(
       "--" +
@@ -225,7 +242,7 @@ async test "user content type wins over the form default" {
     Some("multipart/form-data; boundary=mine"),
   )
   // 正文仍按自己生成的 boundary 编码
-  let body = @utf8.decode_lossy(sent.body.unwrap())
+  let body = @utf8.decode_lossy(buffered_body(sent).unwrap())
   assert_false(body.contains("boundary=mine"))
   assert_true(body.contains("----moonhttp-"))
 }
@@ -316,4 +333,28 @@ async test "response content length counts bytes" {
   assert_eq(response.content_length(), 6)
   assert_eq(response.bytes().length(), 6)
   assert_eq(response.text(), "中文")
+}
+
+///|
+/// 流式请求体（docs/20）在管线里的落点：拦截器之后、传输层之前，
+/// 以 `RequestBody::Stream` 的形态进 `PreparedRequest`——util 层不读它，
+/// 也不给它补 Content-Type（与原样文本同一口径）。
+async test "stream body flows through the pipeline untouched" {
+  let (read_end, _write_end) = @io.pipe()
+  let reader : &@io.Reader = read_end
+  let (client, mock) = client_with(raw_response(200, "OK", "uploaded"))
+  let response = client.request(
+    @moonhttp.Config::new("https://api.example.com/upload")
+    .with_method(@moonhttp.Method::Put)
+    .with_data_from_stream(reader, content_length=11),
+  )
+  assert_eq(response.status, 200)
+  let sent = mock.last_request().unwrap()
+  match sent.body {
+    Some(@transport.RequestBody::Stream(stream)) => {
+      assert_eq(stream.content_length, Some(11))
+      assert_false(sent.headers.has("Content-Type"))
+    }
+    _ => fail("应是流式形态")
+  }
 }

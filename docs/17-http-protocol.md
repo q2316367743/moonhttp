@@ -41,10 +41,10 @@ gzip 透明解压怪癖、`Client` opaque 导致连接池做不了、代理只�
      HTTP 允许重复头如 `Set-Cookie`，门面仍是单值 `Headers`；压平规则后来定为「同名取最后一个值、
      `Set-Cookie` 全量另走 `RawResponse.set_cookies` 多值出口」，`docs/05` 挂起的「响应 cookie」随之在
      `docs/19-cookies.md` 落地）、
-     chunked 编解码（解码含 trailer / extension / CRLF 跨块，编码为下一期流式上传预留）、content-length、
+     chunked 编解码（解码含 trailer / extension / CRLF 跨块；编码于流式上传落地，见 docs/20）、content-length、
      close-delimited、无体规则（HEAD/204/304）、SOCKS5 握手字节。
    - **实现层**（async，包名占位 `httpconn`）：`Connection` 三态建连（TCP / TLS / CONNECT 或 SOCKS 隧道+TLS）、
-     请求写入（一次性请求体一律 `Content-Length`）、响应读取、生命周期状态机，并实现 `transport` 包的 `Transport` trait
+     请求写入（缓冲请求体一律 `Content-Length`；流式请求体定长或 chunked，见 docs/20）、响应读取、生命周期状态机，并实现 `transport` 包的 `Transport` trait
      （依赖方向：`httpconn → transport`（拿 trait）+ `httpconn → httpproto`，不成环）；旧栈曾保留为回退，2026-09-30 默认切换后整体删除。
 
 ## 分期

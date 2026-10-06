@@ -390,6 +390,32 @@ fn too_many_redirects_error(
 }
 
 ///|
+/// 流式请求体遇上了「要原样重发请求体」的重定向（`Client::request` 的
+/// 重定向循环里抛，docs/20）。
+///
+/// 只有 307/308、以及 301/302 上保持方法的跳转会走到这里——303 与
+/// 301/302 上的 POST 会降级成 GET 并丢掉 body，那条路不需要重放。
+/// 流在首跳写完就耗尽，重放只会静默发出空体，宁可在这里明确报错
+/// （fetch 对 stream body + redirect 的处理就是直接失败，同一口径）。
+/// 错误分类用 `NotSupported`：这是「用了传输层没法满足的能力」，
+/// 不是网络故障。`response` 是那个 3xx，按「失败带上已收到的响应」
+/// 的规则挂上（与 `too_many_redirects_error` 同一做法）。
+fn stream_replay_error(
+  status : Int,
+  config : Config,
+  response : Response?,
+) -> HttpError {
+  make_error(
+    "流式请求体无法跟随状态码 " +
+    status.to_string() +
+    " 的重定向：它要求原样重发请求体，而读取流已在首跳写完耗尽",
+    ErrorCode::NotSupported,
+    config,
+    response,
+  )
+}
+
+///|
 /// 校验响应状态码：通过就把响应交出去，不通过就给出带响应的错误。
 ///
 /// 返回 `Result` 而不是抛错：这个结果**就是**响应侧链的输入——`Client::request`

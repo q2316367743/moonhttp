@@ -81,6 +81,7 @@ pub fn Config::to_string(self : Config) -> String {
   // 请求体按形态渲染：JSON 给序列化后的文本、urlencoded 给编码后的键值对
   // （两者都与真正发出去的一致），原样文本给原文，
   // 表单交给 FormData 自己渲染（文件只给字节数）。
+  // 流式形态不能读（读了就耗尽了），只渲染成「有没有、多长」。
   match self.data {
     Some(Body::Raw(text)) => first = push_field(buf, first, "data", text)
     Some(Body::Json(data)) =>
@@ -89,6 +90,13 @@ pub fn Config::to_string(self : Config) -> String {
       first = push_field(buf, first, "data", form.to_string())
     Some(Body::UrlEncoded(fields)) =>
       first = push_field(buf, first, "data", urlencoded_text(fields))
+    Some(Body::Stream(stream)) => {
+      let length = match stream.content_length {
+        Some(length) => length.to_string()
+        None => "unknown"
+      }
+      first = push_field(buf, first, "data", "<stream \{length} bytes>")
+    }
     None => ()
   }
   match self.auth {

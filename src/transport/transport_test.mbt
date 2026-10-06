@@ -77,7 +77,7 @@ async test "mock transport propagates configured failure" {
     http_method: @transport.Method::Post,
     url: "https://example.com",
     headers: @transport.Headers::new(),
-    body: Some(b"payload"),
+    body: Some(@transport.RequestBody::Buffered(b"payload")),
     timeout: Some(1000),
     proxy: None,
     on_upload_progress: None,
@@ -130,7 +130,7 @@ async test "prepared request debug hides body content and proxy credentials" {
       http_method: @transport.Method::Post,
       url: "https://example.com/upload",
       headers: @transport.Headers::new().set("Content-Type", "text/plain"),
-      body: Some(b"secret-payload-bytes"),
+      body: Some(@transport.RequestBody::Buffered(b"secret-payload-bytes")),
       timeout: Some(5000),
       proxy: Some(@transport.ProxyEndpoint::{
         url: "http://proxy.example:8080",
@@ -149,6 +149,44 @@ async test "prepared request debug hides body content and proxy credentials" {
       #|    timeout: 5000,
       #|    proxy: <ProxyEndpoint: "http://proxy.example:8080">,
       #|    on_upload_progress: <fn>,
+      #|    signal: <none>,
+      #|  }>
+    ),
+  )
+}
+
+///|
+/// 流式请求体的 Debug：读取流本身不可渲染（读了就耗尽），只给「声明多长」
+/// ——定长给数字、chunked 给 unknown，内容一个字节都不露。
+async test "prepared request debug renders stream body as length only" {
+  let (read_end, _write_end) = @io.pipe()
+  let reader : &@io.Reader = read_end
+  debug_inspect(
+    @transport.PreparedRequest::{
+      http_method: @transport.Method::Put,
+      url: "https://example.com/upload",
+      headers: @transport.Headers::new(),
+      body: Some(
+        @transport.RequestBody::Stream(@transport.StreamBody::{
+          reader,
+          content_length: Some(20),
+        }),
+      ),
+      timeout: Some(5000),
+      proxy: None,
+      on_upload_progress: None,
+      signal: None,
+    },
+    content=(
+      #|<PreparedRequest:
+      #|  {
+      #|    http_method: "PUT",
+      #|    url: "https://example.com/upload",
+      #|    headers: "",
+      #|    body: <Stream: 20>,
+      #|    timeout: 5000,
+      #|    proxy: None,
+      #|    on_upload_progress: <none>,
       #|    signal: <none>,
       #|  }>
     ),

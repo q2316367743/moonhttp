@@ -174,7 +174,7 @@ transport；旧的 `AsyncHttpTransport`——基于 `moonbitlang/async/http` 的
 | 能力 | 现状 | 可能的实现方式 |
 |---|---|---|
 | 连接复用 | 每次请求新建连接（发 `Connection: close`） | 连接池是 httpconn 第 2 期（2026-10），契约已定：体未消费完不回池、取消=毒化，见 `docs/17` 分期表 |
-| 请求体流式上传 | 不支持（`PreparedRequest::body` 是完整字节） | 需要 `ResponseBody` 的对偶：挂在 httpconn 连接上的可写流，配合 chunked 编码。README 的「暂不支持」里标了下一期 |
+| 请求体流式上传 | **已支持**（`PreparedRequest.body : RequestBody?` 的 `Stream` 形态，`with_data_from_stream`） | 泵循环 + 定长 / chunked 双模式分帧；契约见 `20-streaming-upload.md` |
 | 上传进度 | **已支持**（`PreparedRequest::on_upload_progress`）：按 64 KiB 分块写 + 每块写完回调 | 粒度见 `httpconn/request_write.mbt` 的 `UPLOAD_CHUNK_SIZE`；契约见 `10-progress.md` |
 | 下载进度 | **已支持**（`ResponseBody` 的 `read_all*` 带 `on_progress`），只由「库读全量」触发 | 见 `10-progress.md` |
 | 代理 | 已支持（`PreparedRequest::proxy`） | httpconn 自己实现的 CONNECT 隧道（凭据只落隧道请求）；SOCKS5 见 `18-httpconn-transport.md` 的留位。契约见 `09-proxy.md` |

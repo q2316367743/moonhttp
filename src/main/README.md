@@ -16,7 +16,7 @@ moon run src/main   # 需要联网
 
 | 包 | 跑法 | 覆盖什么 | 前置条件 |
 |---|---|---|---|
-| `transport` | `bash test/run.sh`（或先 `python3 test/server.py` 再 `moon run src/main/transport`） | 自研传输层（docs/18）的新语义：gzip 三态（缓冲 / 流式 / 关闭 / 用户自声明）、大响应体（3 MiB 定长 + 2 MiB chunked）、默认 User-Agent 与覆盖、拒连与缺 url 的分类、超时、`PROPFIND` 自定义方法原样落线、HTTP/1.0 兼容 | 本机靶子（`test/server.py`，离线） |
+| `transport` | `bash test/run.sh`（或先 `python3 test/server.py` 再 `moon run src/main/transport`） | 自研传输层（docs/18）的新语义：gzip 三态（缓冲 / 流式 / 关闭 / 用户自声明）、大响应体（3 MiB 定长 + 2 MiB chunked）、默认 User-Agent 与覆盖、拒连与缺 url 的分类、超时、`PROPFIND` 自定义方法原样落线、HTTP/1.0 兼容、流式上传（3 MiB 两种分帧，docs/20） | 本机靶子（`test/server.py`，离线） |
 | `cookies` | 同上（`moon run src/main/cookies`） | Cookie 自动维护（docs/19）：种下 → 自动携带、显式 Cookie 头优先、同名刷新、`Path` 限定、`Max-Age=0` 删除、派生实例共享罐、跨 host 不带 | 本机靶子（`test/server.py`，离线） |
 | `basics` | `moon run src/main/basics` | 状态行与响应头、查询参数（含自定义 `paramsSerializer`）、二进制响应、`response_encoding` 的读法、204 空正文、4xx / 5xx 的错误分类、`validate_status`、超时 | 联网（真实站点打华为云镜像） |
 | `methods` | `moon run src/main/methods` | 八种请求方式；请求体四形态（raw / json / urlencoded / multipart）；响应内容形态（JSON / 文本 / 二进制 / 201 / 204 / 分块 / 非法 JSON） | 无（全部打本机 echo server） |

@@ -114,11 +114,12 @@ let form = FormData::new()
 - 同名可以出现多次（`append_text` 两次就是两项），顺序即追加顺序，库不做「同名字段覆盖」。
 - `FormData` 是值语义：`append_*` 返回新实例，拿一份当模板派生多份不会被改坏。
 
-### 代价：整块驻留内存
+### 代价：缓冲形态整块驻留内存；流式形态见 20
 
-`PreparedRequest.body` 是一次性字节，所以表单（含文件）会被完整拼进内存再发。
-**流式上传（Reader 形态的 body）不支持，计划下一期实现**（见 README 的「暂不支持」），
-大文件请自行评估内存。上传进度不受此限：请求体本来就是按块写出去的，进度回调已经可用
+四种缓冲形态（含表单）会被完整拼进内存再发——`serialize_body()` 产出的就是完整字节。
+数据源不在手上、或大到不想整块驻留时，用第五种形态 `with_data_from_stream`
+（读取流，`MemoryReader` / pipe / 自定义 Reader 都能接，定长与 chunked 两种线上
+分帧，设计与语义见 `20-streaming-upload.md`）。上传进度两种形态都可用
 （见 `10-progress.md`）。
 
 ## URL 编码表单（`application/x-www-form-urlencoded`）
@@ -190,11 +191,12 @@ Config::new("/upload")
 | `urlencoded` | 传 `URLSearchParams` 自动编码（对象 + 显式类型也会走序列化器） | `with_data_from_urlencoded(Json)`，复用 query 的序列化器；**只提供这一种约定**，别的约定自己拼 |
 | `name` / `filename` 转义 | 不转义（node 实现） | 按 WHATWG 转义（防解析错位与注入） |
 | `transformRequest` | 可插拔 | 固定为上述四种形态，不做转换器 |
-| 流式上传 | 支持（Node 流） | 不支持，整块字节 |
+| 流式上传 | 支持（Node 流） | 支持（读取流 + 可选声明长度，见 `20-streaming-upload.md`） |
 
 ## 注意
 
-- 改 `Body` 的形态或 multipart 布局时，`serialize_body()`、`Config::to_string` 的渲染、
-  `config/body_test.mbt` 的字节级用例与 `docs/03` 的表格要一起改；
+- 改 `Body` 的形态或 multipart 布局时，`serialize_body()` / `extract_body()`、
+  `Config::to_string` 的渲染、`config/body_test.mbt` 的字节级用例与 `docs/03` 的表格要一起改；
+  流式形态的传输侧行为（泵、分帧、重定向）归 `20-streaming-upload.md`；
 - 想新增一种形态（例如原始二进制体 `with_data_from_bytes`），在 `config/body.mbt` 加一个变体、
   一个构建器、一处序列化分支与渲染分支即可；`merge_config` 不用动（它走「只取请求级」，与形态无关）。

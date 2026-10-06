@@ -79,8 +79,8 @@ fn proxy_endpoint(
 /// 1. `base_url` + `url` 拼成完整地址，再追加序列化后的 query
 ///    （`params_serializer` 有值时用自定义序列化器，见下）；
 /// 2. 把三层头（common < 按方法 < 请求级平铺）拍平成一份；
-/// 3. 取请求体字节（`Config::serialize_body`，序列化在 config 包内完成），
-///    并按需补 `Content-Type` 与 `Authorization`；
+/// 3. 取请求体（`Config::extract_body` 在 config 包内分流：缓冲形态给字节、
+///    流式形态给读取流），并按需补 `Content-Type` 与 `Authorization`；
 /// 4. 有代理时把 `Proxy-Authorization` 挪到 CONNECT 上（见下）。
 ///
 /// 补默认头一律用 `set_if_absent`：用户显式设置的同名头永远优先，
@@ -141,12 +141,24 @@ pub fn build_prepared_request(
     config.headers,
     meth,
   )
-  // 请求体的字节与建议的 Content-Type 由 config 包产出（`Config::serialize_body`）：
-  // body 的四种形态（原样文本 / JSON / 表单 / urlencoded）只有 config 包认识，
-  // 这里只负责把建议的类型落到头上，仍是「补默认值」而非覆盖用户显式设置。
-  let serialized = config.serialize_body()
-  let body = serialized.bytes
-  match serialized.content_type {
+  // 请求体由 config 包分流产出（`Config::extract_body`）：四种缓冲形态序列化成
+  // 字节并建议 Content-Type；流式形态（docs/20）不序列化——读取流与可选长度
+  // 原样交给传输层，分帧（定长 / chunked）由传输实现决定。
+  // Content-Type 两种形态同一口径：只补默认值，不覆盖用户显式设置；
+  // 流式形态不推断类型（与原样文本一致，要带类型头自己设）。
+  let (body, content_type) = match config.extract_body() {
+    @config.BodyPayload::Buffered(serialized) =>
+      (
+        match serialized.bytes {
+          Some(bytes) => Some(@transport.RequestBody::Buffered(bytes))
+          None => None
+        },
+        serialized.content_type,
+      )
+    @config.BodyPayload::Stream(stream) =>
+      (Some(@transport.RequestBody::Stream(stream)), None)
+  }
+  match content_type {
     Some(content_type) =>
       headers = headers.set_if_absent("Content-Type", content_type)
     None => ()

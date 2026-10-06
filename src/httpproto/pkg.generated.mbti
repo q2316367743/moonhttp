@@ -14,6 +14,10 @@ pub fn parse_header_block(Array[String]) -> HeaderMap raise ParseError
 
 pub fn parse_status_line(String) -> StatusLine raise ParseError
 
+pub fn render_chunk_frame(Bytes) -> Bytes raise ParseError
+
+pub fn render_last_chunk() -> Bytes
+
 pub fn render_request_head(StringView, StringView, HeaderMap) -> Bytes raise ParseError
 
 // Errors

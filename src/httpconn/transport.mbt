@@ -58,7 +58,7 @@ async fn send_head(
     let headers = build_request_headers(request, target)
     write_request_head(conn, meth, target.target, headers)
     match request.body {
-      Some(bytes) => write_request_body(conn, bytes, request.on_upload_progress)
+      Some(body) => write_request_body(conn, body, request.on_upload_progress)
       None => ()
     }
     let head = read_response_head(conn)

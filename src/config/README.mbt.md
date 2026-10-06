@@ -68,8 +68,11 @@ let defaults = Config::default() // 从零起步
 | `with_data_from_json(Json)` | `stringify()` 后的 JSON 文本 | `application/json` |
 | `with_data_from_urlencoded(Json)` | `a=1&b=2` | `application/x-www-form-urlencoded` |
 | `with_data_from_form(FormData)` | multipart 正文 | `multipart/form-data; boundary=...` |
+| `with_data_from_stream(reader, content_length?)` | 读取流（第五形态，流式上传） | 不补 |
 
 补头一律是 `set_if_absent`：你自己设了同名头就一个字节都不改。
+流式形态的分帧头（`Content-Length` / `Transfer-Encoding`）是例外——由传输实现
+全权接管（docs/20）；它也不推断 `Content-Type`，与原样文本同一口径。
 
 **认证与代理**
 
@@ -100,7 +103,9 @@ let defaults = Config::default() // 从零起步
 | 方法 | 说明 |
 |---|---|
 | `Config::new(url)` / `Config::default()` | 构造 |
-| `serialize_body()` | 请求体 → 字节 + 建议的 `Content-Type`（`SerializedBody`） |
+| `serialize_body()` | 缓冲请求体 → 字节 + 建议的 `Content-Type`（`SerializedBody`；流式形态返回空） |
+| `extract_body()` | 请求体统一读法：`BodyPayload::Buffered(SerializedBody)` 或 `Stream(StreamBody)` |
+| `has_stream_body()` | 请求体是不是流式形态（重定向循环用来判「不可重放」） |
 | `next_redirect(location, status, method?)` | 算重定向的下一跳配置（方法、请求体、凭据、`Host` 的改写规则） |
 | `to_string()` / `output(logger)` / `to_repr()` | 渲染（`Show` / `Debug`） |
 

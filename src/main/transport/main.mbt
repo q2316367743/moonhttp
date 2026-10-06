@@ -3,8 +3,8 @@
 let target_base : String = "http://127.0.0.1:18777"
 
 ///|
-/// 示例：自研传输层（httpconn）的新语义，十段：
-/// gzip 三态、大响应体、User-Agent、连接失败、超时、自定义方法、HTTP/1.0。
+/// 示例：自研传输层（httpconn）的新语义，十一段：
+/// gzip 三态、大响应体、User-Agent、连接失败、超时、自定义方法、HTTP/1.0、流式上传。
 /// 每段的证据都取服务端视角——靶子把收到的请求头回吐在响应里。
 /// 用 `moon run src/main/transport` 执行。本包只是示例，不随模块发布。
 async fn main {
@@ -24,6 +24,7 @@ async fn main {
   timeout_case(client)
   custom_method(client)
   http10(client)
+  upload_stream(client)
 }
 
 ///|

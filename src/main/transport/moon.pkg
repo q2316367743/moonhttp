@@ -9,11 +9,14 @@
 // - 连接失败的两条分类（拒连 ERR_NETWORK、缺 url ERR_INVALID_URL）；
 // - 自定义方法（docs/16）：`Method::Other("PROPFIND")` 原样落线——靶子是
 //   Python server，官方 MoonBit server 的封闭枚举收不了这个方法；
-// - HTTP/1.0 兼容（无 Content-Length、靠连接关闭收尾）。
+// - HTTP/1.0 兼容（无 Content-Length、靠连接关闭收尾）；
+// - 流式上传（docs/20）：读取流作为请求体，MemoryReader 边生成边喂，
+//   chunked / 定长两种分帧都打到 /upload 上拿服务端视角的证据。
 //
 // 用 `moon run src/main/transport` 执行。本包不随模块发布（.moonignore 排除）。
 import {
   "moonbitlang/async",
+  "moonbitlang/async/io",
   "moonbitlang/core/encoding/utf8",
   "q2316367743/moonhttp",
 }

@@ -17,7 +17,7 @@ async test "shortcuts send their own verbs" {
   ignore(client.delete(url))
   let deleted = mock.last_request().unwrap()
   assert_eq(deleted.http_method, @moonhttp.Method::Delete)
-  assert_eq(deleted.body, None)
+  assert_eq(buffered_body(deleted), None)
   ignore(client.patch(url))
   assert_eq(mock.last_request().unwrap().http_method, @moonhttp.Method::Patch)
   ignore(client.head(url))
@@ -93,7 +93,10 @@ async test "shortcuts take body and verb from request config" {
   )
   let sent = mock.last_request().unwrap()
   assert_eq(sent.http_method, @moonhttp.Method::Post)
-  assert_eq(@utf8.decode_lossy(sent.body.unwrap()), "{\"name\":\"moon\"}")
+  assert_eq(
+    @utf8.decode_lossy(buffered_body(sent).unwrap()),
+    "{\"name\":\"moon\"}",
+  )
   assert_eq(sent.headers.get("Content-Type"), Some("application/json"))
 }
 

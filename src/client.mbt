@@ -691,6 +691,26 @@ async fn Client::send_following_redirects(
             ),
           )
         }
+        // 流式请求体只在首跳有效（docs/20）：`next_redirect` 没把这一跳降级成
+        // GET，意味着下一跳要**原样重发请求体**——流已随首跳写完耗尽，
+        // 重放只会静默发出空体。降级成 GET 的跳转（303、301/302 上的 POST）
+        // 在 `next_redirect` 里就已把 data 清掉，不会走到这里。
+        if next.has_stream_body() {
+          let (body, _failure) = raw.body.read_all_partial()
+          raise stream_replay_error(
+            raw.status,
+            config,
+            Some(
+              build_response(
+                raw.status,
+                raw.status_text,
+                raw.headers,
+                body,
+                config,
+              ),
+            ),
+          )
+        }
         // 先释放这一跳的连接再发下一跳，否则每跟一次都漏一条连接。
         raw.body.close()
         followed = followed + 1

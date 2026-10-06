@@ -1,8 +1,10 @@
 ///|
-/// 这两个类型出现在 `PreparedRequest` / `RawResponse` 的公开签名里，
+/// 这几个类型出现在 `PreparedRequest` / `RawResponse` 的公开签名里，
 /// 因此随本包一起再导出，使用者不必为了构造一份请求再 import 两个包。
 /// `AbortSignal` 同理：它由 `PreparedRequest` 携带到这一层（定义在 `abort` 包）。
-pub using @config {type Method, type ProgressCallback}
+/// `StreamBody` 是请求体流式形态（docs/20）的载荷，自定义传输实现要按
+/// `RequestBody::Stream` 解构它。
+pub using @config {type Method, type ProgressCallback, type StreamBody}
 
 ///|
 pub using @abort {type AbortSignal}
@@ -30,6 +32,21 @@ pub(all) struct ProxyEndpoint {
 pub extend ProxyEndpoint with @debug.Debug::{to_repr}
 
 ///|
+/// 请求体在传输层的形态：一块完整字节，或一个待泵出的读取流。
+///
+/// 四种缓冲形态（文本 / JSON / 表单 / urlencoded）序列化完都落 `Buffered`；
+/// `Stream` 来自 `with_data_from_stream`（docs/20）——`content_length` 有值
+/// 时按 `Content-Length` 定长发送（进度 `total` 已知），没值时按
+/// `Transfer-Encoding: chunked` 发送。流是**一次性**资源：内置实现（httpconn）
+/// 的泵循环消费它；Mock 与自定义实现可以不消费，但绝不能假设它能读第二次。
+pub(all) enum RequestBody {
+  /// 序列化完成的请求体字节
+  Buffered(Bytes)
+  /// 待泵出的读取流 + 可选声明长度
+  Stream(StreamBody)
+}
+
+///|
 /// 交给传输层去发送的一份请求。
 ///
 /// 到达这一步时，配置合并、`base_url` 拼接、query 序列化、头拍平都已经完成，
@@ -43,8 +60,12 @@ pub(all) struct PreparedRequest {
   url : String
   /// 已按 common < 按方法 < 请求级 拍平的最终头集合
   headers : @headers.Headers
-  /// 请求体字节；`None` 表示不带 body
-  body : Bytes?
+  /// 请求体；`None` 表示不带 body。
+  ///
+  /// 缓冲（`Buffered`）与流式（`Stream`，docs/20）两种形态：前者是序列化完的
+  /// 完整字节；后者由传输实现边读边写——httpconn 按 `content_length` 的有无
+  /// 决定定长或 chunked 分帧，并负责「写出字节数与声明相符」的校验。
+  body : RequestBody?
   /// 超时毫秒数；`None` 或 `<= 0` 表示不限时。
   ///
   /// 分两段生效：建连到拿到响应头这一段整体受它约束，响应体每次读取也受
@@ -84,10 +105,19 @@ pub(all) struct PreparedRequest {
 ///   后者的 `authorization` 是一份凭据，都不该整段进日志。
 pub impl @debug.Debug for PreparedRequest with fn to_repr(self) {
   let body = match self.body {
-    Some(bytes) =>
+    Some(RequestBody::Buffered(bytes)) =>
       @debug.Repr::opaque_(
         "Bytes",
         @debug.Repr::integer(bytes.length().to_string()),
+      )
+    // 流不读：渲染读取流本身既不可能也无意义，只给「声明多长」。
+    Some(RequestBody::Stream(stream)) =>
+      @debug.Repr::opaque_(
+        "Stream",
+        match stream.content_length {
+          Some(length) => @debug.Repr::integer(length.to_string())
+          None => @debug.Repr::literal("unknown")
+        },
       )
     None => @debug.Repr::literal("None")
   }
@@ -159,11 +189,11 @@ pub(all) suberror TransportError {
   Network(String)
   /// 请求还没发出去就失败了：协议不支持、地址非法等
   Unsupported(String)
-  /// 响应体与它声称的元数据不符：声明了 `Content-Encoding: gzip`，字节却不是
-  /// 合法、完整的 gzip 流（头非法、数据损坏、被截断）。上层映射成
-  /// `ERR_BAD_RESPONSE`——这不是网络故障，是响应本身解不开。
-  ///
-  /// 目前只有 `decode_gzip` 抛它（见 decode.mbt）。
+  /// 实体与它声称的元数据不符。两侧各有一处来源：
+  /// - 响应侧：声明了 `Content-Encoding: gzip`，字节却不是合法、完整的 gzip 流
+  ///   （头非法、数据损坏、被截断，见 decode.mbt）；
+  /// - 请求侧：流式请求体写完的字节数与声明的 `content_length` 不符（docs/20）。
+  /// 上层映射成 `ERR_BAD_RESPONSE`——这不是网络故障，是数据本身与声明对不上。
   Malformed(String)
   /// 被取消信号叫停了；载荷是取消理由（`AbortSignal::reason()`），没给理由就是 `None`。
   ///

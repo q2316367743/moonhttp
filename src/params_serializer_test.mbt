@@ -64,7 +64,7 @@ async test "params serializer does not touch the urlencoded body" {
   )
   let sent = mock.last_request().unwrap()
   assert_eq(sent.url, "/submit?tags=a&tags=b")
-  assert_eq(sent.body, Some(b"tags%5B%5D=a&tags%5B%5D=b"))
+  assert_eq(buffered_body(sent), Some(b"tags%5B%5D=a&tags%5B%5D=b"))
 }
 
 ///|

@@ -43,7 +43,7 @@ pub(all) struct PreparedRequest {
   http_method : @config.Method
   url : String
   headers : @headers.Headers
-  body : Bytes?
+  body : RequestBody?
   timeout : Int?
   proxy : ProxyEndpoint?
   on_upload_progress : ((@config.ProgressEvent) -> Unit)?
@@ -67,6 +67,11 @@ pub(all) struct RawResponse {
 } derive(@debug.Debug)
 pub fn RawResponse::to_repr(Self) -> @debug.Repr
 
+pub(all) enum RequestBody {
+  Buffered(Bytes)
+  Stream(@config.StreamBody)
+}
+
 pub struct ResponseBody {
   // private fields
 }
@@ -88,6 +93,8 @@ pub using @headers {type Headers}
 pub using @config {type Method}
 
 pub type ProgressCallback = (@config.ProgressEvent) -> Unit
+
+pub using @config {type StreamBody}
 
 // Traits
 pub(open) trait Transport {

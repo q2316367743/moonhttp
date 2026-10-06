@@ -56,7 +56,7 @@ async test "request interceptor rewrites the outgoing request" {
   let sent = mock.last_request().unwrap()
   assert_eq(sent.url, "/v2/users")
   assert_eq(sent.headers.get("X-Token"), Some("abc"))
-  assert_eq(sent.body.unwrap(), @utf8.encode("{\"app_key\":\"k\"}"))
+  assert_eq(buffered_body(sent).unwrap(), @utf8.encode("{\"app_key\":\"k\"}"))
 }
 
 ///|

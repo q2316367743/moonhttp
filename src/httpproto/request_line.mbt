@@ -66,8 +66,8 @@ fn validate_field_value(
 ///   拼坏请求行；更早的那道闸在 httpconn 建连之前）；
 /// - 目标经 `validate_target`；头值经 `validate_field_value`。
 ///
-/// 请求体不在这里：phase 1 请求体一律 `Content-Length` 定长，由 httpconn
-/// 渲染完头块后原样写（docs/17 口径 4；chunked 编码留给流式上传那一期）。
+/// 请求体不在这里：缓冲形态由 httpconn 渲染完头块后原样写（docs/17 口径 4）；
+/// 流式形态的 chunked 分帧在 `chunk_render.mbt`（docs/20）。
 pub fn render_request_head(
   meth : StringView,
   target : StringView,

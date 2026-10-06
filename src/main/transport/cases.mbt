@@ -182,3 +182,86 @@ async fn http10(client : @moonhttp.Client) -> Unit {
   )
   println("")
 }
+
+///|
+/// 造一个「边生成边喂数据」的读取流：MemoryReader 的回调里按 64 KiB 一段
+/// 写满 `total` 字节——正是流式上传要服务的「数据源不在内存里攒齐」场景。
+fn make_upload_reader(total : Int) -> &@io.Reader {
+  let piece = Bytes::make(65536, b'u')
+  let reader : &@io.Reader = @io.MemoryReader() <| writer => {
+    let mut sent = 0
+    while sent < total {
+      let take = if total - sent < piece.length() {
+        total - sent
+      } else {
+        piece.length()
+      }
+      writer.write(piece.exact_view(start=0, end=take).to_owned())
+      sent = sent + take
+    }
+  }
+  reader
+}
+
+///|
+/// 进度事件的 total 渲染：None / Some(n) 两态正是 chunked 与定长的分野。
+fn progress_total(event : @moonhttp.ProgressEvent) -> String {
+  match event.total {
+    Some(value) => "Some(\{value})"
+    None => "None"
+  }
+}
+
+///|
+/// 从 `/upload` 的回执里取 (分帧形态, 服务端实收字节数)——服务端视角才是证据。
+fn upload_metrics(response : @moonhttp.Response) -> (String, Int) {
+  let value = response.json() catch { _ => return ("<回显不是 JSON>", -1) }
+  match value {
+    { "framing": String(framing), "received_bytes": Number(received, ..), .. } =>
+      (framing, received.to_int())
+    _ => ("<回显不符合预期>", -1)
+  }
+}
+
+///|
+/// 11. 流式上传（docs/20）：请求体不再整块进内存——读取流由传输层边读边写。
+/// 两种线上形态各打一次：
+/// - 不给 content_length → `Transfer-Encoding: chunked`（进度 total 未知）；
+/// - 给 content_length   → `Content-Length` 定长（进度 total 已知）。
+async fn upload_stream(client : @moonhttp.Client) -> Unit {
+  println("== 11. 流式上传（读取流作为请求体）==")
+  let total = 3 * 1024 * 1024
+  // 不声明长度：chunked 分帧，进度 total 是 None
+  let chunked_events : Array[@moonhttp.ProgressEvent] = []
+  let chunked = client.request(
+    @moonhttp.Config::new("/upload")
+    .with_method(@moonhttp.Method::Put)
+    .with_data_from_stream(make_upload_reader(total))
+    .with_on_upload_progress(fn(event) { chunked_events.push(event) }),
+  )
+  let (framing, received) = upload_metrics(chunked)
+  println(
+    "chunked 模式     ：服务端按 \{framing} 收到 \{received} 字节（发出 \{total}）",
+  )
+  let last = chunked_events[chunked_events.length() - 1]
+  println(
+    "上传进度（末次） = loaded \{last.loaded}，total \{progress_total(last)}（长度未知）",
+  )
+  // 声明长度：定长分帧，进度 total 已知
+  let sized_events : Array[@moonhttp.ProgressEvent] = []
+  let sized = client.request(
+    @moonhttp.Config::new("/upload")
+    .with_method(@moonhttp.Method::Put)
+    .with_data_from_stream(make_upload_reader(total), content_length=total)
+    .with_on_upload_progress(fn(event) { sized_events.push(event) }),
+  )
+  let (framing2, received2) = upload_metrics(sized)
+  println(
+    "定长模式         ：服务端按 \{framing2} 收到 \{received2} 字节（发出 \{total}）",
+  )
+  let last2 = sized_events[sized_events.length() - 1]
+  println(
+    "上传进度（末次） = loaded \{last2.loaded}，total \{progress_total(last2)}（声明长度）",
+  )
+  println("")
+}
