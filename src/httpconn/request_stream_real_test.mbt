@@ -45,6 +45,18 @@ async fn uploading_server(
 }
 
 ///|
+/// 把请求头各行拼成一段文本供 contains 断言用。
+/// 数组的 to_string 走 Show 已废弃，这里显式拼接，不依赖调试渲染格式。
+fn join_header_lines(lines : Array[String]) -> String {
+  let sb = StringBuilder()
+  for line in lines {
+    sb.write_string(line)
+    sb.write_char('\n')
+  }
+  sb.to_string()
+}
+
+///|
 /// 十六进制解析 chunk-size 行（测试数据是纯 'x'，不含换行，
 /// 行法解析 chunked 在这里是安全的）。
 fn parse_hex_size(text : StringView) -> Int? {
@@ -133,7 +145,7 @@ async test "real connection pumps a chunked stream upload" {
   let seen : Array[(Int, Int?)] = []
   @async.with_task_group() <| group => {
     let port = uploading_server(group, (tcp, lines) => {
-      let header_text = lines.to_string()
+      let header_text = join_header_lines(lines)
       // 分帧头由栈全权接管：chunked 在、Content-Length 不在
       assert_true(header_text.contains("Transfer-Encoding: chunked"))
       assert_false(header_text.contains("Content-Length"))
@@ -166,7 +178,7 @@ async test "real connection pumps a fixed-length stream upload" {
   let seen : Array[(Int, Int?)] = []
   @async.with_task_group() <| group => {
     let port = uploading_server(group, (tcp, lines) => {
-      let header_text = lines.to_string()
+      let header_text = join_header_lines(lines)
       assert_true(header_text.contains("Content-Length: 200000"))
       assert_false(header_text.contains("Transfer-Encoding"))
       let received = tcp.read_exactly(STREAM_UPLOAD_SIZE)

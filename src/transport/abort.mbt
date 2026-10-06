@@ -64,7 +64,8 @@ pub async fn[T] with_abort_scope(
       catch {
         // 子任务被取消 → 对外是「取消」，不是「网络失败」（理由随手带上，
         // 上层翻译文案时不必再去别处找）。
-        @async.TaskCancelled => raise TransportError::Cancelled(signal.reason())
+        @async.WaitedTaskAlreadyCancelled =>
+          raise TransportError::Cancelled(signal.reason())
         error => raise narrow_transport_error(error)
       }
     }
