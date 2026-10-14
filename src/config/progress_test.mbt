@@ -34,7 +34,7 @@ test "progress ratio is computed only from a known positive total" {
 /// 影响来源配置（「模板配置 + 逐个变体」的用法依赖这条）。
 test "progress builders set the fields without mutating the source" {
   let template = @config.Config::default().with_url("/upload")
-  let seen : Array[Int] = []
+  let seen : Array[Int32] = []
   let config = template
     .with_on_upload_progress(fn(_event) { () })
     .with_on_download_progress(fn(event) { seen.push(event.loaded) })

@@ -49,7 +49,7 @@ pub(all) struct Proxy {
   /// 代理服务器的主机名或 IP
   host : String?
   /// 代理服务器端口；缺省由协议决定（http 80 / https 443）
-  port : Int?
+  port : Int32?
   /// 代理认证凭据（HTTP Basic）。只用于建立隧道时的 CONNECT 请求，
   /// **不会**发给目标服务器，见 `src/util/request.mbt`。
   auth : Auth?
@@ -130,7 +130,7 @@ pub fn Proxy::is_usable(self : Proxy) -> Bool {
 pub fn Config::with_proxy(
   self : Config,
   host : String,
-  port? : Int,
+  port? : Int32,
   protocol? : ProxyProtocol,
   username? : String,
   password? : String,

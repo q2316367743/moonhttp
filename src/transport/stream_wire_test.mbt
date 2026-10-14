@@ -11,7 +11,7 @@
 /// `_direct_read` 负责从「真实来源」（这里是内存，真实场景是 TCP/TLS）拉字节。
 struct FixedReader {
   data : Bytes
-  mut offset : Int
+  mut offset : Int32
   buf : @io.ReaderBuffer
 }
 
@@ -33,9 +33,9 @@ impl @io.Reader for FixedReader with fn _get_internal_buffer(self : FixedReader)
 impl @io.Reader for FixedReader with fn _direct_read(
   self : FixedReader,
   dst : FixedArray[Byte],
-  offset~ : Int,
-  max_len~ : Int,
-) -> Int {
+  offset~ : Int32,
+  max_len~ : Int32,
+) -> Int32 {
   let remaining = self.data.length() - self.offset
   if remaining == 0 || max_len == 0 {
     return 0

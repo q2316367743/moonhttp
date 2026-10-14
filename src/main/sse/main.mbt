@@ -230,7 +230,7 @@ fn delta_piece(delta : Map[String, Json]) -> Piece {
 
 ///|
 /// 取字符串的前 `limit` 个字符（不足就整体返回），思维链动辄几千字，打印前要截断。
-fn head_text(text : String, limit : Int) -> String {
+fn head_text(text : String, limit : Int32) -> String {
   if text.length() <= limit {
     text
   } else {

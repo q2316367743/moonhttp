@@ -20,11 +20,11 @@ pub(all) struct ProgressEvent {
   ///
   /// 上传时是**已写入连接**的字节（已交给内核，不代表对端已经收到）；
   /// 下载时是本次读取已取出的响应体字节。
-  loaded : Int
+  loaded : Int32
   /// 这次传输的总字节数；`None` 表示长度未知
   /// （例如响应是 chunked 编码、没有 `Content-Length`），
   /// 对应 axios 的 `lengthComputable === false`。
-  total : Int?
+  total : Int32?
 } derive(Debug)
 
 ///|

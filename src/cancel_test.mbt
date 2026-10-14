@@ -14,7 +14,7 @@
 ///
 /// 把客户端钉在**等响应头**这个状态上：这是最需要取消的场景——对面一个字节都
 /// 不吐，「执行到下一个检查点再看标志位」那类实现在这里根本没有检查点可查。
-async fn slow_headers_server(group : @async.TaskGroup[Unit]) -> Int {
+async fn slow_headers_server(group : @async.TaskGroup[Unit]) -> Int32 {
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   group.spawn_bg(no_wait=true) <| () => {
@@ -30,7 +30,7 @@ async fn slow_headers_server(group : @async.TaskGroup[Unit]) -> Int {
 ///|
 /// 起一个「立刻回 200 与一小段正文」的本机 server，返回端口。
 /// 用来验证取消之后同一条协程还能正常发请求。
-async fn ok_server(group : @async.TaskGroup[Unit]) -> Int {
+async fn ok_server(group : @async.TaskGroup[Unit]) -> Int32 {
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   group.spawn_bg(no_wait=true) <| () => {
@@ -45,7 +45,7 @@ async fn ok_server(group : @async.TaskGroup[Unit]) -> Int {
 ///|
 /// 起一个「立刻回响应头与一段正文，然后挂住」的本机 server，返回端口
 /// （与 `error_test.mbt` 的 `stalling_server` 同型，这里固定用 200 与一段正文）。
-async fn partial_then_stall_server(group : @async.TaskGroup[Unit]) -> Int {
+async fn partial_then_stall_server(group : @async.TaskGroup[Unit]) -> Int32 {
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   group.spawn_bg(no_wait=true) <| () => {
@@ -70,9 +70,9 @@ async fn request_then_cancel(
   client : @moonhttp.Client,
   config : @moonhttp.Config,
   controller : @moonhttp.AbortController,
-  delay : Int,
+  delay : Int32,
   reason : String,
-) -> (@moonhttp.HttpError, Int) {
+) -> (@moonhttp.HttpError, Int32) {
   let outcome : Array[@moonhttp.HttpError?] = [None]
   let started = @async.now()
   let worker = group.spawn(() => {

@@ -13,7 +13,7 @@ priv enum BodyMode {
   /// 无体（HEAD / 1xx / 204 / 304）：永远 EOF
   Empty
   /// 定长：读满即 EOF
-  Length(Int)
+  Length(Int32)
   /// chunked：状态机在 httpproto，这里喂字节、收数据段
   Chunked(@httpproto.ChunkDecoder)
   /// 读到连接关闭为止
@@ -40,13 +40,13 @@ priv struct BodyReader {
   /// 队首段的已消费位置。不设它，一次拉取解出超过 `max_len` 的数据
   /// 就会丢字节。
   mut pending : Array[Bytes]
-  mut pending_off : Int
+  mut pending_off : Int32
 }
 
 ///|
 /// 线上字节的一次拉取粒度。chunked 的数据段切分是逐字节的，这个缓冲
 /// 只影响「每次从内核拿多少」，不影响正确性。
-const BODY_PULL_SIZE : Int = 16384
+const BODY_PULL_SIZE : Int32 = 16384
 
 ///|
 fn BodyReader::open(
@@ -87,9 +87,9 @@ impl @io.Reader for BodyReader with fn _get_internal_buffer(self : BodyReader) -
 impl @io.Reader for BodyReader with fn _direct_read(
   self : BodyReader,
   dst : FixedArray[Byte],
-  offset~ : Int,
-  max_len~ : Int,
-) -> Int {
+  offset~ : Int32,
+  max_len~ : Int32,
+) -> Int32 {
   // 余量优先：上次解出没装下的数据段照常交出（哪怕分帧已收尾）
   let mut filled = self.drain_pending(dst, offset~, max_len~)
   if filled > 0 {
@@ -155,11 +155,11 @@ impl @io.Reader for BodyReader with fn _direct_read(
 fn BodyReader::stash(
   self : BodyReader,
   dst : FixedArray[Byte],
-  offset~ : Int,
-  max_len~ : Int,
+  offset~ : Int32,
+  max_len~ : Int32,
   piece : Bytes,
-  filled : Int,
-) -> Int {
+  filled : Int32,
+) -> Int32 {
   let mut i = 0
   while i < piece.length() && filled + i < max_len {
     dst[offset + filled + i] = piece[i]
@@ -180,9 +180,9 @@ fn BodyReader::stash(
 fn BodyReader::drain_pending(
   self : BodyReader,
   dst : FixedArray[Byte],
-  offset~ : Int,
-  max_len~ : Int,
-) -> Int {
+  offset~ : Int32,
+  max_len~ : Int32,
+) -> Int32 {
   let mut filled = 0
   while filled < max_len && self.pending.length() > 0 {
     let piece = self.pending[0]

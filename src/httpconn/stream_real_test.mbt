@@ -10,7 +10,7 @@
 async fn raw_server(
   group : @async.TaskGroup[Unit],
   handle : async (@socket.Tcp) -> Unit,
-) -> Int {
+) -> Int32 {
   let server = @socket.TcpServer::TcpServer(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   group.spawn_bg(no_wait=true) <| () => {
@@ -32,7 +32,7 @@ async fn raw_server(
 ///|
 async fn send_simple(
   meth : String,
-  port : Int,
+  port : Int32,
   path : String,
 ) -> @transport.RawResponse {
   let transport : &@transport.Transport = @httpconn.HttpConnTransport::new()

@@ -13,9 +13,9 @@
 /// 而不是等到整份响应体读完。
 async fn drip_server(
   group : @async.TaskGroup[Unit],
-  chunk_count : Int,
-  delay : Int,
-) -> Int {
+  chunk_count : Int32,
+  delay : Int32,
+) -> Int32 {
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   group.spawn_bg(no_wait=true) <| () => {
@@ -37,7 +37,7 @@ async fn drip_server(
 /// 上传取消的用例靠它制造挂起点：客户端一直往里写，内核缓冲写满之后写动作就挂在
 /// socket 上，这时取消才有效可施（那种「执行到下一个检查点再看标志位」的实现在
 /// 这里同样没有检查点）。
-async fn deaf_server(group : @async.TaskGroup[Unit]) -> Int {
+async fn deaf_server(group : @async.TaskGroup[Unit]) -> Int32 {
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   group.spawn_bg(no_wait=true) <| () => {
@@ -60,7 +60,7 @@ async test "cancelling from the download progress callback stops the read" {
     let port = drip_server(group, 4, 100)
     let controller = @moonhttp.AbortController::new()
     let client = @moonhttp.Client::new()
-    let seen : Array[Int] = [0]
+    let seen : Array[Int32] = [0]
     let error = try {
       ignore(
         client.request(
@@ -178,7 +178,7 @@ async test "cancelling from the upload progress callback stops the upload" {
     let payload = body.to_string()
     let controller = @moonhttp.AbortController::new()
     let client = @moonhttp.Client::new()
-    let seen : Array[Int] = [0]
+    let seen : Array[Int32] = [0]
     let error = try {
       ignore(
         client.request(

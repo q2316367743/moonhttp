@@ -43,7 +43,7 @@ fn cookie_client_with(
 
 ///|
 /// 取第 `index` 次请求实际发出的 `Cookie` 头（没发过是 `None`）。
-fn sent_cookie(mock : @transport.MockTransport, index : Int) -> String? {
+fn sent_cookie(mock : @transport.MockTransport, index : Int32) -> String? {
   mock.received()[index].headers.get("Cookie")
 }
 

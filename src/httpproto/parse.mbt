@@ -34,7 +34,7 @@ pub extend HttpVersion with @debug.Debug::{to_repr}
 /// 状态行解析结果：`HTTP/1.1 200 OK` 的三个组成部分。
 pub(all) struct StatusLine {
   version : HttpVersion
-  code : Int
+  code : Int32
   /// 原样保留（可能为空：`HTTP/1.1 204` 合法；也可能自己含空格）
   reason : String
 } derive(Eq, Debug)

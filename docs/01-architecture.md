@@ -8,16 +8,13 @@ moonhttp/
 ├── README.mbt.md                使用者文档（README.md 是指向它的符号链接）
 ├── docs/                        本目录：维护者文档
 └── src/
-    ├── moon.pkg                 根包：门面与编排（依赖下方全部）
-    ├── client.mbt               Client 与三个入口（request / stream / sse）+ 两个工厂
-    │                            + 接壤层（拼请求、拼 Response）
-    ├── http_error.mbt           错误契约：ErrorCode / ErrorInfo / HttpError 与**所有**抛错点
-    ├── facade.mbt               门面层：Response / StreamResponse / SseStream 等
-    │                            对外响应类型 + pub using 再导出
-    ├── interceptors.mbt         拦截器：Interceptors（注册 / 同名替换 / 按名移除）+ 三条链的驱动
-    ├── shortcuts.mbt            快捷方法：七个动词对 request 的薄封装（见 14-shortcut-methods.md）
+    ├── moon.pkg                 根包：纯门面（pub using 再导出，不含实现）
+    ├── facade.mbt               唯一的根包源文件：再导出全部公开类型与工厂函数
     ├── *_test.mbt               根包黑盒测试（用 MockTransport 跑整条管线）
-    ├── *_wbtest.mbt             根包白盒测试（覆盖只能从包内部触达的分支）
+    ├── response/                读全量的响应值：Response（不抛 HttpError）
+    ├── http_error/              纯错误契约：ErrorCode / ErrorInfo / HttpError（不造错误）
+    ├── client/                  编排层：Client 与三个入口、拦截器、流式响应、
+    │                            重定向、错误构造、快捷方法（见下）
     ├── abort/                   取消原语：AbortController / AbortSignal / AbortError（纯状态，不碰 async）
     ├── config/                  配置的形状、合并契约、默认值、构建器、请求体序列化、重定向的下一跳规则与代理配置
     ├── cookie/                  cookie 罐：Set-Cookie 解析、归属与匹配、自动过期（纯逻辑，见 19-cookies.md）
@@ -35,32 +32,36 @@ moonhttp/
 
 **为什么根目录的文件多，而测试文件不能挪到 `tests/` 之类的子目录**：MoonBit 的约定是「一个目录 = 一个包」，测试文件按**所在目录的包**归属——`src/foo_test.mbt` 是 `src` 这个包的黑盒测试，`src/foo_wbtest.mbt` 是它的白盒测试（白盒测试会被编进包里才能看见 `priv`，物理上不可能在别处）。把它们移进子目录，它们就变成了「一个新包的测试」，与被测的包再无关系。
 
-**为什么这些代码只能待在根包（`client.mbt` / `http_error.mbt` / `facade.mbt`），而不能整体搬进一个 `client/` 子包**：两层原因，第二层是实测出来的硬限制。
+**门面类型为什么拆成 `response` / `http_error` / `client` 三个包，而不是全堆在根包或全并成一包**：这三个类型簇互相引用，但引用方向**不是**对称的——理清方向就能分层：
 
-第一层是包间不能成环。`Client` 抛 `HttpError`、又返回 `Response` / `StreamResponse` / `SseStream`，两个流式类型的方法也抛 `HttpError`，`HttpError` 带 `Response`——这几个类型互相引用，构成一个强连通块，必须同属一个包。而根包要能用 `@moonhttp.Client` / `@moonhttp.default_client()`，`Client` 就必须定义在根包里（`pub using` 能再导出**类型与函数**，但包一旦 import 一个反过来 import 自己的包就成环）。
+- `HttpError`（`ErrorInfo`）带 `response : Response?` 字段——错误需要 `Response` 在它的下游；
+- `Response` 本身**不**抛 `HttpError`（读方法最多抛 `@json.ParseError`），能垫在最下面；
+- 真正两个方向都碰的是 `StreamResponse` / `SseStream`：读方法抛 `HttpError`——它们必须待在 `HttpError` 的上游，与 `Client` 同层。
 
-第二层是 `pub using` 再导出不了**错误构造子**，这是决定性的：
+于是得到一条单向链：`response`（值）← `http_error`（契约）← `client`（行为）← 根包（门面）。职责口径：`response` 只装「读全量的响应值」，`http_error` 只定义「错误长什么样」（它连 `transport` 都不依赖），`client` 装「一切会抛 `HttpError` 的编排」——包括所有造错误的抛错点（`client/errors.mbt`），造错误是编排层的行为，不是契约的一部分。
+
+**2026-10-14 完成这次下沉时实测过的工具链边界**（此前文档的结论是「搬不走」，当时漏测了类型限定的构造器写法）：
 
 | 试法 | 编译器结果 |
 |---|---|
-| `pub using @client {type HttpError}` | 类型可用，但 `catch { @moonhttp.HttpError(info) }` 报 `Value HttpError not found in package 'moonhttp'` |
-| `pub using @client {HttpError}`（裸名当值） | `Alias for the type '@client.HttpError' should be created via 'using @client {type HttpError}'` |
-| `pub using @transport {type TransportError, Timeout, Network, Unsupported}`（构造子名与类型名不同的对照） | `The type/trait @transport.Timeout is not found`——`using` 列表里的裸名只按**类型 / trait** 解析，根本不认错误构造子 |
-| `pub type HttpError = @client.HttpError`（类型别名） | 同样只带类型，不带构造子 |
+| `pub using @http_error {type HttpError}` 后写 `catch { @moonhttp.HttpError(info) }`（包限定值） | 失败：`Value HttpError not found in package 'moonhttp'`——`using` 带得动类型名，带不动构造器 |
+| 同上，写 `catch { @moonhttp.HttpError::HttpError(info) }`（**类型限定构造器**） | **通过**。与 `@moonhttp.Method::Post` 穿透 `pub using` 是同一条查找规则 |
+| `pub using @http_error {HttpError}`（裸名） | `Alias for the type ... should be created via 'using @http_error {type HttpError}'`——裸名只按类型 / trait 解析 |
+| `pub type HttpError = @http_error.HttpError` | 同样只带类型，不带构造器 |
 
-也就是说，只要 `HttpError` 定义在子包里，`catch { @moonhttp.HttpError(info) => ... }` 这个写法就必然失效（只能改成 `catch { error => error.code() / error.message() }` 这种访问器写法，要解构就得额外 `import @moonhttp/client`）。`http_error.mbt` 里把它声明成 `pub(all) suberror` 就是为了让调用方能解构，这个代价换一个「根包更干净」不值得——**所以不要再尝试把这些代码搬进子包**（拆文件是可以的，见下）。
+所以唯一的代价是：使用方的构造器模式要写类型限定的形式 `catch { @moonhttp.HttpError::HttpError(info) => ... }`。类型注解、方法调用、`raise` 签名、单 import 全部不变；项目内受影响的写法在迁移时只有三处（其余用例本来就是「通配 catch + 访问器」风格）。
 
-**能干净独立出去的是「签名里不出现门面类型」的纯逻辑**——`sse/` 就是这么出去的（`abort` / `config` / `headers` / `url` 同理），根包里的纯函数同理，它们现在都在 `util/` 包里：`resolve_method` / `basic_auth` / `build_prepared_request` / `decode_body` / `encode_body` / `media_type` / `declares_event_stream` / `status_allowed`。
+**能干净独立出去的依然是「签名里不出现门面类型」的纯逻辑**——`sse/`、`abort/` / `config/` / `headers/` / `url/` 都是这么出去的，根包原有的纯函数在 `util/` 里：`resolve_method` / `basic_auth` / `build_prepared_request` / `decode_body` / `encode_body` / `media_type` / `declares_event_stream` / `status_allowed`。
 
-判据落在**签名**上，不是「感觉像工具函数」：只要返回 `Response` 或抛 `HttpError`，就必须留在根包——`util` 一旦反过来依赖根包就成环。所以 `prepare_request` / `build_response` 留在 `client.mbt`，`transport_error` / `status_error` / `status_error_code` / `validate_response` 与错误类型一起待在 `http_error.mbt`，它们正是「与门面类型接壤」的那一层；`util` 的准入条件写在 `src/util/moon.pkg` 里，往里加东西前先看那一条。
+判据落在**签名**上，不是「感觉像工具函数」：只要返回 `Response` 或抛 `HttpError`，就必须待在 `client` 包（或 `response` / `http_error` 自己）——下游包一旦反过来依赖上游就成环。所以 `prepare_request` / `build_response`（`client/pipeline.mbt` / `redirects.mbt`）与 `transport_error` / `status_error` / `validate_response`（`client/errors.mbt`）都在 `client` 包里，它们正是「与门面类型接壤」的那一层；`util` 的准入条件写在 `src/util/moon.pkg` 里，往里加东西前先看那一条。
 
-同一条判据也解释了拦截器为什么挂在根包的 `Client` 上而不是像 `params_serializer` 那样进 `Config`：响应侧签名要提到 `Response` 与 `HttpError`，字段一进 `config` 包就成环（顺带这也是 axios 的语义——`interceptors` 本来就是实例级）。详见 `11-interceptors.md`。
+同一条判据也解释了拦截器为什么挂在 `Client` 上而不是像 `params_serializer` 那样进 `Config`：响应侧签名要提到 `Response` 与 `HttpError`，它们在 `config` 的下游包里，字段一进 `config` 包就成环（顺带这也是 axios 的语义——`interceptors` 本来就是实例级）。详见 `11-interceptors.md`。
 
-`build_prepared_request` 是这条判据下唯一需要改造才搬得动的：它原来用 `raise HttpError` 报「地址不可用」，搬进 `util` 后改成返回 `Option`（`None` = 地址不可用），由根包的 `prepare_request` 翻译成 `InvalidUrl` 错误——错误码与文案属于对外契约，留在根包。这与 `@url.build_full_path` 返回 `Option`、根包负责报错的分工完全一致。
+`build_prepared_request` 是这条判据下唯一需要改造才搬得动的：它原来用 `raise HttpError` 报「地址不可用」，搬进 `util` 后改成返回 `Option`（`None` = 地址不可用），由 `client` 包的 `prepare_request` 翻译成 `InvalidUrl` 错误——错误码与文案属于对外契约，留在编排层。这与 `@url.build_full_path` 返回 `Option`、编排层负责报错的分工完全一致。
 
-**根包有五个源文件**：`client.mbt`（`Client` + 三个入口 + 接壤层）、`http_error.mbt`（错误类型与所有抛错点）、`facade.mbt`（对外响应类型与再导出）、`interceptors.mbt`（拦截器的注册 / 同名替换 / 按名移除与三条链，`client.mbt` 在管线两端调它）、`shortcuts.mbt`（七个动词的快捷方法，转调 `Client::request`，见 `14-shortcut-methods.md`）。前四个都用上了 RL-04 为根包文件开出的例外（≤ 1000 行，需在文件头声明；`interceptors.mbt` 是加了具名注册与按名移除之后越过 300 行的）；`shortcuts.mbt` 不足 300 行，用不上例外。
+**根包只剩一个源文件**：`facade.mbt`，纯 `pub using` 再导出 + 两个工厂函数（`create` / `default_client` 也从 `client` 包再导出），远低于 300 行。`client` 包内部分成 12 个文件（职责清单见 `src/client/client.mbt` 文件头），全部守住 300 行红线——以前靠 RL-04 根包例外（≤ 1000 行）才装得下的内容，下沉后按包的规矩拆开了。`Response` 的跨包构造走 `response` 包公开的 `Response::new`（`raw` 是私有字段，跨包写不出记录字面量）。
 
-**同包拆文件是免费的**：同目录 = 同包，拆文件既不成环、也不影响 `pub` / `priv` 的可见性，`.mbti` 一个字都不会变——所以「文件太长」永远可以靠拆文件解决，不必动包结构。跨包才有代价（`HttpError` 就是被这一条钉在根包里的，理由见上）。**例外只给根包**：子包仍守 300 行（`util/` 两个文件各不足 300 行，`config` / `sse` / `transport` 里的文件超了就必须拆）。
+**同包拆文件是免费的**：同目录 = 同包，拆文件既不成环、也不影响 `pub` / `priv` 的可见性，`.mbti` 一个字都不会变——所以「文件太长」永远可以靠拆文件解决，不必动包结构。跨包才有代价（构造器不能穿透 `pub using` / 包内 `using`，理由见上）。**RL-04 的例外只给根包**：子包守 300 行——`client` 包下沉时就是把原来四个超限的根包文件拆成 12 个短文件的。
 
 ## 依赖方向（无环）
 
@@ -70,12 +71,14 @@ MoonBit 的包之间不能循环依赖，所以分层是按「数据从谁流向
 abort ───→ transport ─┐
 headers ─┬─→ config ──┤
 url ─────┘            │
-url ──────────────────┼─→ util ──┐
-transport ────────────┘          ├─→ （根包：门面 + 编排）──→ Client / request / stream / sse
-sse ─────────────────────────────┤
-cookie ──────────────────────────┤
-httpproto ──→ httpconn ──────────┘
+url ──────────────────┼─→ util ──→ response ──→ http_error ─┐
+transport ────────────┘                                      │
+sse ─────────────────────────────────────────────────────────┤
+cookie ──────────────────────────────────────────────────────┼─→ client ──→ （根包：纯门面）
+httpproto ──→ httpconn ──────────────────────────────────────┘
 ```
+
+- `response` 依赖 `config`（错误……不，响应里带配置）/ `headers` / `util`（编解码）与 core 的 `json` / `debug`——它不依赖 `http_error`，这是它能垫底的原因；
 
 - `config` 依赖 `headers`（配置里有头字段）与 `url`（urlencoded 请求体复用 query 的序列化器），
   并且自己带着**合并契约**（`config/merge.mbt`）：
@@ -83,14 +86,17 @@ httpproto ──→ httpconn ──────────┘
 - `url` 不依赖任何本项目的包（只吃字符串和 `Json`），因此它同时被 `config`（编码请求体）与 `util`（拼地址与 query）用到，不成环；
 - `sse` 也不依赖本项目的包（只吃字节），所以它是这层里唯一能被任意字节来源复用的包；
 - `cookie` 依赖 `url`（`url_host` / `url_path` / `url_scheme` 做请求 URL 的零件提取）与
-  `core/env`（`now()` 当过期时钟），不碰 async——它的状态挂在根包的 `Client` 上
+  `core/env`（`now()` 当过期时钟），不碰 async——它的状态挂在 `client` 包的 `Client` 上
   （`Client::new(cookie_jar~)`），见 `19-cookies.md`；
-- `abort` 也不依赖本项目的包（纯状态机：`AbortController` / `AbortSignal` / `AbortError`）：`transport` 用它做取消作用域的观察对象，根包用它做三个入口 `signal?` 参数的类型——**`config` 不认识它**：信号不是配置字段，放进实例默认值会让这个实例之后的所有请求一起失效（见 `12-cancellation.md`）；
+- `abort` 也不依赖本项目的包（纯状态机：`AbortController` / `AbortSignal` / `AbortError`）：`transport` 用它做取消作用域的观察对象，`client` 包用它做三个入口 `signal?` 参数的类型——**`config` 不认识它**：信号不是配置字段，放进实例默认值会让这个实例之后的所有请求一起失效（见 `12-cancellation.md`）；
 - `transport` 依赖 `config` / `headers` / `abort`（`PreparedRequest` 的字段类型）与 `moonbitlang/async` 的 io / gzip（响应体流、取消作用域、缓冲路径的 gzip 解压）；
 - `httpproto` 只依赖 core（纯协议逻辑：请求行 / 状态行 / 头块 / 分帧 / chunked），不认识连接、不碰 async，因此同步可测；
 - `httpconn` 依赖 `transport`（拿 trait 与契约类型）、`httpproto`（协议层的纯逻辑）与 `headers`，实现 `transport` 的 `Transport` trait——它是**唯一**与 socket / tls 打交道的包（自研 HTTP/1.x 栈，2026-09-30 起也是缺省传输，见 `18-httpconn-transport.md`）；
-- `util` 依赖 `abort` / `config` / `headers` / `url` / `transport`（拼请求要用到它们），但它不认识任何门面类型——这正是它能待在根包外面的唯一理由；
-- 根包依赖以上全部，负责编排与对外 API。
+- `util` 依赖 `abort` / `config` / `headers` / `url` / `transport`（拼请求要用到它们），但它不认识任何门面类型——这正是它能待在所有业务包下面的唯一理由；
+- `response` 依赖 `config` / `headers` / `util` 与 core 的 `json`（`Response::json`）——它是「读全量的响应值」，不抛 `HttpError`，这是它能垫在 `http_error` 下面的前提；
+- `http_error` 只依赖 `config`（错误带配置）与 `response`（错误带已收到的响应）——它是纯契约，连 `transport` 都不认识，造错误的抛错点全部在 `client` 包（`client/errors.mbt`）；
+- `client` 依赖 `response` / `http_error` 与基础层全部（`config` / `transport` / `httpconn` / `cookie` / `sse` / `util` / `abort`），负责编排与构造错误；
+- 根包只依赖 `response` / `http_error` / `client` 与再导出所需的子包，不含任何实现。
 
 ## 关键设计决策
 
@@ -110,7 +116,7 @@ MoonBit 标准库没有任何网络能力，网络与异步设施都在 `moonbit
 - 响应体是流（`ResponseBody`），但它的读语义在内存体与真实连接上完全一致，Mock 因此能代表网络侧的流式行为；
 - 使用方也能替换传输层（自定义实现只需一个方法）。
 
-同一把尺子也决定了 SSE 解析的位置：它只吃字节、不碰 async，所以独立成 `sse` 包，用同步测试覆盖规范逐条（`src/sse/sse_test.mbt`）。传输层只负责把字节交出来，「字节怎么解」是上层的事；而「怎么把字节喂给解析器」是根包里 `SseStream` 的事（`facade.mbt`）。
+同一把尺子也决定了 SSE 解析的位置：它只吃字节、不碰 async，所以独立成 `sse` 包，用同步测试覆盖规范逐条（`src/sse/sse_test.mbt`）。传输层只负责把字节交出来，「字节怎么解」是上层的事；而「怎么把字节喂给解析器」是 `client` 包里 `SseStream` 的事（`src/client/sse_stream.mbt`）。
 
 ### 2. 配置是值语义 + `Option` 字段
 
@@ -122,9 +128,9 @@ MoonBit 标准库没有任何网络能力，网络与异步设施都在 `moonbit
 
 MoonBit 的 import 是包级的：`Config` 的字段类型 `Headers` 定义在另一个包里，使用者若要用 `Config` 就得 import 两个包。为此确立约定：
 
-> 凡是出现在公开签名里的类型，都在**用到它**的那个包里用 `pub using` 再导出一次，本包代码因此能写裸名（`config` / `headers` / `transport` / `util` 都这么干）；根包（`src/facade.mbt`）再对使用者导出一份。
+> 凡是出现在公开签名里的类型，都在**用到它**的那个包里用 `pub using` 再导出一次，本包代码因此能写裸名（`config` / `headers` / `transport` / `util` / `client` 都这么干）；根包（`src/facade.mbt`）再对使用者导出一份。
 
-所以日常使用只需要 `@moonhttp` 一个 import。
+所以日常使用只需要 `@moonhttp` 一个 import。`pub using` 的边界也要记住：它再导出**类型与函数**，但**再导出不了错误构造器**——使用方解构 `HttpError` 要写类型限定的形式 `catch { @moonhttp.HttpError::HttpError(info) => ... }`（包内 `using` 别名同理，见上文实测表与 `src/client/errors.mbt` 的 `make_error`）。
 
 ## 怎么扩展
 
@@ -134,7 +140,7 @@ MoonBit 的 import 是包级的：`Config` 的字段类型 `Headers` 定义在�
 2. 加 `with_*` 构建器（若使用者需要设置它）。放 `src/config/config.mbt`；那个文件贴着 RL-04 的 300 行上限，构建器可以按功能单独成文件（`proxy.mbt` / `serializer.mbt` / `progress.mbt`），字段本身只能留在结构体里；
 3. `src/config/render.mbt` 的 `Config::to_string` 里加一行渲染（可选，但有助于排查）；
 4. `src/config/merge.mbt` 的 `merge_config` 里**显式**选择一档策略调用，并在注释里说明为什么是这一档（漏了是编译错误：记录字面量必须列全字段）；
-5. 若它参与请求构造，接到 `src/util/request.mbt` 的 `build_prepared_request`（拼地址/头/body）或 `src/client.mbt` 的 `build_response`（解码已有 `src/util/response.mbt` 的 `decode_body`）。若它影响的是「每一跳怎么发」这类编排，落点同样在 `src/client.mbt`：`max_redirects` 由 `Client::send_following_redirects` 消费，配置侧的改写规则在 `src/config/redirect.mbt`（见 `08-redirects.md`）；
+5. 若它参与请求构造，接到 `src/util/request.mbt` 的 `build_prepared_request`（拼地址/头/body）或 `src/client/pipeline.mbt` 的 `build_response`（解码已有 `src/util/response.mbt` 的 `decode_body`）。若它影响的是「每一跳怎么发」这类编排，落点同样在 `src/client/`：`max_redirects` 由 `Client::send_following_redirects`（`redirects.mbt`）消费，配置侧的改写规则在 `src/config/redirect.mbt`（见 `08-redirects.md`）；
 6. 补测试：`src/config/merge_test.mbt` 测合并语义，根包 `src/*_test.mbt` 测端到端效果；
 7. 更新 `docs/02-config-merge.md` 的字段归属表。
 
@@ -147,7 +153,7 @@ MoonBit 的 import 是包级的：`Config` 的字段类型 `Headers` 定义在�
 
 ### 新增一个快捷方法（如 `get` / `post`）
 
-七个动词（`get` / `post` / `put` / `delete` / `head` / `options` / `patch`）已经落地在 `src/shortcuts.mbt`，契约与「为什么是七个独立函数」见 `14-shortcut-methods.md`。要再加一个动词，不要复制管线逻辑，往那里的包私有出口 `Client::send_verb` 上挂一行转调即可：
+七个动词（`get` / `post` / `put` / `delete` / `head` / `options` / `patch`）已经落地在 `src/client/shortcuts.mbt`，契约与「为什么是七个独立函数」见 `14-shortcut-methods.md`。要再加一个动词，不要复制管线逻辑，往那里的包私有出口 `Client::send_verb` 上挂一行转调即可：
 
 ```moonbit
 pub async fn Client::trace(
@@ -200,7 +206,7 @@ pub impl Transport for MyTransport with fn send(self, request) {
 | `pub(all) struct` 里允许个别字段标 `priv` | 三个门面类型都靠这条：`StreamResponse` / `SseStream` 的响应体流私有（读取必须走本类型的方法，错误才能统一成 `HttpError`）、`Response` 的 `raw` 私有（读法收敛到 `bytes()` / `text()` / `json()` 三个入口，解码规则只有一个落点）；`Config.data` 同理（请求体只能经四个构建器设置） |
 | **私有字段会让跨包的记录字面量 / 记录展开失效**：`{ ..config, x: ... }` 报 `Cannot use struct update syntax on struct Config because it has private fields` | 一旦某个字段私有，别的包就既不能按名字段构造、也不能用记录展开，构造只能走构建器。两个落地后果：`merge_config` 必须与 `Config` 同包（`config/merge.mbt`）；根包回填方法只能写 `merged.with_method(...)` 而不是 `{ ..merged, http_method: ... }`。包内不受影响（`Config::new`、`with_*` 都是包内记录展开），要测包内写法得用白盒测试（`config/config_wbtest.mbt`） |
 | `errdefer` 在 async 函数里同样有效，适合「失败就关连接」这类清理 | 传输层用它保证建连之后的任何失败都关闭连接；比 `try ... catch { cleanup; raise }` 更短，也不会触发 `fragile_catch_all` 告警 |
-| 含 `mut` 字段的结构体，其内部变异**能穿过值类型字段可见**——把这种类型放进另一个结构体当普通字段（不标 `mut`）也照样生效 | `StreamResponse` 里的 `priv parser : SseParser` 就没标 `mut`：`next_event` 反复调 `parser.push` 能累积状态（`facade.mbt` 里的 `StreamResponse`）。给字段标 `mut` 反而会收到 `unused_mut` 告警——编译器认定这个 `mut` 没被用到，因为根本没有对该字段的整体赋值 |
+| 含 `mut` 字段的结构体，其内部变异**能穿过值类型字段可见**——把这种类型放进另一个结构体当普通字段（不标 `mut`）也照样生效 | `SseStream` 里的 `priv parser : SseParser` 就没标 `mut`：`next_event` 反复调 `parser.push` 能累积状态（`src/client/sse_stream.mbt`）。给字段标 `mut` 反而会收到 `unused_mut` 告警——编译器认定这个 `mut` 没被用到，因为根本没有对该字段的整体赋值 |
 | **结构体字段里的函数值要先绑到局部变量再调**：`pair.on_fulfilled(x)` 会被当成「在 `ResponsePair` 上找一个叫 `on_fulfilled` 的方法」，报 `Type ResponsePair has no method on_fulfilled` | 写成 `let f = pair.on_fulfilled` 再 `f(x)`（编译器给的另一种写法是 `(pair.on_fulfilled)(x)`）。数组元素不受影响（`arr[i](x)` 正常） |
 | **`async fn` 默认隐式可抛错**：不写 `noraise` 的 async 函数，其错误类型是泛化的 `Error` | 在 `raise HttpError` 的函数里调用它报 `The error type is mismatched: wanted: HttpError, has: Error`。把「错误全部收进 `Result`、自己不抛」的 async 函数显式标 `noraise`（`async fn f(...) -> Result[..] noraise`），如 `Interceptors::run_request` |
 | **async 函数值是一等公民，但「同步函数」不能顶替它**：`async (A) -> B raise E` 可以存进结构体字段 / 数组，用普通 `f(x)` 调用（**没有 `await` 关键字**）；反过来 `(A) -> B` 不是它的子类型（报 `Expr Type Mismatch`），且效果推断只支持箭头闭包 | 存进 `Array[async (Config) -> Config raise HttpError]` 的闭包写箭头形式 `config => { ... }`；块式 `fn(config) { ... }` 字面量不会被推断成 async / raise，要写成 `async fn(config) -> Config raise HttpError { ... }`。已有的具名同步函数要包一层 `config => f(config)`。拦截器与传输层都建立在这条上 |

@@ -4,21 +4,21 @@
 
 | 文件 | 职责 |
 |---|---|
-| `src/client.mbt` | `Client::request` / `Client::stream` / `Client::sse` 的编排：合并 → 定方法 → 取消预检查 → 请求拦截器 → 发送 →（读全量 / 交还流）→ 校验 → 响应拦截器；失败按来源分流到请求侧 / 响应侧两条错误链 |
-| `src/interceptors.mbt` | 拦截器与两条错误链：`Interceptors`（注册、同名替换、按名移除，全部发生时都还没进管线，见 `11-interceptors.md`）、`run_request` / `run_request_errors` / `run_response`（顺序与错误流转） |
-| `src/shortcuts.mbt` | 七个动词的快捷方法（`get` / `post` / …）：补 `url` 与动词后转调 `Client::request`，没有自己的管线（详见 `14-shortcut-methods.md`） |
+| `src/client/` | `Client::request` / `Client::stream` / `Client::sse` 的编排（`pipeline.mbt` / `stream_entry.mbt` / `client.mbt`）：合并 → 定方法 → 取消预检查 → 请求拦截器 → 发送 →（读全量 / 交还流）→ 校验 → 响应拦截器；失败按来源分流到请求侧 / 响应侧两条错误链 |
+| `src/client/interceptors*.mbt` | 拦截器与两条错误链：`Interceptors`（注册、同名替换、按名移除，全部发生时都还没进管线，见 `11-interceptors.md`）、`run_request` / `run_request_errors` / `run_response`（顺序与错误流转） |
+| `src/client/shortcuts.mbt` | 七个动词的快捷方法（`get` / `post` / …）：补 `url` 与动词后转调 `Client::request`，没有自己的管线（详见 `14-shortcut-methods.md`） |
 | `src/config/merge.mbt` | 合并契约：四种策略、`merge_config`、`flatten_headers`（为什么在 `config` 包见 `02-config-merge.md`） |
 | `src/config/body.mbt` | 请求体的四种形态与序列化：`serialize_body`（字节 + 建议的 `Content-Type`） |
 | `src/config/form.mbt` | 表单的 `multipart/form-data` 编码（详见 `07-request-body.md`） |
 | `src/config/progress.mbt` | 进度回调的 `ProgressEvent` / `ProgressCallback` 与两个 `with_on_*` 构建器（详见 `10-progress.md`） |
 | `src/util/request.mbt` | 请求侧的纯函数：`resolve_method`、`build_prepared_request`（地址、头、body 的拼装）与只给它用的 `basic_auth` |
 | `src/util/response.mbt` | 响应侧的纯函数：`decode_body`（读）、`encode_body`（写，响应拦截器改写响应体用）、`declares_event_stream`（与只给它用的 `media_type`）、`status_allowed` |
-| `src/client.mbt` | 与门面类型接壤的那两个函数：`prepare_request`（把纯函数的 `None` 翻译成 `InvalidUrl` 错误）、`build_response` |
-| `src/http_error.mbt` | 错误类型 `ErrorCode` / `ErrorInfo` / `HttpError` 与所有抛错点：`transport_error`、状态码分档 `status_error_code` / `status_error` / `validate_response` |
+| `src/client/redirects.mbt` + `pipeline.mbt` | 与门面类型接壤的那两个函数：`prepare_request`（把纯函数的 `None` 翻译成 `InvalidUrl` 错误）、`build_response` |
+| `src/http_error/` + `src/client/errors.mbt` | 错误类型 `ErrorCode` / `ErrorInfo` / `HttpError` 在契约包；所有抛错点（`transport_error`、状态码分档 `status_error_code` / `status_error` / `validate_response`）在编排层 |
 | `src/url/combine.mbt` | 绝对地址判定、`combine_urls`、`build_full_path` |
 | `src/url/build_url.mbt` | `params` → query string（自定义 `paramsSerializer` 的接入点） |
 | `src/url/encode.mbt` | 单个 URL 组件的百分号编码 |
-| `src/facade.mbt` | 门面层：`Response`（读全量）/ `StreamResponse`（原始流）/ `SseStream`（事件流）/ `HttpError` 与各子包类型的再导出 |
+| `src/facade.mbt` | 纯门面：`pub using` 再导出各子包的类型（`Response` 在 response、`HttpError` 在 http_error、`Client` / `StreamResponse` / `SseStream` 在 client） |
 
 `util/` 与 `url/` 里的管线函数都是**纯函数**（没有 IO、不涉及异步），可以脱离网络单独测试，`url/url_test.mbt` 就是逐条钉住边界行为的。两者的差别只在依赖：`url/` 连 `Config` 都不认识，`util/` 认识配置与传输层的数据形状（`PreparedRequest`），但不认识任何门面类型。
 
@@ -64,7 +64,7 @@
 负责（`05-transport.md` 的「取消语义」、完整机制见 `12-cancellation.md`）。
 信号**不在配置里**（一次性的信号放进实例默认值会拖垮这个实例之后的所有请求），只能按请求传。
 检查走 `AbortSignal::throw_if_aborted()`，它抛的 `AbortError` 在这里被归一成统一的 `HttpError`
-——这是 `abort` 包与本项目错误体系唯一的接壤处（`http_error.mbt` 的 `abort_error`）。
+——这是 `abort` 包与本项目错误体系唯一的接壤处（`src/client/errors.mbt` 的 `abort_error`）。
 
 第 1–5 步是「拼出一份能发出去的请求」，与读不读响应体无关。第 6 步包含自动跟随重定向（`request` 与两个流式入口共用同一段循环，所以上行地址、方法与头在跟随后的形态完全一致）；第 6 步起有三种**读法**，各有自己的入口与返回类型：
 

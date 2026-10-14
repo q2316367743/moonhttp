@@ -14,7 +14,7 @@
 | `src/util/request.mbt` | `build_prepared_request`：拼出代理地址、决定 `Proxy-Authorization` 的取值，并把它从目标请求头里取走 |
 | `src/transport/transport.mbt` | `ProxyEndpoint`（`url` + `authorization`）与 `PreparedRequest::proxy` 字段 |
 | `src/httpconn/connection.mbt` | `dial_via_proxy` + `establish_tunnel`：CONNECT 隧道握手；非 2xx 翻译成人话（407 带状态码），网络类失败归 `TransportError::Network` |
-| `src/client.mbt` | `prepare_request`：代理配置缺 host 时报 `ERR_INVALID_URL`（与「缺 url」分开报） |
+| `src/client/redirects.mbt` | `prepare_request`：代理配置缺 host 时报 `ERR_INVALID_URL`（与「缺 url」分开报） |
 | `src/config/proxy_test.mbt` / `src/config/merge_wbtest.mbt` | 构建器 / 判定 / 渲染 / 合并的同步用例 |
 | `src/proxy_test.mbt` | 拼装契约（不走网络）与本机 CONNECT 代理的端到端用例（隧道、407、握手超时、缺 host） |
 

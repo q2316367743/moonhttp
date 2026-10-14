@@ -15,10 +15,10 @@ transport 装饰器式架构（一个中间件同时看得到往返两侧），�
 
 | 文件 | 职责 |
 |---|---|
-| `src/interceptors.mbt` | 四个函数类型的别名、`Interceptors`（注册、同名替换、按名移除）、三条链的驱动（顺序与错误流转） |
-| `src/client.mbt` | `Client::request` 把请求链、请求错误链、状态码校验、响应链串成一条管线；`Client::open_stream` 只串请求链；`Client::new` / `create` |
-| `src/facade.mbt` | `Response` 的五个改写入口（`with_status` / `with_headers` / `with_body` / `with_text` / `with_json`） |
-| `src/http_error.mbt` | `HttpError::new`：包外第一次能构造错误，供请求拦截器主动中止；`validate_response`（返回 `Result`，是响应侧链的输入） |
+| `src/client/interceptors*.mbt` | 四个函数类型的别名、`Interceptors`（注册、同名替换、按名移除）、三条链的驱动（顺序与错误流转） |
+| `src/client/` | `Client::request` 把请求链、请求错误链、状态码校验、响应链串成一条管线；`Client::open_stream` 只串请求链；`Client::new` / `create` |
+| `src/response/response.mbt` | `Response` 的五个改写入口（`with_status` / `with_headers` / `with_body` / `with_text` / `with_json`） |
+| `src/http_error/` + `src/client/errors.mbt` | `HttpError::new`（契约包里，包外第一次能构造错误，供请求拦截器主动中止）；`validate_response`（编排层，返回 `Result`，是响应侧链的输入） |
 | `src/interceptor_test.mbt` | 端到端用例：改写、两侧顺序、被拦下、**错误分流**、重试、缓存命中、重定向只跑一次、流式入口、具名注册与按名移除 / 同名替换 |
 
 ## 数据结构
@@ -449,7 +449,7 @@ gaato/http 那类实现把中间件做成 `Transport` 的装饰器，在本项�
 
 ## 注意事项（改动时）
 
-1. **四条链的顺序是规则化的**：请求侧一律 LIFO、响应侧一律 FIFO。改 `src/interceptors.mbt` 里
+1. **四条链的顺序是规则化的**：请求侧一律 LIFO、响应侧一律 FIFO。改 `src/client/interceptors_chain.mbt` 里
    `run_request` / `run_request_errors` / `run_response` 的遍历方向会静默改变语义。
    `src/interceptor_test.mbt` 的 "…run last-registered-first" / "…run first-registered-first"
    几条用例钉着它们。
@@ -469,7 +469,7 @@ gaato/http 那类实现把中间件做成 `Transport` 的装饰器，在本项�
 5. **`Interceptors` 的字段是私有的，注册 / 替换 / 移除一律值语义**：别改成就地 push 或就地删
    （会让共享了同一个值的两个实例互相影响），也别把它挪进 `config` 包（会成环）。注册与移除的
    校验（名字唯一性靠「同名替换原位」维持、未命中返回 `None`、名字按原样精确匹配）都留在
-   `src/interceptors.mbt` 内，`client.mbt` 不参与其中任何一环——那份值交到实例手上时已经自洽。
+   `src/client/interceptors*.mbt` 内，管线文件不参与其中任何一环——那份值交到实例手上时已经自洽。
    `a named request interceptor can be removed by name`、`re-registering the same name replaces
    the pair in place`、`removing an interceptor leaves the original set alone` 钉着这几条。
 6. **具名注册的默认行为不能变**：`name` 是**追加在最后**的可选参数，省略时的行为必须与具名之前

@@ -37,8 +37,8 @@ pub fn ResponseBody::from_bytes(data : Bytes) -> ResponseBody {
 pub fn ResponseBody::open_wire(
   reader : &@io.Reader,
   close : () -> Unit,
-  timeout~ : Int?,
-  total~ : Int?,
+  timeout~ : Int32?,
+  total~ : Int32?,
   signal~ : @abort.AbortSignal?,
 ) -> ResponseBody {
   let body : ResponseBody = {

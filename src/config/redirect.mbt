@@ -34,7 +34,7 @@
 pub fn Config::next_redirect(
   self : Config,
   current_url : String,
-  status : Int,
+  status : Int32,
   location : String?,
 ) -> Config? {
   if status < 300 || status >= 400 {
@@ -99,7 +99,7 @@ pub fn Config::next_redirect(
 ///
 /// 307/308 一律保持方法（那两个状态码的存在意义就是「原样重发」），
 /// 301/302 上的非 POST（PUT / PATCH…）也保持——这正是 follow-redirects 的行为。
-fn rewrites_to_get(status : Int, meth : Method) -> Bool {
+fn rewrites_to_get(status : Int32, meth : Method) -> Bool {
   if status == 301 || status == 302 {
     meth == Method::Post
   } else if status == 303 {

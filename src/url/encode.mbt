@@ -26,7 +26,7 @@ fn is_kept(byte : Byte) -> Bool {
 
 ///|
 /// 写出 `%XX` 形式的一个字节转义。
-fn write_escape(buf : StringBuilder, byte : Int) -> Unit {
+fn write_escape(buf : StringBuilder, byte : Int32) -> Unit {
   buf.write_char('%')
   buf.write_char(HEX_UPPER[(byte >> 4) & 0x0F].to_char())
   buf.write_char(HEX_UPPER[byte & 0x0F].to_char())

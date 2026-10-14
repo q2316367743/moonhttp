@@ -14,7 +14,7 @@ pub struct MockTransport {
   /// 响应队列：每次请求取一个；取完之后一直复用最后一个
   priv responses : Array[RawResponse]
   /// 已取用的响应个数
-  priv mut cursor : Int
+  priv mut cursor : Int32
   /// 若为 `Some`，发送时直接抛出该错误，用于测试错误路径
   priv mut failure : TransportError?
 }
@@ -69,7 +69,7 @@ pub fn MockTransport::last_request(self : MockTransport) -> PreparedRequest? {
 
 ///|
 /// 断言用的便捷入口：接收一个 `&Transport` 也能读出请求记录。
-pub fn MockTransport::request_count(self : MockTransport) -> Int {
+pub fn MockTransport::request_count(self : MockTransport) -> Int32 {
   self.received.length()
 }
 

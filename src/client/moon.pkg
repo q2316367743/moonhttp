@@ -1,0 +1,24 @@
+// client 包是编排层：Client、拦截器、流式响应、重定向循环与所有「构造
+// HttpError」的动作都在这里。response / http_error 在它的下游（纯值与纯契约），
+// 基础能力由 config / transport / httpconn / cookie / sse / util / abort 提供。
+// 缺省传输实现在 httpconn（自研 HTTP/1.x 栈，见 docs/17 / 18），
+// 本包只通过 transport 的 trait 与它接壤。
+import {
+  "moonbitlang/core/debug",
+  "q2316367743/moonhttp/abort",
+  "q2316367743/moonhttp/config",
+  "q2316367743/moonhttp/cookie",
+  "q2316367743/moonhttp/headers",
+  "q2316367743/moonhttp/http_error",
+  "q2316367743/moonhttp/httpconn",
+  "q2316367743/moonhttp/response",
+  "q2316367743/moonhttp/sse",
+  "q2316367743/moonhttp/transport",
+  "q2316367743/moonhttp/util",
+}
+
+// 白盒测试被编进本包，看见的是**生产** import 那份清单，所以要单独声明
+// 它自己的依赖。这里只用它造 UTF-8 字节。
+import {
+  "moonbitlang/core/encoding/utf8",
+} for "wbtest"

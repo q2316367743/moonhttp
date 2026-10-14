@@ -120,7 +120,7 @@ pub fn Headers::merge(self : Headers, other : Headers) -> Headers {
 
 ///|
 /// 头的条数。
-pub fn Headers::length(self : Headers) -> Int {
+pub fn Headers::length(self : Headers) -> Int32 {
   self.entries.length()
 }
 

@@ -16,7 +16,7 @@
 |---|---|
 | `src/transport/decode.mbt` | `decode_gzip`（把一整份 gzip 字节解成实体字节，缓冲路径用）、`declares_gzip`（「这份响应声称自己是 gzip」的唯一判据） |
 | `src/httpconn/transport.mbt` | `build_raw_response`：流式路径的声明检测、`@gzip.Decoder` 包分帧 reader、解压后摘 `Content-Encoding` 与 `Content-Length` |
-| `src/client.mbt` | `declared_encoding`（这次请求声明什么）、`decode_response_body`（缓冲路径解压 + 摘头 + 失败分类） |
+| `src/client/redirects.mbt` + `pipeline.mbt` | `declared_encoding`（这次请求声明什么）、`decode_response_body`（缓冲路径解压 + 摘头 + 失败分类） |
 | `src/util/request.mbt` | `build_prepared_request` 的 `accept_encoding` 参数：声明按 `set_if_absent` 落地（用户显式设置永远优先） |
 | `src/config/decompress.mbt` | `Config::with_decompress`；字段定义在 `config.mbt`，默认值 `Some(true)` 在 `default.mbt`，合并走策略 2（`merge.mbt`） |
 | `src/transport/decode_wbtest.mbt` | 解压、失败分类与摘头判据的单元用例 |

@@ -34,7 +34,7 @@ async fn main {
 
 ///|
 /// 起一个回显 server：把收到的 `Authorization`、自定义头与路径拼成 JSON 回给客户端。
-async fn echo_server(group : @async.TaskGroup[Unit]) -> Int {
+async fn echo_server(group : @async.TaskGroup[Unit]) -> Int32 {
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   group.spawn_bg(no_wait=true) <| () => {
@@ -80,7 +80,7 @@ fn request_header(request : @http.Request, name : String) -> String {
 
 ///|
 /// 取字符串的前 `limit` 个字符（不足就整体返回）。
-fn head_text(text : String, limit : Int) -> String {
+fn head_text(text : String, limit : Int32) -> String {
   if text.length() <= limit {
     text
   } else {

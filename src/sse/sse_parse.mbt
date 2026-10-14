@@ -41,7 +41,7 @@ fn SseParser::skip_bom(self : SseParser) -> Unit {
 /// **CR 落在缓冲区末尾时返回 `None`**：它可能是 CRLF 的前半，
 /// 现在消费掉就会把一次换行当成两次，凭空多切出一个空行——也就是一个假事件。
 /// 等下一块数据到了再判定，这正是跨块安全的关键。
-fn find_line_end(buf : Bytes, from : Int) -> (Int, Int)? {
+fn find_line_end(buf : Bytes, from : Int32) -> (Int32, Int32)? {
   let length = buf.length()
   let mut index = from
   while index < length {
@@ -69,7 +69,7 @@ fn find_line_end(buf : Bytes, from : Int) -> (Int, Int)? {
 ///
 /// 「行尾不完整」有两种：还没收到换行，以及只收到了 CRLF 的前半个 CR。
 /// 两种都由 `find_line_end` 返回 `None`，这里就停手等下一块数据。
-fn SseParser::consume_lines(self : SseParser) -> Int {
+fn SseParser::consume_lines(self : SseParser) -> Int32 {
   let mut start = 0
   let mut progress = true
   while progress {
@@ -86,7 +86,7 @@ fn SseParser::consume_lines(self : SseParser) -> Int {
 
 ///|
 /// 处理 `pending[start:end]` 这一行。
-fn SseParser::handle_line(self : SseParser, start : Int, end : Int) -> Unit {
+fn SseParser::handle_line(self : SseParser, start : Int32, end : Int32) -> Unit {
   // 空行 = 事件边界，分发当前累积的事件。
   if start == end {
     self.dispatch()
@@ -129,9 +129,9 @@ fn SseParser::handle_line(self : SseParser, start : Int, end : Int) -> Unit {
 /// - 整行没有 `:` 时，字段名是整行、值为空串。
 fn SseParser::split_field(
   self : SseParser,
-  start : Int,
-  end : Int,
-) -> (String, Int, Int) {
+  start : Int32,
+  end : Int32,
+) -> (String, Int32, Int32) {
   // 只在行内找冒号：`find` 要作用在视图上，否则会从前面的行里找到冒号。
   let line = self.pending.exact_view(start~, end~)
   match line.find(b":") {
@@ -163,7 +163,7 @@ fn has_nul(value : BytesView) -> Bool {
 ///
 /// 规范明确「其它情况忽略」，所以 `retry: 1x`、`retry: ` 都不生效，
 /// 也不会把已经生效的值改掉。
-fn parse_retry(value : BytesView) -> Int? {
+fn parse_retry(value : BytesView) -> Int32? {
   if value.is_empty() {
     return None
   }

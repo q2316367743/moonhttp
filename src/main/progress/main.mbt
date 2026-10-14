@@ -12,7 +12,7 @@
 /// 用 `moon run src/main/progress` 执行。本包只是示例，不随模块发布。
 ///
 /// 取消百分比（进度回调里用它和当前百分比比较）。
-let cancel_at_percent : Int = 5
+let cancel_at_percent : Int32 = 5
 
 ///|
 /// 真实下载的靶子：华为云 openjdk 镜像上的大文件（约 200 MB）。
@@ -44,10 +44,10 @@ async fn main {
 /// 本机 server，返回端口。用来演示下载进度：节奏由服务端控制，输出可复现。
 async fn drip_server(
   group : @async.TaskGroup[Unit],
-  chunks : Int,
-  piece_size : Int,
-  delay : Int,
-) -> Int {
+  chunks : Int32,
+  piece_size : Int32,
+  delay : Int32,
+) -> Int32 {
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   group.spawn_bg(no_wait=true) <| () => {
@@ -75,7 +75,10 @@ async fn drip_server(
 /// `read_delay` 是每读一块之后的停顿：0 表示读得快（上传能一口气跑到 100%），
 /// 30 表示读得慢——客户端的写会堵在 socket 上，取消才有落点
 /// （取消落在「正在写的那个挂起点」上，这也是它必须走协程级中断的原因）。
-async fn read_server(group : @async.TaskGroup[Unit], read_delay : Int) -> Int {
+async fn read_server(
+  group : @async.TaskGroup[Unit],
+  read_delay : Int32,
+) -> Int32 {
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   group.spawn_bg(no_wait=true) <| () => {
@@ -93,7 +96,7 @@ async fn read_server(group : @async.TaskGroup[Unit], read_delay : Int) -> Int {
 
 ///|
 /// 造一份 `size` 字节的载荷：上传示例用它，省掉「先准备一个大文件」这一步。
-fn payload_of(size : Int) -> String {
+fn payload_of(size : Int32) -> String {
   let unit = "moonhttp-0123456789abcdef"
   let buf = StringBuilder()
   for _ in 0..<(size / unit.length()) {
@@ -106,7 +109,7 @@ fn payload_of(size : Int) -> String {
 /// 把字节数渲染成人看的大小（KiB / MiB，一位小数）。
 ///
 /// 用整数运算（Int64）而不是浮点，免得大文件上出现一长串小数位。
-fn size_text(bytes : Int) -> String {
+fn size_text(bytes : Int32) -> String {
   let (unit, divisor) : (String, Int64) = if bytes < 1024 * 1024 {
     ("KiB", 1024)
   } else {
@@ -124,8 +127,8 @@ fn size_text(bytes : Int) -> String {
 /// `on_five_percent` 是可选钩子：示例用它演示「到 5% 就取消」。
 fn percent_printer(
   label : String,
-  step : Int,
-  on_percent? : (Int) -> Unit,
+  step : Int32,
+  on_percent? : (Int32) -> Unit,
 ) -> (@moonhttp.ProgressEvent) -> Unit {
   let last_percent = Array::make(1, -1)
   let last_bytes = Array::make(1, 0)

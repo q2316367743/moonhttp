@@ -9,7 +9,7 @@
 
 ///|
 /// 造一份指定长度的响应，body 是 `size` 个 `'x'`。
-fn bytes_response(size : Int) -> @transport.RawResponse {
+fn bytes_response(size : Int32) -> @transport.RawResponse {
   {
     status: 200,
     status_text: "OK",
@@ -23,7 +23,7 @@ fn bytes_response(size : Int) -> @transport.RawResponse {
 
 ///|
 /// 造一段恰好 `size` 字节的 ASCII 文本（UTF-8 下 1 字符 = 1 字节）。
-fn ascii_body(size : Int) -> String {
+fn ascii_body(size : Int32) -> String {
   let buf = StringBuilder()
   for _ in 0..<size {
     buf.write_char('x')

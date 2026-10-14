@@ -1,32 +1,18 @@
-// 根包是门面与编排层：
-// - 对外公开 Client / Response / StreamResponse / SseStream / HttpError，
-//   并用 pub using 再导出子包的类型；
-// - 编排「合并配置 → 拼 URL → 拍平头 → 传输 → 解码 → 校验」这条管线，
-//   其中纯逻辑那半在 util 包里，这里只留与门面类型接壤的部分。
-// 管线本身只通过 transport 包的 trait 交互，因此可以用 Mock 传输层做
-// 同步/异步测试；import httpconn 只为提供缺省传输实现（自研 HTTP/1.1 栈，
-// 见 docs/17 / 18）——它实现的是同一个 trait。
-//
-// core/json 是生产依赖（不是只为测试）：`Response::json` 是门面上的解析入口，
-// 它抛 `@json.ParseError`，不参与本项目的错误体系（见 facade.mbt）。
+// 根包是纯门面：只做 pub using 再导出，不含任何实现。
+// 实现分布在 response（响应值）/ http_error（错误契约）/ client（编排层）
+// 三个业务子包里，分层依据与完整 DAG 见 docs/01-architecture.md。
+// 使用者只需要 import 本包（@moonhttp）就能拿到全部公开类型与工厂函数。
 import {
-  "moonbitlang/core/debug",
-  "moonbitlang/core/json",
   "q2316367743/moonhttp/abort",
+  "q2316367743/moonhttp/client",
   "q2316367743/moonhttp/config",
   "q2316367743/moonhttp/cookie",
   "q2316367743/moonhttp/headers",
-  "q2316367743/moonhttp/httpconn",
+  "q2316367743/moonhttp/http_error",
+  "q2316367743/moonhttp/response",
   "q2316367743/moonhttp/sse",
   "q2316367743/moonhttp/transport",
-  "q2316367743/moonhttp/util",
 }
-
-// 白盒测试被编进本包，看见的是**生产** import 那份清单，所以要单独声明
-// 它自己的依赖（与黑盒测试写 `for "test"` 同理）。这里只用它造 UTF-8 字节。
-import {
-  "moonbitlang/core/encoding/utf8",
-} for "wbtest"
 
 // 黑盒测试要 import 本模块的子包（Mock 传输层等），
 // async 用于运行 async test。

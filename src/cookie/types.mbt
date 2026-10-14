@@ -20,7 +20,7 @@ priv struct Cookie {
   expires_at : UInt64?
   /// 入库序号：同路径长度的 cookie 按它决定发送顺序（RFC 6265 §5.4）。
   /// 同名覆盖时沿用旧序号——RFC 把它当创建时间，覆盖不算重建
-  serial : Int
+  serial : Int32
 }
 
 ///|
@@ -45,7 +45,7 @@ priv struct CookieKey {
 pub struct CookieJar {
   /// Map 本身是可变容器，字段无需 `mut`（改的是罐子里的内容，不是字段绑定）
   priv cookies : Map[CookieKey, Cookie]
-  priv mut serial : Int
+  priv mut serial : Int32
 }
 
 ///|

@@ -5,7 +5,7 @@
 ///|
 /// 造一份带指定状态码与响应体的原始响应。
 fn raw_response(
-  status : Int,
+  status : Int32,
   status_text : String,
   body : String,
 ) -> @transport.RawResponse {

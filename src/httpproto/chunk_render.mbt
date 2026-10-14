@@ -8,8 +8,8 @@
 /// 十六进制写出 chunk-size（小写）。递归先写高位，天然没有前导零。
 /// 解码侧大小写都收（`parse_chunk_size`）；发送侧统一小写，与 curl / nginx
 /// 等常见实现的输出一致。
-fn write_hex_size(buf : @buffer.Buffer, size : Int) -> Unit {
-  fn write_digits(value : Int) -> Unit {
+fn write_hex_size(buf : @buffer.Buffer, size : Int32) -> Unit {
+  fn write_digits(value : Int32) -> Unit {
     if value >= 16 {
       write_digits(value / 16)
     }

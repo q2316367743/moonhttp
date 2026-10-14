@@ -80,14 +80,14 @@ let _ = client.request(@moonhttp.Config::new("https://example.com/profile")) // 
 - `HttpOnly` 解析出来直接丢弃（客户端库没有 JS 环境的概念）;
 - jar 不持久化：进程结束即失（要跨进程复用，将来可以在 jar 上加导出 / 导入）。
 
-## 根包接线（`src/client.mbt`）
+## client 包接线（`src/client/`）
 
 - `Client` 加 `priv cookie_jar : @cookie.CookieJar?`；`Client::new` 加
   `cookie_jar?` 可选参数（放最后，缺省 `None`）；`Client::create` 原样继承；
 - `Client::send_following_redirects`：首跳与重定向跳，发出前
   `self.attach_cookie(prepared)`（`set_if_absent` 注入）、返回后
   `self.capture_cookies(prepared.url, raw.set_cookies)`；
-- `facade.mbt` 再导出 `@cookie.CookieJar`；根包 `moon.pkg` 加 import。
+- `facade.mbt` 再导出 `@cookie.CookieJar`；`client` 包与根包的 `moon.pkg` 各自 import。
 
 ## 测试落点
 

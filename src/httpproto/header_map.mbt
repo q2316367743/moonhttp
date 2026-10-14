@@ -124,6 +124,6 @@ pub fn HeaderMap::remove(self : HeaderMap, name : StringView) -> Unit {
 
 ///|
 /// 条目总数。
-pub fn HeaderMap::length(self : HeaderMap) -> Int {
+pub fn HeaderMap::length(self : HeaderMap) -> Int32 {
   self.entries.length()
 }

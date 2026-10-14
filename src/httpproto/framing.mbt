@@ -10,7 +10,7 @@ pub(all) enum BodyFraming {
   /// `Transfer-Encoding: chunked`，用 `ChunkDecoder` 增量解码
   Chunked
   /// `Content-Length: N`，读满 N 字节为止
-  Length(Int)
+  Length(Int32)
   /// 读到连接关闭为止：既没有 TE 也没有合法 CL。HTTP/1.0 服务器不写 CL 就这么发；
   /// 1.1 服务器这么发时就只能靠关闭收尾（phase 1 本来就每请求一条连接，能接住）
   UntilClose
@@ -34,7 +34,7 @@ pub extend BodyFraming with @debug.Debug::{to_repr}
 /// 4. 都没有 → `UntilClose`。
 pub fn body_framing(
   is_head : Bool,
-  status : Int,
+  status : Int32,
   headers : HeaderMap,
 ) -> BodyFraming raise ParseError {
   if is_head || status < 200 || status == 204 || status == 304 {
@@ -66,7 +66,7 @@ pub fn body_framing(
     return Chunked
   }
   // CL：全部取出来比对；任何一条不是纯数字、或值不一致，都是坏报文。
-  let lengths : Array[Int] = []
+  let lengths : Array[Int32] = []
   for value in headers.get_all("Content-Length") {
     for piece in value.split(",") {
       lengths.push(parse_content_length(piece.to_owned().trim(chars=" \t")))
@@ -88,7 +88,7 @@ pub fn body_framing(
 
 ///|
 /// 解析单段 `Content-Length` 值：非空纯数字，带溢出保护。
-fn parse_content_length(value : StringView) -> Int raise ParseError {
+fn parse_content_length(value : StringView) -> Int32 raise ParseError {
   if value.length() == 0 {
     raise ParseError::Malformed("Content-Length 是空值")
   }

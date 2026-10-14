@@ -67,7 +67,7 @@ async test "stream raises with the error body when status is rejected" {
   } catch {
     error => Some(error)
   }
-  assert_true(error is Some(@moonhttp.HttpError(_)))
+  assert_true(error is Some(@moonhttp.HttpError::HttpError(_)))
   let error = error.unwrap()
   assert_eq(error.code(), @moonhttp.ErrorCode::BadResponse)
   let failed = error.response().unwrap()

@@ -6,8 +6,8 @@
 |---|---|
 | `src/sse/sse.mbt` | `SseEvent`、`SseParser` 的状态与公开入口（`new` / `push` / `next` / `finish`）、事件分发规则 |
 | `src/sse/sse_parse.mbt` | 字节级细节：找行尾、切字段、解析 `id` / `retry` 的值 |
-| `src/facade.mbt` | `SseStream` 类型与 `next_event`：把解析器接到 HTTP 响应体上（根包门面层） |
-| `src/client.mbt` | `Client::sse`：入口，含 `text/event-stream` 准入检查 |
+| `src/client/sse_stream.mbt` | `SseStream` 类型与 `next_event`：把解析器接到 HTTP 响应体上（编排层） |
+| `src/client/stream_entry.mbt` | `Client::sse`：入口，含 `text/event-stream` 准入检查 |
 | `src/sse/sse_test.mbt` | 规范逐条用例（纯逻辑，同步测试） |
 | `src/sse_stream_test.mbt` | 接到 HTTP 之后的用例，含本机 server 的真实 CRLF 长连验收用例 |
 

@@ -13,8 +13,8 @@
 |---|---|
 | `src/abort/abort.mbt` | `AbortController` / `AbortSignal` / `AbortError`：状态机、`attach` / `detach` 登记机制 |
 | `src/abort/README.mbt.md` | 包级 API 清单与用法 |
-| `src/client.mbt` | **信号的唯一入口**：三个入口的 `signal?` 参数、预检查 `check_cancelled`（`throw_if_aborted` + `AbortError` 归一）、往 `dispatch_request` / `open_stream` / `send_following_redirects` 逐层透传 |
-| `src/shortcuts.mbt` | 七个快捷方法的 `signal?` 参数（原样透传给 `request`） |
+| `src/client/` | **信号的唯一入口**：三个入口的 `signal?` 参数、预检查 `check_cancelled`（`throw_if_aborted` + `AbortError` 归一）、往 `dispatch_request` / `open_stream` / `send_following_redirects` 逐层透传 |
+| `src/client/shortcuts.mbt` | 七个快捷方法的 `signal?` 参数（原样透传给 `request`） |
 | `src/util/request.mbt` | `build_prepared_request(config, signal?)`：把信号搬进 `PreparedRequest::signal` |
 | `src/transport/abort.mbt` | **机制的唯一落点**：`with_abort_scope`（协程级取消，进入时先查 `aborted()`）与 `aborted_failure`（读取前的检查） |
 | `src/httpconn/transport.mbt` | `send` 把**整跳**（建连、TLS / CONNECT 握手、写头、写 body、等响应头）包进取消作用域（`with_abort_scope`） |
@@ -22,8 +22,8 @@
 | `src/transport/stream_lifecycle.mbt` | 响应体的构造与释放：`open_wire` 先查 `aborted()`（已取消就立刻关连接），否则登记「取消即关闭」；`close()` 时注销 |
 | `src/transport/stream_all.mbt` | 读全量的取消检查（`noraise` 的那条路） |
 | `src/transport/transport.mbt` | `PreparedRequest::signal` 字段、`TransportError::Cancelled(reason)` |
-| `src/http_error.mbt` | `ErrorCode::Cancelled` → `ERR_CANCELED`、`cancelled_error` / `abort_error`（文案与 `response` 落点）、`HttpError::is_cancelled` |
-| `src/facade.mbt` | 两个流式读失败的出口复用同一条映射；再导出两个类型 |
+| `src/client/errors.mbt` | `cancelled_error` / `abort_error`（文案与 `response` 落点）；`ErrorCode::Cancelled` → `ERR_CANCELED` 与 `HttpError::is_cancelled` 在 `src/http_error/` |
+| `src/client/stream_response.mbt` / `sse_stream.mbt` | 两个流式读失败的出口复用同一条映射 |
 | `src/abort/abort_test.mbt` | 状态机与登记机制的同步用例 |
 | `src/transport/abort_wbtest.mbt` | 「进来就已取消」这条兜底与理由载荷的白盒用例 |
 | `src/cancel_test.mbt` | 请求路径的真机用例（等响应头 / 读 body / 重试 / 重定向 / 不粘调用方） |
@@ -87,7 +87,7 @@ let config = Config::new("/reports/big.csv")
   只有一个对象，谁拿到都能取消。
 - **`abort` 是同步函数且不抛错**：所以可以从任何地方调用——包括 `noraise` 的进度回调里。
 - **取消理由落成错误文案**：`abort(reason="…")` 的 reason 就是 `HttpError::message()`；
-  没给就用默认文案「请求已取消」。文案只在 `src/http_error.mbt` 一处（信号自己不编文案）。
+  没给就用默认文案「请求已取消」。文案只在 `src/client/errors.mbt` 一处（信号自己不编文案）。
 
 ## 信号为什么不是配置字段
 

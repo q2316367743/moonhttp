@@ -7,7 +7,7 @@
 
 ///|
 /// 测试数据量：超过一个 UPLOAD_CHUNK_SIZE（64 KiB），逼出「多块泵送」。
-const STREAM_UPLOAD_SIZE : Int = 200000
+const STREAM_UPLOAD_SIZE : Int32 = 200000
 
 ///|
 /// 起一个把请求头逐行收进数组的裸 TCP server，读到空行后交给回调。
@@ -16,7 +16,7 @@ const STREAM_UPLOAD_SIZE : Int = 200000
 async fn uploading_server(
   group : @async.TaskGroup[Unit],
   handle : async (@socket.Tcp, Array[String]) -> Unit,
-) -> Int {
+) -> Int32 {
   let server = @socket.TcpServer::TcpServer(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   group.spawn_bg(no_wait=true) <| () => {
@@ -59,7 +59,7 @@ fn join_header_lines(lines : Array[String]) -> String {
 ///|
 /// 十六进制解析 chunk-size 行（测试数据是纯 'x'，不含换行，
 /// 行法解析 chunked 在这里是安全的）。
-fn parse_hex_size(text : StringView) -> Int? {
+fn parse_hex_size(text : StringView) -> Int32? {
   let mut value = 0
   let mut any = false
   for c in text {
@@ -85,7 +85,7 @@ fn parse_hex_size(text : StringView) -> Int? {
 ///|
 /// 按行法读完一个 chunked 请求体：返回 (总字节数, chunk 个数)。
 /// 每个数据块与它的 CRLF 同在一条「行」里（数据无换行），长度正好 size + 2。
-async fn read_chunked_upload(tcp : @socket.Tcp) -> (Int, Int) {
+async fn read_chunked_upload(tcp : @socket.Tcp) -> (Int32, Int32) {
   let mut total = 0
   let mut chunks = 0
   while true {
@@ -117,7 +117,7 @@ async fn read_chunked_upload(tcp : @socket.Tcp) -> (Int, Int) {
 ///|
 /// 发一份流式请求体到指定端口。
 async fn send_stream(
-  port : Int,
+  port : Int32,
   stream : @transport.StreamBody,
   on_progress? : @transport.ProgressCallback,
 ) -> @transport.RawResponse raise @transport.TransportError {
@@ -142,7 +142,7 @@ async test "real connection pumps a chunked stream upload" {
   let reader : &@io.Reader = @io.MemoryReader() <| writer => {
     writer.write(data)
   }
-  let seen : Array[(Int, Int?)] = []
+  let seen : Array[(Int32, Int32?)] = []
   @async.with_task_group() <| group => {
     let port = uploading_server(group, (tcp, lines) => {
       let header_text = join_header_lines(lines)
@@ -175,7 +175,7 @@ async test "real connection pumps a fixed-length stream upload" {
   let reader : &@io.Reader = @io.MemoryReader() <| writer => {
     writer.write(data)
   }
-  let seen : Array[(Int, Int?)] = []
+  let seen : Array[(Int32, Int32?)] = []
   @async.with_task_group() <| group => {
     let port = uploading_server(group, (tcp, lines) => {
       let header_text = join_header_lines(lines)

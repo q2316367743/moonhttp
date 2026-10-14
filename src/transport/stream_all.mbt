@@ -12,7 +12,7 @@
 /// 内存体不带 `max_len` 时其实一次就能把剩余的字节全给出去，真实连接则是
 /// 对端发多少到多少。按固定大小报告，内存体的回调节奏才与真实连接一致——
 /// Mock 的用例也才能确定地观察到「多块递增」。
-const PROGRESS_CHUNK_SIZE : Int = 65536
+const PROGRESS_CHUNK_SIZE : Int32 = 65536
 
 ///|
 /// 把连接上的剩余字节读进 `buffer`，直到 EOF，逐块报告下载进度。
@@ -29,7 +29,7 @@ const PROGRESS_CHUNK_SIZE : Int = 65536
 async fn drain_into(
   read : async () -> Bytes?,
   buffer : @buffer.Buffer,
-  total : Int?,
+  total : Int32?,
   on_progress : @config.ProgressCallback?,
 ) -> Unit {
   let mut loaded = 0

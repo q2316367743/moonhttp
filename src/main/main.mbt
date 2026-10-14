@@ -77,7 +77,7 @@ async fn main {
       @moonhttp.Config::new("/repos/moonbitlang/definitely-not-a-real-repo"),
     ),
   ) catch {
-    @moonhttp.HttpError(info) => {
+    @moonhttp.HttpError::HttpError(info) => {
       println("\n[GET 不存在的仓库] 按预期失败")
       println("  错误分类 = \{info.code}")
       println("  错误描述 = \{info.message}")

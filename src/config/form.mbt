@@ -66,7 +66,7 @@ pub fn FormData::append_file(
   name : StringView,
   filename : StringView,
   bytes : Bytes,
-  content_type? : String = "application/octet-stream",
+  content_type~ : String = "application/octet-stream",
 ) -> FormData {
   self.append(
     name,
@@ -92,7 +92,7 @@ fn FormData::append(
 
 ///|
 /// 字段项数（文本项与文件项都算一项）。
-pub fn FormData::length(self : FormData) -> Int {
+pub fn FormData::length(self : FormData) -> Int32 {
   self.parts.length()
 }
 
@@ -166,7 +166,7 @@ pub extend FormData with @debug.Debug::{to_repr}
 /// 只要足够不易与正文内容撞车即可（RFC 2046 要求 boundary 不出现在各部分内容里），
 /// 不承担安全用途，所以直接用 core 的随机数。
 fn random_boundary() -> String {
-  let rand = @random.Rand::new()
+  let rand = @random.Rand()
   "----moonhttp-" + rand.uint64().to_string() + rand.uint64().to_string()
 }
 

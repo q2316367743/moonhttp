@@ -93,7 +93,7 @@ test "content-length consistency is enforced" {
     @httpproto.body_framing(false, 200, comma),
     @httpproto.BodyFraming::Length(42),
   )
-  let bad_cases : Array[(Int, Array[String])] = [
+  let bad_cases : Array[(Int32, Array[String])] = [
     (0, ["Content-Length: 42", "Content-Length: 43"]),
     (1, ["Content-Length: abc"]),
     (2, ["Content-Length: -5"]),

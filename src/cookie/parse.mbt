@@ -151,7 +151,7 @@ fn parse_http_date(text : String) -> UInt64? {
 
 ///|
 /// 解析 `时:分:秒`；三段都必须是 1~2 位数字。
-fn parse_hms(text : String) -> (Int, Int, Int)? {
+fn parse_hms(text : String) -> (Int32, Int32, Int32)? {
   let parts : Array[String] = []
   for part in text.split(":") {
     parts.push(part.to_owned())
@@ -177,7 +177,7 @@ fn parse_hms(text : String) -> (Int, Int, Int)? {
 ///|
 /// 解析一段 1~`max_digits` 位（位数上限只用来挡异常输入，不前导补零）的
 /// 非负整数。项目里既有的解析口径是 `@string.parse_int`。
-fn parse_uint(text : String, max_digits : Int) -> Int? {
+fn parse_uint(text : String, max_digits : Int32) -> Int32? {
   guard text.length() >= 1 && text.length() <= max_digits else { return None }
   guard is_digits(text) else { return None }
   Some(@string.parse_int(text)) catch {
@@ -199,7 +199,7 @@ fn is_digits(text : String) -> Bool {
 
 ///|
 /// 月份名转序号：只看前三个字母（RFC 6265 §5.1.1 的宽松口径）。
-fn month_number(name : StringView) -> Int? {
+fn month_number(name : StringView) -> Int32? {
   if name.length() < 3 {
     return None
   }
@@ -223,7 +223,7 @@ fn month_number(name : StringView) -> Int? {
 ///|
 /// 公历日期到「自 1970-01-01 起的天数」（Howard Hinnant 的
 /// days_from_civil 算法，闰年规则内建）。
-fn days_from_civil(year : Int, month : Int, day : Int) -> Int64 {
+fn days_from_civil(year : Int32, month : Int32, day : Int32) -> Int64 {
   let y = if month <= 2 { year - 1 } else { year }
   let m = if month <= 2 { month + 9 } else { month - 3 }
   let era = (if y >= 0 { y } else { y - 399 }) / 400

@@ -13,8 +13,8 @@
 | `src/transport/stream_all.mbt` | 下载：读全量时逐块回调（`drain_into` / `read_all_partial`） |
 | `src/transport/stream.mbt` / `stream_lifecycle.mbt` | `ResponseBody::total`（进度的分母从哪来）；构造在后者，分母的值由 httpconn 的 `build_raw_response` 按分帧判定给出（定长才有） |
 | `src/util/request.mbt` | 把 `Config::on_upload_progress` 透传进 `PreparedRequest` |
-| `src/client.mbt` | `Client::request` 读全量时接上下载回调 |
-| `src/facade.mbt` | `StreamResponse::read_all` 同样接上下载回调；再导出两个类型 |
+| `src/client/pipeline.mbt` | `Client::request` 读全量时接上下载回调 |
+| `src/client/stream_response.mbt` | `StreamResponse::read_all` 同样接上下载回调 |
 | `src/config/progress_test.mbt` | 配置层用例：`progress()`、构建器、合并、渲染 |
 | `src/progress_test.mbt` | 端到端用例：Mock 的确定性多块 + 本机 server 的真实连接 |
 

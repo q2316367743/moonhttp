@@ -58,7 +58,7 @@ pub fn encode_body(text : String, encoding : ResponseEncoding) -> Bytes {
 /// 单字节编码（latin1 / ascii）的 lossy 编码器：**逐 UTF-16 码元**写一个字节，
 /// 超出上限的写 `?`（所以代理对会写成两个 `?`）。与 `decode_body` 里 latin1
 /// 那条自写的解码循环对称。
-fn encode_single_byte(text : String, max_code_unit : Int) -> Bytes {
+fn encode_single_byte(text : String, max_code_unit : Int32) -> Bytes {
   let buf = @buffer.Buffer::Buffer(size_hint=text.length())
   for code_unit in text.code_units() {
     buf.write_byte(
@@ -124,7 +124,7 @@ pub fn declares_event_stream(headers : Headers) -> Bool {
 ///
 /// 流式路径（`Client::stream`）复用这个判定：那时响应体还没读，
 /// 不能先造出 `Response` 再校验，所以判定本身必须是纯的。
-pub fn status_allowed(status : Int, config : Config) -> Bool {
+pub fn status_allowed(status : Int32, config : Config) -> Bool {
   match config.validate_status {
     None => true
     Some(validate) => validate(status)

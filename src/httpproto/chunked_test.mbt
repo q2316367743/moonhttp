@@ -3,7 +3,7 @@
 
 ///|
 /// 把一份字节按 n 个字节一段切开依次喂入，收集全部解出的数据段。
-fn decode_in_pieces(input : Bytes, piece_size : Int) -> Array[Bytes] raise {
+fn decode_in_pieces(input : Bytes, piece_size : Int32) -> Array[Bytes] raise {
   let decoder = @httpproto.ChunkDecoder::new()
   let out : Array[Bytes] = []
   let mut i = 0

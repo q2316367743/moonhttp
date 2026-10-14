@@ -90,7 +90,7 @@ test "proxy url follows the protocol and keeps a missing port implicit" {
 fn tunnel_proxy(
   group : @async.TaskGroup[Unit],
   server : @http.Server,
-  target_port : Int,
+  target_port : Int32,
   log : Array[String],
 ) -> Unit {
   group.spawn_bg(no_wait=true) <| () => {

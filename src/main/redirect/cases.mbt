@@ -138,7 +138,7 @@ async fn real_sites() -> Unit {
 /// 取字符串的前 `limit` 个字符（不足就整体返回）。
 ///
 /// 真实站点那两条的正文是整页 HTML，打印前得截断，不然控制台会被淹掉。
-fn head_text(text : String, limit : Int) -> String {
+fn head_text(text : String, limit : Int32) -> String {
   if text.length() <= limit {
     text
   } else {
@@ -148,7 +148,7 @@ fn head_text(text : String, limit : Int) -> String {
 
 ///|
 /// 左侧补空格到固定宽度（输出对齐用）。
-fn pad(text : String, width : Int) -> String {
+fn pad(text : String, width : Int32) -> String {
   let buf = StringBuilder()
   buf.write_string(text)
   for _ in 0..<(width - text.length()) {

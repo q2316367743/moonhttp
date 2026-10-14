@@ -60,7 +60,7 @@ test "signals handed out by one controller share state" {
 test "attached handles run in registration order" {
   let controller = @abort.AbortController::new()
   let signal = controller.signal()
-  let calls : Array[Int] = []
+  let calls : Array[Int32] = []
   ignore(signal.attach(fn() { calls.push(1) }))
   ignore(signal.attach(fn() { calls.push(2) }))
   controller.abort()
@@ -74,7 +74,7 @@ test "attached handles run in registration order" {
 test "detach unregisters a handle" {
   let controller = @abort.AbortController::new()
   let signal = controller.signal()
-  let calls : Array[Int] = []
+  let calls : Array[Int32] = []
   let dropped = signal.attach(fn() { calls.push(1) })
   let kept = signal.attach(fn() { calls.push(2) })
   assert_eq(dropped, 0)
@@ -96,7 +96,7 @@ test "attaching to an aborted signal neither fires nor is retained" {
   let controller = @abort.AbortController::new()
   let signal = controller.signal()
   controller.abort()
-  let calls : Array[Int] = []
+  let calls : Array[Int32] = []
   let ticket = signal.attach(fn() { calls.push(1) })
   assert_eq(calls.length(), 0)
   // 这次登记没有槽位，票号是「无票」；注销它（以及任何越界票号）都不该出问题
@@ -114,9 +114,9 @@ test "attaching to an aborted signal neither fires nor is retained" {
 test "a handle may unregister itself while being called" {
   let controller = @abort.AbortController::new()
   let signal = controller.signal()
-  let calls : Array[Int] = []
+  let calls : Array[Int32] = []
   // 票号要等第二个登记之后才有值，所以经一个单元数组传进去（闭包按值捕获）。
-  let second_ticket : Array[Int] = [0]
+  let second_ticket : Array[Int32] = [0]
   ignore(
     signal.attach(fn() {
       calls.push(1)
@@ -135,7 +135,7 @@ test "a handle may unregister itself while being called" {
 test "one signal can serve several registrations" {
   let controller = @abort.AbortController::new()
   let signal = controller.signal()
-  let calls : Array[Int] = []
+  let calls : Array[Int32] = []
   for i = 0; i < 3; i = i + 1 {
     ignore(signal.attach(fn() { calls.push(i) }))
   }
@@ -154,7 +154,7 @@ test "the static abort builds an already aborted signal" {
   assert_true(with_reason.aborted())
   assert_eq(with_reason.reason(), Some("整体超时"))
   // 出生即已取消，所以登记同样不触发
-  let calls : Array[Int] = []
+  let calls : Array[Int32] = []
   assert_eq(with_reason.attach(fn() { calls.push(1) }), -1)
   assert_eq(calls.length(), 0)
 }

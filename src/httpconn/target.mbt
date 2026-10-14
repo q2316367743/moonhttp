@@ -14,7 +14,7 @@ pub(all) struct Target {
   /// 主机名（CONNECT 的隧道地址、TLS 的 SNI、`Host` 头的主机段都用它）
   host : String
   /// 端口；URL 里没写时按 scheme 补默认值（http 80 / https 443）
-  port : Int
+  port : Int32
   /// 请求目标（origin-form，即 path?query）；URL 没有路径时为 `/`
   target : String
 } derive(Debug)
@@ -56,7 +56,7 @@ pub fn parse_target(url : String) -> Target raise @transport.TransportError {
 ///|
 /// scheme 的默认端口（http 80 / https 443；socks5 也按 1080 记，
 /// 它只出现在代理地址上）。
-fn default_port(scheme : String) -> Int {
+fn default_port(scheme : String) -> Int32 {
   match scheme {
     "https" => 443
     "socks5" => 1080
@@ -72,13 +72,13 @@ fn default_port(scheme : String) -> Int {
 /// 的最后一个冒号，裸冒号形式与「host:port」天然冲突，也不在常见写法里。
 fn split_authority(
   authority : StringView,
-  default_port : Int,
-) -> (String, Int) raise @transport.TransportError {
+  default_port : Int32,
+) -> (String, Int32) raise @transport.TransportError {
   if authority.length() == 0 {
     raise @transport.TransportError::Unsupported("地址缺少主机名")
   }
   // 找方括号之外的最后一个冒号（即 host:port 的分隔符）
-  let mut colon : Int? = None
+  let mut colon : Int32? = None
   let mut in_brackets = false
   for i in 0..<authority.length() {
     let code = authority.at(i).to_int()

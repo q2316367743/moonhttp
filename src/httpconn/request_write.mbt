@@ -8,7 +8,7 @@
 ///|
 /// 上传进度的分块大小：每写完这么多字节报告一次进度。
 /// 64 KiB 是「回调次数」与「进度条平滑度」的常见折中，也是流式泵的读取块大小。
-const UPLOAD_CHUNK_SIZE : Int = 65536
+const UPLOAD_CHUNK_SIZE : Int32 = 65536
 
 ///|
 /// 默认 User-Agent。版本号与 moon.mod 的 version 手工保持一致——

@@ -24,7 +24,7 @@ async fn gzip_bytes(data : Bytes) -> Bytes {
 /// 造一份带自定义响应头的响应（`raw_response` 只给 `Content-Type`，
 /// gzip 用例要精确控制 `Content-Encoding` / `Content-Length`）。
 fn gzip_response(
-  status : Int,
+  status : Int32,
   headers : @transport.Headers,
   body : Bytes,
 ) -> @transport.RawResponse {
@@ -39,7 +39,7 @@ fn gzip_response(
 
 ///|
 /// 「服务端声称这份响应是 gzip」的那组头。
-fn gzip_headers(length : Int) -> @transport.Headers {
+fn gzip_headers(length : Int32) -> @transport.Headers {
   @transport.Headers::new()
   .set("Content-Type", "application/json")
   .set("Content-Encoding", "gzip")
@@ -159,7 +159,7 @@ async test "a corrupt gzip body fails with ERR_BAD_RESPONSE" {
   } catch {
     error => Some(error)
   }
-  assert_true(error is Some(@moonhttp.HttpError(_)))
+  assert_true(error is Some(@moonhttp.HttpError::HttpError(_)))
   let error = error.unwrap()
   assert_eq(error.code(), @moonhttp.ErrorCode::BadResponse)
   let failed = error.response().unwrap()

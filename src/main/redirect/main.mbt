@@ -39,7 +39,7 @@ async fn main {
 /// `/loop` 自己指自己；`/cross-host` 跳到 `localhost`（与 `127.0.0.1` 是不同的
 /// host 字符串，用来验证跨 host 时 `Authorization` 会不会被丢掉）。
 /// 所有跳转都以 `/final` 收尾，它回显服务端实际收到的方法与正文长度。
-async fn redirect_server(group : @async.TaskGroup[Unit]) -> Int {
+async fn redirect_server(group : @async.TaskGroup[Unit]) -> Int32 {
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   group.spawn_bg(no_wait=true) <| () => {
@@ -78,7 +78,7 @@ async fn redirect_server(group : @async.TaskGroup[Unit]) -> Int {
 /// 回一个 3xx + `Location`（重定向的两种必备条件，缺一个就跟随不了）。
 async fn redirect_to(
   conn : @http.ServerConnection,
-  code : Int,
+  code : Int32,
   location : String,
 ) -> Unit {
   conn
@@ -93,7 +93,7 @@ async fn redirect_to(
 async fn final_response(
   conn : @http.ServerConnection,
   request : @http.Request,
-  body_len : Int,
+  body_len : Int32,
 ) -> Unit {
   let auth = match
     request.headers.get(@http.CaseInsensitiveString("authorization")) {

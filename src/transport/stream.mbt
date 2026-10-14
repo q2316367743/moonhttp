@@ -24,18 +24,18 @@ pub struct ResponseBody {
   priv mut inner : BodyInner
   /// 单次读取的等待上限（毫秒），来自 `PreparedRequest::timeout`；
   /// `None` 或 `<= 0` 表示不限时——长连的 SSE 请求就应该这样设置。
-  priv timeout : Int?
+  priv timeout : Int32?
   /// 这个响应体的总字节数，供下载进度给 `ProgressEvent::total` 用。
   ///
   /// 真实连接上是响应头的 `Content-Length`（chunked 响应没有，即 `None`）；
   /// 内存体是手上这份字节的长度（完整字节在手，长度总是已知）。
   /// 读取过程中不随消费变化：它描述的是**整个**响应体，不是「还剩多少」。
-  priv total : Int?
+  priv total : Int32?
   /// 这次响应体所属请求的取消信号，来自 `PreparedRequest::signal`。
   /// `None` 表示这个响应体不可取消（Mock 与自定义实现造的就是这种）。
   priv signal : AbortSignal?
   /// 挂在信号上的「取消即关闭这条连接」那个登记的票号；`close()` 时注销。
-  priv mut signal_ticket : Int?
+  priv mut signal_ticket : Int32?
 }
 
 ///|
@@ -62,7 +62,7 @@ priv struct WireBody {
 /// 内存响应体：把一份完整字节当成流来读，`offset` 记录已消费的位置。
 priv struct MemoryBody {
   data : Bytes
-  mut offset : Int
+  mut offset : Int32
 }
 
 ///|
@@ -78,7 +78,7 @@ priv struct MemoryBody {
 /// 取消不是网络失败，不能被下面那条 catch-all 吞成 `Network`；同理它也不受
 /// `timeout` 约束，取消比超时先到就报取消。
 async fn[T] read_or_fail(
-  timeout : Int?,
+  timeout : Int32?,
   signal : AbortSignal?,
   read : async () -> T,
 ) -> T raise TransportError {
@@ -107,7 +107,7 @@ async fn[T] read_or_fail(
 /// 需要按长度区分的协议请自己缓冲。
 pub async fn ResponseBody::read_some(
   self : ResponseBody,
-  max_len? : Int,
+  max_len? : Int32,
 ) -> Bytes? raise TransportError {
   // 取消发生在两次读取之间时，这里报取消而不是把已关闭的流当成 EOF——
   // 否则 `while read_some() is Some(_)` 会安静地结束，调用方以为对端正常收尾。

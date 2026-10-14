@@ -11,16 +11,16 @@
 ///|
 /// 解析里要用到的字节。写成 `Int` 再与 `Byte::to_int()` 比较，
 /// 免得字节字面量散落各处。
-const LF : Int = 10
+const LF : Int32 = 10
 
 ///|
-const CR : Int = 13
+const CR : Int32 = 13
 
 ///|
-const SPACE : Int = 32
+const SPACE : Int32 = 32
 
 ///|
-const COLON : Int = 58
+const COLON : Int32 = 58
 
 ///|
 /// `retry:` 能接受的最大值。
@@ -28,7 +28,7 @@ const COLON : Int = 58
 /// 规范允许实现丢弃超出范围的重连间隔。取 `(2^31 - 1) / 10`：
 /// 再乘 10 就会越过 32 位有符号上限，所以更大的值直接忽略而不是溢出。
 /// 实际的重连间隔是秒级到分钟级，这个上限绰绰有余。
-const MAX_RETRY : Int = 214_748_363
+const MAX_RETRY : Int32 = 214_748_363
 
 ///|
 /// 一个 SSE 事件，对应规范里的 `MessageEvent`。
@@ -40,7 +40,7 @@ pub(all) struct SseEvent {
   /// 最近一次 `id:` 的值；`None` 表示流里还没出现过（见下面的「持久状态」）
   id : String?
   /// 最近一次 `retry:` 的值（毫秒）；`None` 表示流里还没出现过
-  retry : Int?
+  retry : Int32?
 } derive(Eq, Debug)
 
 ///|
@@ -68,7 +68,7 @@ pub struct SseParser {
   /// 已解析完、还没被取走的事件
   priv mut ready : Array[SseEvent]
   /// 已取走的事件数；游标走到底就清空队列（与 MockTransport 的写法一致）
-  priv mut cursor : Int
+  priv mut cursor : Int32
   /// 当前事件累积的 `data:` 值，每个元素是一行的值，分发时用 `\n` 连接
   priv mut data : Array[Bytes]
   /// 当前事件累积的 `event:` 值；空串表示没给过
@@ -78,7 +78,7 @@ pub struct SseParser {
   /// last event ID，跨事件持久
   priv mut last_id : String?
   /// 重连间隔（毫秒），跨事件持久
-  priv mut retry : Int?
+  priv mut retry : Int32?
 }
 
 ///|

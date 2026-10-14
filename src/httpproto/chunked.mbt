@@ -34,11 +34,11 @@ priv enum ChunkState {
 pub struct ChunkDecoder {
   priv mut state : ChunkState
   /// `Data` 状态下当前 chunk 还剩多少字节
-  priv mut remaining : Int
+  priv mut remaining : Int32
   /// 行累积缓冲：chunk-size 行与 trailer 行都可能跨 feed，攒齐了再解析
   priv line : @buffer.Buffer
   /// `DataCrlf` 状态下已匹配的字节数（0 还没匹配，2 表示 CRLF 齐了）
-  priv mut crlf_len : Int
+  priv mut crlf_len : Int32
 }
 
 ///|
@@ -67,8 +67,8 @@ pub fn ChunkDecoder::is_done(self : ChunkDecoder) -> Bool {
 fn ChunkDecoder::scan_line(
   self : ChunkDecoder,
   input : Bytes,
-  start : Int,
-) -> (Int, Bytes)? raise ParseError {
+  start : Int32,
+) -> (Int32, Bytes)? raise ParseError {
   let n = input.length()
   let mut j = start
   while j < n && input[j] != b'\n' {
@@ -92,7 +92,7 @@ fn ChunkDecoder::scan_line(
 ///|
 /// 解析 chunk-size 行：十六进制尺寸 + 可选 `;ext`（取 `;` 之前、行尾 CR 之前
 /// 的那段）。空尺寸、非十六进制、溢出都算坏流。
-fn parse_chunk_size(line : Bytes) -> Int raise ParseError {
+fn parse_chunk_size(line : Bytes) -> Int32 raise ParseError {
   let end = line.length() - 1
   let mut stop = end
   for k in 0..<end {

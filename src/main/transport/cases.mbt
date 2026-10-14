@@ -186,7 +186,7 @@ async fn http10(client : @moonhttp.Client) -> Unit {
 ///|
 /// 造一个「边生成边喂数据」的读取流：MemoryReader 的回调里按 64 KiB 一段
 /// 写满 `total` 字节——正是流式上传要服务的「数据源不在内存里攒齐」场景。
-fn make_upload_reader(total : Int) -> &@io.Reader {
+fn make_upload_reader(total : Int32) -> &@io.Reader {
   let piece = Bytes::make(65536, b'u')
   let reader : &@io.Reader = @io.MemoryReader() <| writer => {
     let mut sent = 0
@@ -214,7 +214,7 @@ fn progress_total(event : @moonhttp.ProgressEvent) -> String {
 
 ///|
 /// 从 `/upload` 的回执里取 (分帧形态, 服务端实收字节数)——服务端视角才是证据。
-fn upload_metrics(response : @moonhttp.Response) -> (String, Int) {
+fn upload_metrics(response : @moonhttp.Response) -> (String, Int32) {
   let value = response.json() catch { _ => return ("<回显不是 JSON>", -1) }
   match value {
     { "framing": String(framing), "received_bytes": Number(received, ..), .. } =>

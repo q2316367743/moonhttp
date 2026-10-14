@@ -14,7 +14,7 @@ moon add q2316367743/moonhttp
 
 ```toml
 import {
-  "q2316367743/moonhttp@0.5.0",
+  "q2316367743/moonhttp@0.6.0",
 }
 ```
 
@@ -270,13 +270,13 @@ async fn watch(api : @moonhttp.Client) -> Unit raise @moonhttp.HttpError {
 
 ### 错误处理
 
-失败抛 `HttpError`，它带着错误分类、出错时的配置，以及**已经收到的响应**（`None` 表示连响应头都没收到）：
+失败抛 `HttpError`，它带着错误分类、出错时的配置，以及**已经收到的响应**（`None` 表示连响应头都没收到）。构造器模式要写类型限定的形式（`HttpError::HttpError`——`pub using` 再导出类型但不导出构造器，见 `docs/01-architecture.md`）：
 
 ```moonbit nocheck
 try {
   ignore(api.request(config))
 } catch {
-  @moonhttp.HttpError(info) => {
+  @moonhttp.HttpError::HttpError(info) => {
     println(info.code) // BadRequest
     println(info.message) // 请求失败，状态码 404
     println(info.response.unwrap().status) // 404

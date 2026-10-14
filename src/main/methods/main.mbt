@@ -29,7 +29,7 @@ async fn main {
 /// `/echo` 把服务端实际收到的方法、路径、`Content-Type` 与请求体（截断）
 /// 拼成 JSON 回给客户端——这是本示例所有「服务端看到了什么」的证据来源。
 /// 其余路径提供不同形态的响应内容。
-async fn echo_server(group : @async.TaskGroup[Unit]) -> Int {
+async fn echo_server(group : @async.TaskGroup[Unit]) -> Int32 {
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   group.spawn_bg(no_wait=true) <| () => {
@@ -148,7 +148,7 @@ fn request_header(request : @http.Request, name : String) -> String {
 
 ///|
 /// 取字符串的前 `limit` 个字符（不足就整体返回），避免示例因越界 panic。
-fn head_text(text : String, limit : Int) -> String {
+fn head_text(text : String, limit : Int32) -> String {
   if text.length() <= limit {
     text
   } else {
@@ -158,7 +158,7 @@ fn head_text(text : String, limit : Int) -> String {
 
 ///|
 /// 左侧补空格到固定宽度（标准库没有按宽度格式化的函数，输出对齐靠它）。
-fn pad(text : String, width : Int) -> String {
+fn pad(text : String, width : Int32) -> String {
   let buf = StringBuilder()
   buf.write_string(text)
   for _ in 0..<(width - text.length()) {

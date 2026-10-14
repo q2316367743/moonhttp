@@ -46,7 +46,7 @@ pub(all) struct StreamBody {
   /// 拉取侧读取流：`read_some` 返回 `None`（EOF）即请求体收尾
   reader : &@io.Reader
   /// 声明的请求体字节数；`None` 表示长度未知，线上改走 chunked 分帧
-  content_length : Int?
+  content_length : Int32?
 }
 
 ///|
@@ -144,7 +144,7 @@ pub fn Config::with_data_from_urlencoded(self : Config, body : Json) -> Config {
 pub fn Config::with_data_from_stream(
   self : Config,
   reader : &@io.Reader,
-  content_length? : Int,
+  content_length? : Int32,
 ) -> Config {
   { ..self, data: Some(Body::Stream({ reader, content_length, })), }
 }

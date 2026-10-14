@@ -6,8 +6,8 @@
 
 | 文件 | 职责 |
 |---|---|
-| `src/shortcuts.mbt` | 七个方法 + 共用的私有辅助函数 `Client::send_verb`（本文件唯一的逻辑） |
-| `src/client.mbt` | 被转调的 `Client::request`：合并 → 定方法 → 拦截器 → 发送 → 读全量 → 校验（见 `03-request-pipeline.md`） |
+| `src/client/shortcuts.mbt` | 七个方法 + 共用的私有辅助函数 `Client::send_verb`（本文件唯一的逻辑） |
+| `src/client/pipeline.mbt` | 被转调的 `Client::request`：合并 → 定方法 → 拦截器 → 发送 → 读全量 → 校验（见 `03-request-pipeline.md`） |
 | `src/shortcut_test.mbt` | 契约的用例：动词、优先级、实例默认值、请求体、错误路径 |
 | `src/config/config.mbt` | `Config::new(url)` / `with_url` / `with_method`：`send_verb` 只调这三个构建器 |
 
@@ -63,7 +63,7 @@ MoonBit 不允许同一类型上有同名方法（`The method request for type C
 
 ## 加第 8 个动词（`connect` / `trace`）
 
-`Method` 里没有快捷方法的是 `Connect` 与 `Trace`（axios 同样只给这七个动词做了快捷方法，这两个只能走 `axios.request`）。真要用动词名当方法名，照 `src/shortcuts.mbt` 加一个转调即可：
+`Method` 里没有快捷方法的是 `Connect` 与 `Trace`（axios 同样只给这七个动词做了快捷方法，这两个只能走 `axios.request`）。真要用动词名当方法名，照 `src/client/shortcuts.mbt` 加一个转调即可：
 
 ```moonbit nocheck
 pub async fn Client::trace(self : Client, url : String, config? : Config) -> Response raise HttpError {

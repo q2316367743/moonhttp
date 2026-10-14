@@ -4,8 +4,9 @@
 
 | 文件 | 职责 |
 |---|---|
-| `src/http_error.mbt` | 错误契约的全部：`ErrorCode` / `ErrorInfo` / `HttpError` 与访问器，加上**所有**构造它们的地方（`make_error`、`transport_error`、`status_error` / `validate_response`、`too_many_redirects_error`），以及给包外用构造错误的 `HttpError::new` |
-| `src/interceptors.mbt` | 请求拦截器主动中止请求时抛的就是 `HttpError`（用 `HttpError::new` 造），语义见 `11-interceptors.md` |
+| `src/http_error/` | 错误契约：`ErrorCode` / `ErrorInfo` / `HttpError` 与访问器，以及给包外用构造错误的 `HttpError::new` |
+| `src/client/errors.mbt` | **所有**构造错误的地方（`make_error`、`transport_error`、`status_error` / `validate_response`、`too_many_redirects_error`）——造错误是编排层的行为，不进契约包 |
+| `src/client/interceptors.mbt` | 请求拦截器主动中止请求时抛的就是 `HttpError`（用 `HttpError::new` 造），语义见 `11-interceptors.md` |
 | `src/util/response.mbt` | `status_allowed`：状态码是否被配置放行的**纯**判定（不构造错误，所以能待在根包外） |
 | `src/transport/stream.mbt` | `ResponseBody::read_all_partial`：读到一半失败时交出已读到的字节 |
 | `src/error_test.mbt` | 错误路径的端到端用例（含本机 server 的「中途超时」用例） |
@@ -105,7 +106,7 @@ ErrorCode { Timeout | Network | NotSupported | ... }                 ← src/
 
 ## 新增一个错误分类的步骤
 
-1. `src/http_error.mbt` 的 `ErrorCode` 加构造子（并补 `to_string` 映射与 axios 错误码字符串）；
+1. `src/http_error/error.mbt` 的 `ErrorCode` 加构造子（并补 `to_string` 映射与 axios 错误码字符串）；
 2. 在触发点调用 `make_error(message, code, config, response)` 后 `raise`——`response` 传**当时已经收到的响应**，没有就传 `None`；同一份文案只有一个落点时，按 `status_error` / `too_many_redirects_error` 的样子抽一个专用构造器；
 3. 若是传输层能提前识别的失败，考虑先在 `TransportError` 里加一类；
 4. `src/error_test.mbt` 补用例（错误码字符串的契约表在 `error code rendering covers every category`）；

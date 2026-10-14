@@ -71,7 +71,7 @@ fn echo_header(response : @moonhttp.Response, name : String) -> String {
 
 ///|
 /// 取字符串的前 `limit` 个字符（不足就整体返回）。
-fn head_text(text : String, limit : Int) -> String {
+fn head_text(text : String, limit : Int32) -> String {
   if text.length() <= limit {
     text
   } else {

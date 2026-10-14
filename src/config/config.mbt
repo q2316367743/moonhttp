@@ -51,14 +51,14 @@ pub(all) struct Config {
   ///
   /// `request` 下是这条请求的时限；`stream` 下是**每次读取**的等待上限，
   /// 所以 SSE 这类「长时间没有数据是正常的」长连应保持不超时。
-  timeout : Int?
+  timeout : Int32?
   /// 最多跟随几次重定向，对应 axios 的 `maxRedirects`；默认 5。
   ///
   /// `0` 或负数表示不跟随：3xx 原样交出去，由 `validate_status` 判定成败。
   /// 跟随规则（哪些状态码跟、下一跳的方法 / body / 凭据怎么变）见 redirect.mbt。
   ///
   /// 每一跳各自受 `timeout` 约束，所以整条链的最坏耗时是「上限 × timeout」。
-  max_redirects : Int?
+  max_redirects : Int32?
   /// 响应体字节怎么解码成文本（`Response::text()` / `Response::json()` 用它）。
   /// 缺省（或未设置时）按 UTF-8 解码，非法字节用替换字符；
   /// 只在 `Client::request` 路径上生效。
@@ -110,7 +110,7 @@ pub(all) struct Config {
   /// 默认值的按方法分层的头，例如只给 GET 加的公共头
   method_headers : Map[Method, Headers]?
   /// 判定响应状态码是否算成功；缺省等价于 `200 <= status < 300`
-  validate_status : ((Int) -> Bool)?
+  validate_status : ((Int32) -> Bool)?
   /// `url` 已经是绝对地址时是否仍然直接使用（关闭后强制拼 `base_url`）
   allow_absolute_urls : Bool?
 } derive(Default)
@@ -171,7 +171,7 @@ pub fn Config::with_base_url(self : Config, base_url : String) -> Config {
 
 ///|
 /// 设置超时（毫秒）。传 `0` 表示不限时。
-pub fn Config::with_timeout(self : Config, timeout : Int) -> Config {
+pub fn Config::with_timeout(self : Config, timeout : Int32) -> Config {
   { ..self, timeout: Some(timeout), }
 }
 
@@ -180,7 +180,10 @@ pub fn Config::with_timeout(self : Config, timeout : Int) -> Config {
 ///
 /// 传 `0` 表示不跟随（3xx 直接交给 `validate_status` 判定，默认规则下会判成失败）；
 /// `1` 表示只跟一跳。上限按「跳数」计，超过就抛 `ErrorCode::TooManyRedirects`。
-pub fn Config::with_max_redirects(self : Config, max_redirects : Int) -> Config {
+pub fn Config::with_max_redirects(
+  self : Config,
+  max_redirects : Int32,
+) -> Config {
   { ..self, max_redirects: Some(max_redirects), }
 }
 
@@ -277,7 +280,7 @@ pub fn Config::with_method_header(
 /// 自定义状态码校验规则。传一个恒为 `true` 的函数即可关闭校验。
 pub fn Config::with_validate_status(
   self : Config,
-  validate_status : (Int) -> Bool,
+  validate_status : (Int32) -> Bool,
 ) -> Config {
   { ..self, validate_status: Some(validate_status), }
 }

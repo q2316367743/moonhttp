@@ -1,0 +1,86 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316367743/moonhttp/client"
+
+import {
+  "moonbitlang/core/debug",
+  "q2316367743/moonhttp/abort",
+  "q2316367743/moonhttp/config",
+  "q2316367743/moonhttp/cookie",
+  "q2316367743/moonhttp/headers",
+  "q2316367743/moonhttp/http_error",
+  "q2316367743/moonhttp/response",
+  "q2316367743/moonhttp/sse",
+  "q2316367743/moonhttp/transport",
+}
+
+// Values
+pub fn create(@config.Config) -> Client
+
+pub fn default_client() -> Client
+
+// Errors
+
+// Types and methods
+pub struct Client {
+  // private fields
+}
+pub fn Client::create(Self, @config.Config) -> Self
+pub fn Client::defaults(Self) -> @config.Config
+pub async fn Client::delete(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> @response.Response raise @http_error.HttpError
+pub async fn Client::get(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> @response.Response raise @http_error.HttpError
+pub async fn Client::head(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> @response.Response raise @http_error.HttpError
+pub fn Client::new(config? : @config.Config, transport? : &@transport.Transport, interceptors? : Interceptors, cookie_jar? : @cookie.CookieJar) -> Self
+pub async fn Client::options(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> @response.Response raise @http_error.HttpError
+pub async fn Client::patch(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> @response.Response raise @http_error.HttpError
+pub async fn Client::post(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> @response.Response raise @http_error.HttpError
+pub async fn Client::put(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> @response.Response raise @http_error.HttpError
+pub async fn Client::request(Self, @config.Config, signal? : @abort.AbortSignal) -> @response.Response raise @http_error.HttpError
+pub async fn Client::sse(Self, @config.Config, signal? : @abort.AbortSignal) -> SseStream raise @http_error.HttpError
+pub async fn Client::stream(Self, @config.Config, signal? : @abort.AbortSignal) -> StreamResponse raise @http_error.HttpError
+
+pub struct Interceptors {
+  // private fields
+}
+pub fn Interceptors::new() -> Self
+pub fn Interceptors::remove_request(Self, StringView) -> Self?
+pub fn Interceptors::remove_response(Self, StringView) -> Self?
+pub fn Interceptors::use_request(Self, async (@config.Config) -> @config.Config raise @http_error.HttpError, on_rejected? : async (@http_error.HttpError) -> @response.Response raise @http_error.HttpError, name? : StringView) -> Self
+pub fn Interceptors::use_response(Self, async (@response.Response) -> @response.Response raise @http_error.HttpError, on_rejected? : async (@http_error.HttpError) -> @response.Response raise @http_error.HttpError, name? : StringView) -> Self
+
+pub(all) struct SseStream {
+  status : Int
+  status_text : String
+  headers : @headers.Headers
+  config : @config.Config
+  // private fields
+} derive(@debug.Debug)
+pub fn SseStream::close(Self) -> Unit
+pub fn SseStream::is_success(Self) -> Bool
+pub async fn SseStream::next_event(Self) -> @sse.SseEvent? raise @http_error.HttpError
+pub fn SseStream::to_repr(Self) -> @debug.Repr
+
+pub(all) struct StreamResponse {
+  status : Int
+  status_text : String
+  headers : @headers.Headers
+  config : @config.Config
+  // private fields
+} derive(@debug.Debug)
+pub fn StreamResponse::close(Self) -> Unit
+pub fn StreamResponse::is_event_stream(Self) -> Bool
+pub fn StreamResponse::is_success(Self) -> Bool
+pub async fn StreamResponse::read_all(Self) -> Bytes raise @http_error.HttpError
+pub async fn StreamResponse::read_some(Self, max_len? : Int) -> Bytes? raise @http_error.HttpError
+pub async fn StreamResponse::read_until(Self, String) -> String? raise @http_error.HttpError
+pub fn StreamResponse::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+pub type RequestErrorHandler = async (@http_error.HttpError) -> @response.Response raise @http_error.HttpError
+
+pub type RequestInterceptor = async (@config.Config) -> @config.Config raise @http_error.HttpError
+
+pub type ResponseErrorHandler = async (@http_error.HttpError) -> @response.Response raise @http_error.HttpError
+
+pub type ResponseInterceptor = async (@response.Response) -> @response.Response raise @http_error.HttpError
+
+// Traits

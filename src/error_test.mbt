@@ -166,10 +166,10 @@ test "error code rendering covers every category" {
 /// `@http.Server` 的构造本身就是开放错误类型，测试用例里再收敛没有意义。
 async fn stalling_server(
   group : @async.TaskGroup[Unit],
-  status : Int,
+  status : Int32,
   status_text : String,
   partial : String,
-) -> Int {
+) -> Int32 {
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   group.spawn_bg(no_wait=true) <| () => {

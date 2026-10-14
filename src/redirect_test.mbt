@@ -4,7 +4,7 @@
 ///|
 /// 造一份带 `Location` 的 3xx 原始响应。
 fn redirect_response(
-  status : Int,
+  status : Int32,
   location : String,
   body : String,
 ) -> @transport.RawResponse {

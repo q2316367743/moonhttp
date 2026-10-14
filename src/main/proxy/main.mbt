@@ -93,7 +93,7 @@ async fn main {
 ///
 /// 端口用 `try!`：这里的输入是常量，写错了应该当场炸掉，
 /// 而不是静默地拨一个错误的端口。
-fn parse_proxy_url(url : String) -> (String, Int, @moonhttp.ProxyProtocol) {
+fn parse_proxy_url(url : String) -> (String, Int32, @moonhttp.ProxyProtocol) {
   let protocol = if url.has_prefix("https://") {
     @moonhttp.ProxyProtocol::Https
   } else {
@@ -139,7 +139,7 @@ async fn show(
 
 ///|
 /// 取字符串的前 `limit` 个字符（不足就整体返回），避免示例因越界 panic。
-fn head_text(text : String, limit : Int) -> String {
+fn head_text(text : String, limit : Int32) -> String {
   if text.length() <= limit {
     text
   } else {
@@ -149,7 +149,7 @@ fn head_text(text : String, limit : Int) -> String {
 
 ///|
 /// 左侧补空格到固定宽度（输出对齐用；标准库没有按宽度格式化的函数）。
-fn pad(text : String, width : Int) -> String {
+fn pad(text : String, width : Int32) -> String {
   let buf = StringBuilder()
   buf.write_string(text)
   for _ in 0..<(width - text.length()) {

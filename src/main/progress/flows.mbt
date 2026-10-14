@@ -3,7 +3,7 @@
 
 ///|
 /// 1. 下载进度：本机 server 分块慢吐 640 KiB，一路打印到 100%。
-async fn local_download(client : @moonhttp.Client, port : Int) -> Unit {
+async fn local_download(client : @moonhttp.Client, port : Int32) -> Unit {
   println("== 1. 下载进度（本机 drip server，10 块 × 64 KiB）==")
   let response = client.request(
     @moonhttp.Config::new("http://127.0.0.1:\{port}/drip").with_on_download_progress(
@@ -87,7 +87,7 @@ async fn real_download_cancel(group : @async.TaskGroup[Unit]) -> Unit {
 /// 3. 上传进度：8 MiB 载荷打本机 server（读得快），一路打印到 100%。
 async fn upload_to_end(
   client : @moonhttp.Client,
-  port : Int,
+  port : Int32,
   payload : String,
 ) -> Unit {
   println("== 3. 上传进度（本机 server 快读，8 MiB 载荷）==")
@@ -105,7 +105,7 @@ async fn upload_to_end(
 /// 进度到 5% 时取消——报出去的是「已经写进连接的字节」，不是整个请求体。
 async fn upload_cancel(
   client : @moonhttp.Client,
-  port : Int,
+  port : Int32,
   payload : String,
 ) -> Unit {
   println(

@@ -106,7 +106,7 @@ Config::new("/upload").with_method(Method::Put).with_data_from_stream(reader)
 | `src/util/request.mbt` | `extract_body` 分派：字节落 `Buffered`，流原样透传 |
 | `src/httpproto/chunk_render.mbt` | `render_chunk_frame` / `render_last_chunk`（发送侧） |
 | `src/httpconn/request_write.mbt` | 分帧头接管 + `write_stream_body` 泵循环 + 长度校验 |
-| `src/client.mbt` + `src/http_error.mbt` | 重定向循环的流检查 + `stream_replay_error` |
+| `src/client/redirects.mbt` + `errors.mbt` | 重定向循环的流检查 + `stream_replay_error` |
 | `test/server.py` | `/upload` 路由：读干净 CL / chunked 两种请求分帧，回执实收字节数（Python 手写 chunked 请求解码） |
 | `src/main/transport` | 第 11 段 `upload_stream`：3 MiB 两种分帧各打一次 + 进度两态 |
 

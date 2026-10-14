@@ -1,0 +1,9 @@
+// response 包只装「读全量的响应值」：读方法按配置解码，写方法供响应拦截器改写。
+// 解码/编码的纯逻辑在 util 包，本包只做类型与方法的落点。
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/json",
+  "q2316367743/moonhttp/config",
+  "q2316367743/moonhttp/headers",
+  "q2316367743/moonhttp/util",
+}

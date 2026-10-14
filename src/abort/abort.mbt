@@ -64,7 +64,7 @@ pub struct AbortSignal {
   /// 递增票号，`detach` 时用来认领槽位。
   ///
   /// 只增不减：取消之后数组会被清空，旧票号一定越界，`detach` 忽略即可。
-  priv mut next_ticket : Int
+  priv mut next_ticket : Int32
 }
 
 ///|
@@ -78,7 +78,7 @@ pub struct AbortController {
 
 ///|
 /// `attach` 在「已经取消」时返回的票号：这次登记没有槽位可注销。
-const NO_TICKET : Int = -1
+const NO_TICKET : Int32 = -1
 
 ///|
 /// 新建一个尚未取消的控制器（它的信号也尚未取消）。
@@ -222,7 +222,7 @@ pub fn AbortSignal::throw_if_aborted(
 pub fn AbortSignal::attach(
   self : AbortSignal,
   handle : () -> Unit noraise,
-) -> Int {
+) -> Int32 {
   match self.state {
     Aborted(_) => NO_TICKET
     Pending => {
@@ -240,7 +240,7 @@ pub fn AbortSignal::attach(
 /// 票号越界一律忽略——这既覆盖「重复注销」，也覆盖取消链路里的那次自注销
 /// （`abort_with` 已经把数组整组取走，旧票号必然越界），
 /// 以及「已取消信号上登记未保留」时拿到的 `NO_TICKET`。
-pub fn AbortSignal::detach(self : AbortSignal, ticket : Int) -> Unit {
+pub fn AbortSignal::detach(self : AbortSignal, ticket : Int32) -> Unit {
   if ticket >= 0 && ticket < self.handles.length() {
     self.handles[ticket] = None
   }

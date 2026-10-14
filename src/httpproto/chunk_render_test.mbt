@@ -43,7 +43,7 @@ test "render_last_chunk：固定形状 0 CRLF CRLF" {
 ///|
 /// 渲染 → 解码的往返：任意大小的数据按任意切法渲染成多帧，解码结果
 /// 应拼回原始输入，且 `finish()` 正常收尾（终止帧在、报文完整）。
-fn roundtrip(data : Bytes, frame_size : Int) -> Unit raise {
+fn roundtrip(data : Bytes, frame_size : Int32) -> Unit raise {
   let wire = @buffer.Buffer::Buffer()
   let mut start = 0
   while start < data.length() {

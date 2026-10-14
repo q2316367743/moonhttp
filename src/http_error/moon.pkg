@@ -1,0 +1,8 @@
+// http_error 包是对外的错误契约：纯类型与访问器，不含任何构造错误的行为
+// （那些在 client 包的 errors.mbt）。因此它只依赖 config（错误带配置）与
+// response（错误带已收到的响应），不依赖 transport。
+import {
+  "moonbitlang/core/debug",
+  "q2316367743/moonhttp/config",
+  "q2316367743/moonhttp/response",
+}

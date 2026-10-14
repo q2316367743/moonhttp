@@ -1,4 +1,4 @@
-// 根包的白盒测试：覆盖只能从包内部触达的分支。
+// client 包的白盒测试：覆盖只能从包内部触达的分支。
 
 ///|
 /// `validate_status` 为 `None` 时一律放行。
@@ -8,13 +8,15 @@
 /// 之所以保留它，是因为 `Config` 的字段语义就是「`None` = 未提供」，
 /// 校验函数不该依赖「默认值一定设了校验规则」这个外部前提。
 test "validate_response lets everything through without a rule" {
-  let response : Response = {
-    status: 500,
-    status_text: "Internal Server Error",
-    headers: Headers::new(),
-    config: Config::default(),
-    raw: b"",
-  }
+  // `raw` 是 Response 的私有字段，跨包构造不了记录字面量，
+  // 统一走 build_response（与生产路径同一个拼装口）。
+  let response = build_response(
+    500,
+    "Internal Server Error",
+    Headers::new(),
+    b"",
+    Config::default(),
+  )
   // 放行即 Ok（不抛错、也不变成错误）
   assert_true(validate_response(response) is Ok(_))
 }

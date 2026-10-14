@@ -71,7 +71,7 @@ pub(all) struct PreparedRequest {
   /// 分两段生效：建连到拿到响应头这一段整体受它约束，响应体每次读取也受
   /// 它约束（见 `ResponseBody`）。所以长连的 SSE 请求应当传 `None`。
   /// 走代理时**建连包含与代理的 CONNECT 握手**，它同样落在这段时限里。
-  timeout : Int?
+  timeout : Int32?
   /// 代理服务器；`None` 表示直连。
   ///
   /// 有代理时流量全部经代理转发，http 目标也走 CONNECT 隧道（见 `docs/09-proxy.md`）。
@@ -162,7 +162,7 @@ pub extend PreparedRequest with @debug.Debug::{to_repr}
 /// 一次性读全是上层的组合结果——这样 chunked / SSE 这类「边到边读」
 /// 的协议才能表达出来。
 pub(all) struct RawResponse {
-  status : Int
+  status : Int32
   status_text : String
   headers : @headers.Headers
   body : ResponseBody

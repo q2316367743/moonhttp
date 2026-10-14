@@ -10,10 +10,10 @@
 |---|---|
 | `src/config/redirect.mbt` | `Config::next_redirect`：跟随判定与下一跳构造（方法 / body / 凭据 / 头的改写规则全在这里） |
 | `src/config/redirect_test.mbt` | 逐条钉住上面那些规则的同步用例（不需要传输层） |
-| `src/client.mbt` | `Client::send_following_redirects`：计数、发下一跳、关掉 3xx 的连接、超限抛错 |
+| `src/client/redirects.mbt` | `Client::send_following_redirects`：计数、发下一跳、关掉 3xx 的连接、超限抛错 |
 | `src/url/resolve.mbt` | `resolve_url`（RFC 3986 相对解析）、`url_scheme` / `url_authority`（凭据判定用的地址零件） |
 | `src/redirect_test.mbt` | 端到端用例：跟随、改写、上限、关开关、跨 host 丢凭据、流式入口、真实连接 |
-| `src/http_error.mbt` | `ErrorCode::TooManyRedirects` 与 `too_many_redirects_error` |
+| `src/client/errors.mbt` | `too_many_redirects_error`（错误码 `TooManyRedirects` 的契约在 `src/http_error/`） |
 
 ## 为什么规则在 `config` 包、循环在根包
 
@@ -92,7 +92,7 @@ host 比较用的是**归一化后的 authority**（`@url.url_authority`：去�
 改这一块时容易漏掉的联动：
 
 1. **改跟随规则或改写规则**：只有 `src/config/redirect.mbt` 一处，用例在 `src/config/redirect_test.mbt`（纯同步，先加用例再改代码）；端到端行为在 `src/redirect_test.mbt`。
-2. **改默认上限**：`src/config/default.mbt` 与 `src/client.mbt` 里 `unwrap_or(5)` 的兜底要一起改，`src/redirect_test.mbt` 的「默认 5 跳」用例是有意钉死默认值的。
+2. **改默认上限**：`src/config/default.mbt` 与 `src/client/redirects.mbt` 里 `unwrap_or(5)` 的兜底要一起改，`src/redirect_test.mbt` 的「默认 5 跳」用例是有意钉死默认值的。
 3. **新增配置字段**：按 `02-config-merge.md` 的流程走（`Config` 字段 → `merge_config` 选策略 → 构建器 → `to_string` 渲染 → 用例）。`max_redirects` 走的是「请求级优先、否则默认」，与 `timeout` 同档。
 4. **动 `Config.data` / `Headers` 的删头能力**：`redirect.mbt` 依赖「包内能清空 `data`」这条（同包），删头用的是 `Headers::entries()` + `remove()` 的公开 API，没有为它新增 headers 接口。
 5. **动 `url` 包的解析**：`resolve_url` 的结果**一定不含 fragment**（fragment 从不随请求发出），`url_authority` 的归一化是凭据判定的依据，两者都别在别处另写一份。

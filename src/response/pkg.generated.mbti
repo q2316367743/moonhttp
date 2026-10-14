@@ -1,0 +1,38 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "q2316367743/moonhttp/response"
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/json",
+  "q2316367743/moonhttp/config",
+  "q2316367743/moonhttp/headers",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+pub(all) struct Response {
+  status : Int
+  status_text : String
+  headers : @headers.Headers
+  config : @config.Config
+  // private fields
+} derive(@debug.Debug)
+pub fn Response::bytes(Self) -> Bytes
+pub fn Response::content_length(Self) -> Int
+pub fn Response::is_success(Self) -> Bool
+pub fn Response::json(Self) -> Json raise @json.ParseError
+pub fn Response::new(Int, String, @headers.Headers, Bytes, @config.Config) -> Self
+pub fn Response::text(Self) -> String
+pub fn Response::to_repr(Self) -> @debug.Repr
+pub fn Response::with_body(Self, Bytes) -> Self
+pub fn Response::with_headers(Self, @headers.Headers) -> Self
+pub fn Response::with_json(Self, Json) -> Self
+pub fn Response::with_status(Self, Int) -> Self
+pub fn Response::with_text(Self, String) -> Self
+
+// Type aliases
+
+// Traits

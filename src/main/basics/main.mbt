@@ -36,7 +36,7 @@ async fn main {
 ///
 /// `allow_failure=true`：某条用例中途取消/超时会让这个 handler 的写动作失败，
 /// 那条失败不该把整个 server 带走——后面的用例还要用它。
-async fn demo_server(group : @async.TaskGroup[Unit]) -> Int {
+async fn demo_server(group : @async.TaskGroup[Unit]) -> Int32 {
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   group.spawn_bg(no_wait=true) <| () => {
@@ -135,7 +135,7 @@ fn echo_query(response : @moonhttp.Response) -> String {
 
 ///|
 /// 取字符串的前 `limit` 个字符（不足就整体返回），避免示例因越界 panic。
-fn head_text(text : String, limit : Int) -> String {
+fn head_text(text : String, limit : Int32) -> String {
   if text.length() <= limit {
     text
   } else {

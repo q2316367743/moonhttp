@@ -2,132 +2,25 @@
 package "q2316367743/moonhttp"
 
 import {
-  "moonbitlang/core/debug",
-  "moonbitlang/core/json",
   "q2316367743/moonhttp/abort",
+  "q2316367743/moonhttp/client",
   "q2316367743/moonhttp/config",
   "q2316367743/moonhttp/cookie",
   "q2316367743/moonhttp/headers",
+  "q2316367743/moonhttp/http_error",
+  "q2316367743/moonhttp/response",
   "q2316367743/moonhttp/sse",
   "q2316367743/moonhttp/transport",
 }
 
 // Values
-pub fn create(@config.Config) -> Client
+pub fn create(@config.Config) -> @client.Client
 
-pub fn default_client() -> Client
+pub fn default_client() -> @client.Client
 
 // Errors
-pub(all) suberror HttpError {
-  HttpError(ErrorInfo)
-}
-pub fn HttpError::code(Self) -> ErrorCode
-pub fn HttpError::config(Self) -> @config.Config
-pub fn HttpError::info(Self) -> ErrorInfo
-pub fn HttpError::is_cancelled(Self) -> Bool
-pub fn HttpError::message(Self) -> String
-pub fn HttpError::new(String, ErrorCode, @config.Config) -> Self
-pub fn HttpError::output(Self, &Logger) -> Unit
-pub fn HttpError::response(Self) -> Response?
-pub fn HttpError::to_string(Self) -> String
-pub impl Show for HttpError
 
 // Types and methods
-pub struct Client {
-  // private fields
-}
-pub fn Client::create(Self, @config.Config) -> Self
-pub fn Client::defaults(Self) -> @config.Config
-pub async fn Client::delete(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
-pub async fn Client::get(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
-pub async fn Client::head(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
-pub fn Client::new(config? : @config.Config, transport? : &@transport.Transport, interceptors? : Interceptors, cookie_jar? : @cookie.CookieJar) -> Self
-pub async fn Client::options(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
-pub async fn Client::patch(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
-pub async fn Client::post(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
-pub async fn Client::put(Self, String, config? : @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
-pub async fn Client::request(Self, @config.Config, signal? : @abort.AbortSignal) -> Response raise HttpError
-pub async fn Client::sse(Self, @config.Config, signal? : @abort.AbortSignal) -> SseStream raise HttpError
-pub async fn Client::stream(Self, @config.Config, signal? : @abort.AbortSignal) -> StreamResponse raise HttpError
-
-pub(all) enum ErrorCode {
-  BadRequest
-  BadResponse
-  Network
-  Timeout
-  InvalidUrl
-  NotSupported
-  Cancelled
-  TooManyRedirects
-} derive(Eq, @debug.Debug)
-pub fn ErrorCode::equal(Self, Self) -> Bool
-pub fn ErrorCode::not_equal(Self, Self) -> Bool
-pub fn ErrorCode::output(Self, &Logger) -> Unit
-pub fn ErrorCode::to_repr(Self) -> @debug.Repr
-pub fn ErrorCode::to_string(Self) -> String
-pub impl Show for ErrorCode
-
-pub(all) struct ErrorInfo {
-  message : String
-  code : ErrorCode
-  config : @config.Config
-  response : Response?
-}
-
-pub struct Interceptors {
-  // private fields
-}
-pub fn Interceptors::new() -> Self
-pub fn Interceptors::remove_request(Self, StringView) -> Self?
-pub fn Interceptors::remove_response(Self, StringView) -> Self?
-pub fn Interceptors::use_request(Self, async (@config.Config) -> @config.Config raise HttpError, on_rejected? : async (HttpError) -> Response raise HttpError, name? : StringView) -> Self
-pub fn Interceptors::use_response(Self, async (Response) -> Response raise HttpError, on_rejected? : async (HttpError) -> Response raise HttpError, name? : StringView) -> Self
-
-pub(all) struct Response {
-  status : Int
-  status_text : String
-  headers : @headers.Headers
-  config : @config.Config
-  // private fields
-} derive(@debug.Debug)
-pub fn Response::bytes(Self) -> Bytes
-pub fn Response::content_length(Self) -> Int
-pub fn Response::is_success(Self) -> Bool
-pub fn Response::json(Self) -> Json raise @json.ParseError
-pub fn Response::text(Self) -> String
-pub fn Response::to_repr(Self) -> @debug.Repr
-pub fn Response::with_body(Self, Bytes) -> Self
-pub fn Response::with_headers(Self, @headers.Headers) -> Self
-pub fn Response::with_json(Self, Json) -> Self
-pub fn Response::with_status(Self, Int) -> Self
-pub fn Response::with_text(Self, String) -> Self
-
-pub(all) struct SseStream {
-  status : Int
-  status_text : String
-  headers : @headers.Headers
-  config : @config.Config
-  // private fields
-} derive(@debug.Debug)
-pub fn SseStream::close(Self) -> Unit
-pub fn SseStream::is_success(Self) -> Bool
-pub async fn SseStream::next_event(Self) -> @sse.SseEvent? raise HttpError
-pub fn SseStream::to_repr(Self) -> @debug.Repr
-
-pub(all) struct StreamResponse {
-  status : Int
-  status_text : String
-  headers : @headers.Headers
-  config : @config.Config
-  // private fields
-} derive(@debug.Debug)
-pub fn StreamResponse::close(Self) -> Unit
-pub fn StreamResponse::is_event_stream(Self) -> Bool
-pub fn StreamResponse::is_success(Self) -> Bool
-pub async fn StreamResponse::read_all(Self) -> Bytes raise HttpError
-pub async fn StreamResponse::read_some(Self, max_len? : Int) -> Bytes? raise HttpError
-pub async fn StreamResponse::read_until(Self, String) -> String? raise HttpError
-pub fn StreamResponse::to_repr(Self) -> @debug.Repr
 
 // Type aliases
 pub using @abort {type AbortController}
@@ -136,9 +29,15 @@ pub using @abort {type AbortSignal}
 
 pub using @config {type Auth}
 
+pub using @client {type Client}
+
 pub using @config {type Config}
 
 pub using @cookie {type CookieJar}
+
+pub using @http_error {type ErrorCode}
+
+pub using @http_error {type ErrorInfo}
 
 pub using @config {type FormData}
 
@@ -147,6 +46,10 @@ pub using @config {type FormFile}
 pub using @config {type FormValue}
 
 pub using @headers {type Headers}
+
+pub using @http_error {type HttpError}
+
+pub using @client {type Interceptors}
 
 pub using @config {type Method}
 
@@ -158,15 +61,17 @@ pub using @config {type Proxy}
 
 pub using @config {type ProxyProtocol}
 
-pub type RequestErrorHandler = async (HttpError) -> Response raise HttpError
+pub type RequestErrorHandler = async (@http_error.HttpError) -> @response.Response raise @http_error.HttpError
 
-pub type RequestInterceptor = async (@config.Config) -> @config.Config raise HttpError
+pub type RequestInterceptor = async (@config.Config) -> @config.Config raise @http_error.HttpError
+
+pub using @response {type Response}
 
 pub using @config {type ResponseEncoding}
 
-pub type ResponseErrorHandler = async (HttpError) -> Response raise HttpError
+pub type ResponseErrorHandler = async (@http_error.HttpError) -> @response.Response raise @http_error.HttpError
 
-pub type ResponseInterceptor = async (Response) -> Response raise HttpError
+pub type ResponseInterceptor = async (@response.Response) -> @response.Response raise @http_error.HttpError
 
 pub using @config {type SerializedBody}
 
@@ -174,7 +79,11 @@ pub using @sse {type SseEvent}
 
 pub using @sse {type SseParser}
 
+pub using @client {type SseStream}
+
 pub using @config {type StreamBody}
+
+pub using @client {type StreamResponse}
 
 pub using @transport {trait Transport}
 

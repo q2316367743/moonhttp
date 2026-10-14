@@ -31,7 +31,7 @@ test "prefer_request falls back to base" {
 test "request_overrides behaves like prefer_request" {
   assert_eq(request_overrides(Some(1), Some(2)), Some(2))
   assert_eq(request_overrides(Some(1), None), Some(1))
-  assert_eq(request_overrides((None : Int?), None), None)
+  assert_eq(request_overrides((None : Int32?), None), None)
 }
 
 ///|

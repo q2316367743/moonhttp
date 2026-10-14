@@ -76,9 +76,9 @@ impl @io.Reader for Connection with fn _get_internal_buffer(self : Connection) -
 impl @io.Reader for Connection with fn _direct_read(
   self : Connection,
   dst : FixedArray[Byte],
-  offset~ : Int,
-  max_len~ : Int,
-) -> Int {
+  offset~ : Int32,
+  max_len~ : Int32,
+) -> Int32 {
   match self.stream {
     Plain(tcp) => tcp.read(dst, offset~, max_len~)
     Secure(tls) => tls.read(dst, offset~, max_len~)
@@ -91,9 +91,9 @@ impl @io.Reader for Connection with fn _direct_read(
 impl @io.Writer for Connection with fn write_once(
   self : Connection,
   data : Bytes,
-  offset~ : Int,
-  len~ : Int,
-) -> Int {
+  offset~ : Int32,
+  len~ : Int32,
+) -> Int32 {
   match self.stream {
     Plain(tcp) => tcp.write_once(data, offset~, len~)
     Secure(tls) => tls.write_once(data, offset~, len~)
@@ -125,7 +125,7 @@ async fn dial(
 /// 建立 TCP 连接；DNS 解析失败、拒绝连接都归 `Network`。
 async fn connect_tcp(
   host : String,
-  port : Int,
+  port : Int32,
 ) -> Connection raise @transport.TransportError {
   let tcp = @socket.Tcp::connect_to_host(host, port~) catch {
     error => raise @transport.TransportError::Network(error.to_string())

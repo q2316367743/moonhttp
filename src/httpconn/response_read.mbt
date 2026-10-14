@@ -4,13 +4,13 @@
 ///|
 /// 1xx 临时响应（100 Continue / 103 Early Hints 等）的跳过上限：
 /// 我们不发 `Expect`，正常服务器根本不会发 1xx；上限只是防恶意循环。
-const MAX_INTERIM_RESPONSES : Int = 5
+const MAX_INTERIM_RESPONSES : Int32 = 5
 
 ///|
 /// 响应头读取结果。`headers` 保留**协议层的 multimap**——分帧判定要看
 /// 全部 `Content-Length`（多条不一致是走私形状），压平成单值是 send 的收尾活。
 priv struct ResponseHead {
-  code : Int
+  code : Int32
   reason : String
   headers : @httpproto.HeaderMap
 }
