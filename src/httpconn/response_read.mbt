@@ -7,9 +7,21 @@
 const MAX_INTERIM_RESPONSES : Int32 = 5
 
 ///|
+/// 坏连接信号：对端在**响应开始之前**就把连接关了（或写请求时对端已死）。
+/// 只在取自池的连接上它才值得重试（docs/17 分期表：取用时坏连接重试一次），
+/// 重试资格的裁决在 send_head；新建连接上的同款失败在这里统一翻成
+/// `Network`——对端断开是网络失败，不是「收到了坏响应」（ERR_BAD_RESPONSE
+/// 应该留给「真的收到了坏字节」）。
+priv suberror StaleConnection {
+  StaleConnection(String)
+}
+
+///|
 /// 响应头读取结果。`headers` 保留**协议层的 multimap**——分帧判定要看
 /// 全部 `Content-Length`（多条不一致是走私形状），压平成单值是 send 的收尾活。
+/// `version` 参与复用判定：1.0 的持久连接要显式确认（docs/21）。
 priv struct ResponseHead {
+  version : @httpproto.HttpVersion
   code : Int32
   reason : String
   headers : @httpproto.HeaderMap
@@ -17,20 +29,31 @@ priv struct ResponseHead {
 
 ///|
 /// 读响应头。1xx 响应（含各自的头块）读掉后继续等最终响应。
-/// 所有失败都以 `ParseError` 表达（Malformed / Unsupported），
-/// 映射成 @transport.TransportError 由 send 统一做。
+/// 解析失败以 `ParseError` 表达（Malformed / Unsupported）；
+/// 对端在响应开始前关闭以 `StaleConnection` 表达——两者都由 send 统一映射。
 async fn read_response_head(conn : Connection) -> ResponseHead {
   let mut interim = 0
   while true {
-    let line = match conn.read_until("\r\n") {
+    // 首个状态行的读取单独兜：干净 EOF 与读取失败（对端 RST 等）都意味着
+    // 一个响应字节都没到——借来的连接早死了是常态，按坏连接表达，
+    // 重试资格由 send_head 裁决；从这里起响应已开始，失败一律 Malformed。
+    let line = conn.read_until("\r\n") catch {
+      error =>
+        raise StaleConnection("连接在响应开始前失效：\{error}")
+    }
+    let line = match line {
       Some(line) => line
-      None =>
-        raise @httpproto.ParseError::Malformed("连接关闭，响应头缺失")
+      None => raise StaleConnection("连接在响应开始前被对端关闭")
     }
     let status = @httpproto.parse_status_line(line)
     if status.code >= 200 {
       let headers = read_header_block(conn)
-      return { code: status.code, reason: status.reason, headers, }
+      return {
+        version: status.version,
+        code: status.code,
+        reason: status.reason,
+        headers,
+      }
     }
     // 1xx：读掉它的头块再等真正的响应
     interim += 1
@@ -47,6 +70,7 @@ async fn read_response_head(conn : Connection) -> ResponseHead {
 
 ///|
 /// 读头块直到空行，交给 httpproto 解析（obs-fold、多值、校验都在那）。
+/// 从这里起响应已经开始：EOF 一律是 `Malformed`（半截响应不可重试）。
 async fn read_header_block(conn : Connection) -> @httpproto.HeaderMap {
   let lines : Array[String] = []
   while true {

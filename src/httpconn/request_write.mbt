@@ -24,8 +24,11 @@ const DEFAULT_USER_AGENT : String = "moonhttp/0.4.0"
 ///   由我们声明并负责响应侧解压；用户声明过（含 `decompress: false` 时
 ///   上层声明的 `identity`）就完全不动；
 /// - `User-Agent`：`DEFAULT_USER_AGENT`，见上；
-/// - `Connection: close`：phase 1 每请求一条连接，声明 close 让服务端
-///   立刻回收（docs/17 口径 4；keep-alive 随连接池一起来）；
+/// - `Connection`：连接池的开关决定要不要声明（docs/21）——池启用时不发
+///   （HTTP/1.1 持久连接是默认，对齐 Go / Python / Node 的做法）；池禁用
+///   时发 `Connection: close`（phase 1 的老口径，让服务端立刻回收）。
+///   用户显式设置永远赢（set_if_absent）；用户声明的 close 还会被响应侧
+///   尊重——这条连接响应结束后不回池。
 /// - 分帧头（`Content-Length` / `Transfer-Encoding`）按请求体形态落，见下。
 ///
 /// 分帧头的归属分两档（docs/20）：
@@ -37,6 +40,7 @@ const DEFAULT_USER_AGENT : String = "moonhttp/0.4.0"
 fn build_request_headers(
   request : @transport.PreparedRequest,
   target : Target,
+  declare_close : Bool,
 ) -> @httpproto.HeaderMap {
   let headers = @httpproto.HeaderMap::new()
   let framing_managed = request.body is Some(@transport.RequestBody::Stream(_))
@@ -52,7 +56,9 @@ fn build_request_headers(
   headers.set_if_absent("Host", host_header(target))
   headers.set_if_absent("Accept-Encoding", "gzip")
   headers.set_if_absent("User-Agent", DEFAULT_USER_AGENT)
-  headers.set_if_absent("Connection", "close")
+  if declare_close {
+    headers.set_if_absent("Connection", "close")
+  }
   match request.body {
     Some(@transport.RequestBody::Stream(stream)) =>
       match stream.content_length {
@@ -70,20 +76,26 @@ fn build_request_headers(
 ///|
 /// 渲染并写出请求头块。渲染失败是「请求构造不出来」（方法/头/目标的形状
 /// 问题），归 `Unsupported`——不是对端的错，别记成 `Malformed`。
+///
+/// raise 类型不收紧到 `TransportError`：写连接失败要按 `StaleConnection`
+/// 表达（坏连接能否重试由 send_head 裁决），它与 TransportError 是平级的
+/// Error 子类型。
 async fn write_request_head(
   conn : Connection,
   meth : String,
   target : String,
   headers : @httpproto.HeaderMap,
-) -> Unit raise @transport.TransportError {
+) -> Unit {
   let head = @httpproto.render_request_head(meth, target, headers) catch {
     @httpproto.ParseError::Malformed(message) =>
       raise @transport.TransportError::Unsupported(message)
     @httpproto.ParseError::Unsupported(message) =>
       raise @transport.TransportError::Unsupported(message)
   }
+  // 写失败按坏连接表达（StaleConnection）：借来的连接可能早被对端关了，
+  // send_head 拿着这个信号换新连接重试；翻成 Network 的裁决也在那里。
   conn.write(head) catch {
-    error => raise @transport.TransportError::Network(error.to_string())
+    error => raise StaleConnection("写出请求头失败：\{error}")
   }
 }
 
@@ -93,7 +105,7 @@ async fn write_request_body(
   conn : Connection,
   body : @transport.RequestBody,
   on_progress : @transport.ProgressCallback?,
-) -> Unit raise @transport.TransportError {
+) -> Unit {
   match body {
     Buffered(data) => write_buffered_body(conn, data, on_progress)
     Stream(stream) => write_stream_body(conn, stream, on_progress)
@@ -108,11 +120,11 @@ async fn write_buffered_body(
   conn : Connection,
   data : Bytes,
   on_progress : @transport.ProgressCallback?,
-) -> Unit raise @transport.TransportError {
+) -> Unit {
   match on_progress {
     None =>
       conn.write(data) catch {
-        error => raise @transport.TransportError::Network(error.to_string())
+        error => raise StaleConnection("写出请求体失败：\{error}")
       }
     Some(report) => {
       let total = data.length()
@@ -123,7 +135,7 @@ async fn write_buffered_body(
           end = total
         }
         conn.write(data.exact_view(start=sent, end~)) catch {
-          error => raise @transport.TransportError::Network(error.to_string())
+          error => raise StaleConnection("写出请求体失败：\{error}")
         }
         sent = end
         report({ loaded: sent, total: Some(total), })
@@ -142,8 +154,9 @@ async fn write_buffered_body(
 /// `render_chunk_frame`、收尾补终止帧。
 ///
 /// 进度与缓冲路径同口径：每写完一块报告一次（chunked 模式 `total` 为 `None`，
-/// 与下载侧 chunked 响应一致）。读源失败（如 MemoryReader 回调抛错）与
-/// 写失败一样归 `Network`。
+/// 与下载侧 chunked 响应一致）。读源失败（如 MemoryReader 回调抛错）是
+/// 本地问题，归 `Network`；写连接失败是坏连接，按 `StaleConnection` 表达
+/// （能否重试由 send_head 裁决——流式体不可回卷，永远不重试）。
 ///
 /// 空块跳过：chunked 下零长度帧就是终止帧（等于把报文提前截断），
 /// 定长下也是噪音；EOF 只认 `None`，不认空段。
@@ -151,7 +164,7 @@ async fn write_stream_body(
   conn : Connection,
   stream : @transport.StreamBody,
   on_progress : @transport.ProgressCallback?,
-) -> Unit raise @transport.TransportError {
+) -> Unit {
   let chunked = stream.content_length is None
   let mut sent = 0
   while true {
@@ -175,7 +188,7 @@ async fn write_stream_body(
           chunk
         }
         conn.write(wire) catch {
-          error => raise @transport.TransportError::Network(error.to_string())
+          error => raise StaleConnection("写出请求体失败：\{error}")
         }
         sent = sent + chunk.length()
         match on_progress {
@@ -188,7 +201,8 @@ async fn write_stream_body(
   }
   if chunked {
     conn.write(@httpproto.render_last_chunk()) catch {
-      error => raise @transport.TransportError::Network(error.to_string())
+      error =>
+        raise StaleConnection("写出请求体收尾帧失败：\{error}")
     }
   }
   match stream.content_length {

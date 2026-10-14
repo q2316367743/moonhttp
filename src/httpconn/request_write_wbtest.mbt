@@ -19,7 +19,7 @@ fn bare_request(headers : @transport.Headers) -> @transport.PreparedRequest {
 ///|
 test "default User-Agent is injected when user did not set one" {
   let request = bare_request(@transport.Headers::new())
-  let headers = build_request_headers(request, parse_target(request.url))
+  let headers = build_request_headers(request, parse_target(request.url), false)
   assert_eq(headers.get_last("User-Agent"), Some("moonhttp/0.4.0"))
 }
 
@@ -28,6 +28,23 @@ test "explicit User-Agent wins over the default" {
   let request = bare_request(
     @transport.Headers::new().set("User-Agent", "my-app/1.0"),
   )
-  let headers = build_request_headers(request, parse_target(request.url))
+  let headers = build_request_headers(request, parse_target(request.url), false)
   assert_eq(headers.get_last("User-Agent"), Some("my-app/1.0"))
+}
+
+///|
+/// Connection 头的开关契约（docs/21）：池禁用（declare_close = true）时
+/// 补 `Connection: close`（phase 1 口径）；池启用时不发——HTTP/1.1 的
+/// 持久连接是默认，对齐 Go / Python / Node。用户显式设置永远赢。
+test "Connection header follows the pool switch, explicit wins" {
+  let plain = bare_request(@transport.Headers::new())
+  let pooled = build_request_headers(plain, parse_target(plain.url), false)
+  assert_eq(pooled.get_last("Connection"), None)
+  let unpooled = build_request_headers(plain, parse_target(plain.url), true)
+  assert_eq(unpooled.get_last("Connection"), Some("close"))
+  let user_set = bare_request(
+    @transport.Headers::new().set("Connection", "keep-alive"),
+  )
+  let kept = build_request_headers(user_set, parse_target(user_set.url), true)
+  assert_eq(kept.get_last("Connection"), Some("keep-alive"))
 }

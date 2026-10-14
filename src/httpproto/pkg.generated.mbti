@@ -8,6 +8,10 @@ import {
 // Values
 pub fn body_framing(Bool, Int, HeaderMap) -> BodyFraming raise ParseError
 
+pub fn connection_reusable(HttpVersion, HeaderMap) -> Bool
+
+pub fn declares_close(String) -> Bool
+
 pub fn is_token(StringView) -> Bool
 
 pub fn parse_header_block(Array[String]) -> HeaderMap raise ParseError

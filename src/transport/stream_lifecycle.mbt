@@ -6,7 +6,24 @@
 // 一块——读语义（内存体与连接体的分支、超时、逐块读）留在 stream.mbt。
 //
 // 连接的所有权口径见 `docs/05-transport.md` 的「`ResponseBody` 契约」，
-// 取消相关的语义见 `docs/12-cancellation.md`。
+// 取消相关的语义见 `docs/12-cancellation.md`，
+// 释放的两种结局（读完回池 / 中途放弃关连接）见 `docs/21-connection-pool.md`。
+
+///|
+/// 连接流的两种释放结局（docs/17 口径 4「响应体消费完才回池」的信号面）：
+/// - `Finished`：读取正常走到了 EOF——连接是否还能用由实现层再判
+///   （体读满且服务端允许复用 → 回池；被截断 / UntilClose → 关闭）；
+/// - `Abandoned`：半途放弃或失败——统一关闭，绝不回池。
+pub(all) enum BodyEnd {
+  Finished
+  Abandoned
+} derive(Eq, Debug)
+
+///|
+pub extend BodyEnd with Eq::{equal, not_equal}
+
+///|
+pub extend BodyEnd with @debug.Debug::{to_repr}
 
 ///|
 /// 用内存字节构造响应体。Mock 传输层与自定义实现用它造出
@@ -30,6 +47,10 @@ pub fn ResponseBody::from_bytes(data : Bytes) -> ResponseBody {
 /// `close` 负责释放底层连接（TLS + TCP）。连接的生命周期从这里交给响应体，
 /// 读到 EOF 或 `close()` 时才会关闭。
 ///
+/// 旧签名兼容入口：单回调视作「无论怎么结束都关连接」（phase 1 每请求
+/// 一条连接的语义）。需要区分「读完」与「半途放弃」的实现（连接池）
+/// 走 `open_wire_dispose`。
+///
 /// `timeout` 约束**单次读取**、`signal` 登记「取消即关闭」、进来就已取消的
 /// 信号立刻关流——随后任何读取都会报 `Cancelled` 而不是安静地 EOF。这份检查
 /// 必须自己写——信号上的登记在已取消时不会补触发，见 `src/abort/abort.mbt`
@@ -41,8 +62,28 @@ pub fn ResponseBody::open_wire(
   total~ : Int32?,
   signal~ : @abort.AbortSignal?,
 ) -> ResponseBody {
+  ResponseBody::open_wire_dispose(
+    reader,
+    fn(_end) { close() },
+    timeout~,
+    total~,
+    signal~,
+  )
+}
+
+///|
+/// `open_wire` 的 dispose 版：释放回调带 `BodyEnd` 语义，连接池据此
+/// 决定「还池」还是「关连接」。`dispose` 应当幂等：取消触发的释放与
+/// 显式 `close()` 可能只差一拍。
+pub fn ResponseBody::open_wire_dispose(
+  reader : &@io.Reader,
+  dispose : (BodyEnd) -> Unit,
+  timeout~ : Int32?,
+  total~ : Int32?,
+  signal~ : @abort.AbortSignal?,
+) -> ResponseBody {
   let body : ResponseBody = {
-    inner: BodyInner::Wire({ reader, close, }),
+    inner: BodyInner::Wire({ reader, dispose, }),
     timeout,
     total,
     signal,
@@ -57,6 +98,8 @@ pub fn ResponseBody::open_wire(
 /// **进来就已经取消**的信号在这里显式处理：立刻关掉，随后任何读取都会报
 /// `Cancelled` 而不是安静地 EOF。这份检查必须自己写——信号上的登记在
 /// 已取消时不会补触发，见 `src/abort/abort.mbt` 的 `attach`。
+/// 取消的释放恒为 `Abandoned`：协程被打断后无法知道字节流停在哪，
+/// 连接必须毒化（docs/17 口径 4）。
 fn register_cancel_close(body : ResponseBody) -> Unit {
   match body.signal {
     Some(signal) =>
@@ -84,17 +127,31 @@ fn ResponseBody::rewind(self : ResponseBody) -> ResponseBody? {
 }
 
 ///|
-/// 关闭流并释放底层连接。幂等：重复调用只生效一次。
+/// 关闭流并释放底层连接，释放语义为 `Abandoned`（不回池）。
+/// 幂等：重复调用只生效一次。
 ///
 /// 只读了半截就停止（例如 SSE 收到想结束就断开）时必须显式调用它，
 /// 否则连接会一直挂着。
 pub fn ResponseBody::close(self : ResponseBody) -> Unit {
+  self.release(Abandoned)
+}
+
+///|
+/// 响应体读到了 EOF 的释放路径：与 `close` 同一条 teardown，只把
+/// `Finished` 语义交给回调——连接能不能回池由实现层凭它判。
+fn ResponseBody::close_as_finished(self : ResponseBody) -> Unit {
+  self.release(Finished)
+}
+
+///|
+/// 统一的释放 teardown：把结局交给回调、置 `Closed`、注销信号登记。
+/// 幂等性靠「立刻置 Closed」保证：回调本身不必防重入。
+fn ResponseBody::release(self : ResponseBody, end : BodyEnd) -> Unit {
   match self.inner {
-    // close 的幂等性靠「立刻置 Closed」保证：回调本身不必防重入。
-    // 字段里的函数值要先解出来再调（直接 wire.close() 会被当成方法调用）。
+    // 字段里的函数值要先解出来再调（直接 wire.dispose(...) 会被当成方法调用）。
     Wire(wire) => {
-      let close = wire.close
-      close()
+      let dispose = wire.dispose
+      dispose(end)
     }
     _ => ()
   }

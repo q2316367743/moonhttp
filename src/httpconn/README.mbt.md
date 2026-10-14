@@ -15,7 +15,7 @@ import {
 
 | 项 | 说明 |
 |---|---|
-| `HttpConnTransport::new()` | 创建传输实现（无状态：phase 1 每请求一条连接） |
+| `HttpConnTransport::new(max_idle_per_host?, idle_timeout_ms?)` | 创建传输实现，内置连接池（缺省每 host 留 4 条空闲、保活 30 秒）；`max_idle_per_host = 0` 禁池（每请求一条连接） |
 | `Transport` 实现 | `send(PreparedRequest) -> RawResponse`：建连 → 写头写体（含上传进度回调）→ 等响应头 → 按分帧交出响应体流 |
 | `parse_target(url) -> Target` | 把绝对 URL 切成拨号要的形状（scheme / use_tls / host / port / 请求目标）；非 http(s) 抛 `TransportError::Unsupported` |
 | `host_header(target)` | `Host` 头的值（默认端口按 RFC 9112 §7.2 省略） |
@@ -25,8 +25,10 @@ import {
 ## 行为要点
 
 - **协议**：HTTP/1.0 / 1.1（h2 等上游 ALPN）；缓冲请求体一律 `Content-Length`（无体发 0），
-  流式请求体按 `content_length` 的有无定长或 chunked（`docs/20`，分帧头由栈接管），
-  每请求一条连接、发 `Connection: close`（连接池是第 2 期）。
+  流式请求体按 `content_length` 的有无定长或 chunked（`docs/20`，分帧头由栈接管）。
+- **连接池**（`docs/21`，缺省开启）：空闲连接按目标分桶复用，请求不发 `Connection` 头
+  （1.1 持久是默认）；响应体读满才回池，取消 / 半途放弃一律关闭；坏连接自动换新连接重试一次；
+  禁池时恢复每请求一条连接、发 `Connection: close`。
 - **自定义方法**：`PROPFIND` 等按原样落进请求行；token 校验在**建连前**
   （拼不进请求行的方法不值得一次握手）。
 - **默认 `User-Agent`**：用户没设时自动补 `moonhttp/0.4.0`（版本号与 moon.mod 一致）；

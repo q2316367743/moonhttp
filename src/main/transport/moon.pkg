@@ -11,7 +11,9 @@
 //   Python server，官方 MoonBit server 的封闭枚举收不了这个方法；
 // - HTTP/1.0 兼容（无 Content-Length、靠连接关闭收尾）；
 // - 流式上传（docs/20）：读取流作为请求体，MemoryReader 边生成边喂，
-//   chunked / 定长两种分帧都打到 /upload 上拿服务端视角的证据。
+//   chunked / 定长两种分帧都打到 /upload 上拿服务端视角的证据；
+// - 连接复用（docs/21）：连接池缺省开启，请求不带 Connection 头；
+//   用户显式 close 与禁池（max_idle_per_host = 0）两条出口的线上差异。
 //
 // 用 `moon run src/main/transport` 执行。本包不随模块发布（.moonignore 排除）。
 import {

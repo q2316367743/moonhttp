@@ -8,6 +8,7 @@ import {
   "q2316367743/moonhttp/cookie",
   "q2316367743/moonhttp/headers",
   "q2316367743/moonhttp/http_error",
+  "q2316367743/moonhttp/httpconn",
   "q2316367743/moonhttp/response",
   "q2316367743/moonhttp/sse",
   "q2316367743/moonhttp/transport",
@@ -46,6 +47,8 @@ pub using @config {type FormFile}
 pub using @config {type FormValue}
 
 pub using @headers {type Headers}
+
+pub using @httpconn {type HttpConnTransport}
 
 pub using @http_error {type HttpError}
 

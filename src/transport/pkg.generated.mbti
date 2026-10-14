@@ -26,6 +26,14 @@ pub(all) suberror TransportError {
 }
 
 // Types and methods
+pub(all) enum BodyEnd {
+  Finished
+  Abandoned
+} derive(Eq, @debug.Debug)
+pub fn BodyEnd::equal(Self, Self) -> Bool
+pub fn BodyEnd::not_equal(Self, Self) -> Bool
+pub fn BodyEnd::to_repr(Self) -> @debug.Repr
+
 pub struct MockTransport {
   // private fields
 }
@@ -78,6 +86,7 @@ pub struct ResponseBody {
 pub fn ResponseBody::close(Self) -> Unit
 pub fn ResponseBody::from_bytes(Bytes) -> Self
 pub fn ResponseBody::open_wire(&@io.Reader, () -> Unit, timeout~ : Int?, total~ : Int?, signal~ : @abort.AbortSignal?) -> Self
+pub fn ResponseBody::open_wire_dispose(&@io.Reader, (BodyEnd) -> Unit, timeout~ : Int?, total~ : Int?, signal~ : @abort.AbortSignal?) -> Self
 pub async fn ResponseBody::read_all(Self, on_progress? : (@config.ProgressEvent) -> Unit) -> Bytes raise TransportError
 pub async fn ResponseBody::read_all_partial(Self, on_progress? : (@config.ProgressEvent) -> Unit) -> (Bytes, TransportError?) noraise
 pub async fn ResponseBody::read_some(Self, max_len? : Int) -> Bytes? raise TransportError

@@ -15,8 +15,9 @@ pub fn parse_target(String) -> Target raise @transport.TransportError
 
 // Types and methods
 pub struct HttpConnTransport {
+  // private fields
 }
-pub fn HttpConnTransport::new() -> Self
+pub fn HttpConnTransport::new(max_idle_per_host? : Int, idle_timeout_ms? : Int) -> Self
 pub async fn HttpConnTransport::send(Self, @transport.PreparedRequest) -> @transport.RawResponse raise @transport.TransportError
 pub impl @transport.Transport for HttpConnTransport
 

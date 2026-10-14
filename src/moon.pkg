@@ -2,6 +2,8 @@
 // 实现分布在 response（响应值）/ http_error（错误契约）/ client（编排层）
 // 三个业务子包里，分层依据与完整 DAG 见 docs/01-architecture.md。
 // 使用者只需要 import 本包（@moonhttp）就能拿到全部公开类型与工厂函数。
+// httpconn 也在列：`HttpConnTransport` 是连接池参数（docs/21）的调优入口，
+// `Client::new(transport=HttpConnTransport::new(...))` 要用到它。
 import {
   "q2316367743/moonhttp/abort",
   "q2316367743/moonhttp/client",
@@ -9,6 +11,7 @@ import {
   "q2316367743/moonhttp/cookie",
   "q2316367743/moonhttp/headers",
   "q2316367743/moonhttp/http_error",
+  "q2316367743/moonhttp/httpconn",
   "q2316367743/moonhttp/response",
   "q2316367743/moonhttp/sse",
   "q2316367743/moonhttp/transport",

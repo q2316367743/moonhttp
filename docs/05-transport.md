@@ -81,7 +81,7 @@ pub fn ResponseBody::close(Self) -> Unit
 - `read_until` 消费掉分隔符且不返回它；EOF 时把剩余内容当作最后一段返回，再读一次才是 `None`；
 - `read_all` 读完剩余内容，空体返回空字节串；
 - **`read_all_partial` 与 `read_all` 读到的字节相同，区别只在失败时**：失败不当异常抛出，而是返回 `(已读到的部分, Some(错误))`——网络在读到一半断掉时，已经到手的字节往往正是现场（错误响应的正文、下载进度），上层要把它们挂到错误上（见 `04-errors.md`）。`read_all` 就是它的「失败即抛」包装；
-- **读到 EOF 会自动关闭底层连接**——本项目不复用连接，早关没有代价；`read_all_partial` 在失败时同样关闭（两种结局都关）；
+- **读到 EOF 会自动释放底层连接**——连接池在场且体读满、服务端允许复用时是「还池」而不是关闭（结局用 `BodyEnd::Finished` 交给实现层裁决，`docs/21`）；`read_all_partial` 在失败时同样释放（失败结局是 `Abandoned`，一律关闭）；
 - `close()` 幂等。没有析构器，**拿到流后不读完也不 `close()` 会漏一条连接**；
 - 任何读取失败都会先关闭流再抛 `TransportError`：失败之后连接状态已不可信，调用方不该继续读。
 
@@ -173,7 +173,7 @@ transport；旧的 `AsyncHttpTransport`——基于 `moonbitlang/async/http` 的
 
 | 能力 | 现状 | 可能的实现方式 |
 |---|---|---|
-| 连接复用 | 每次请求新建连接（发 `Connection: close`） | 连接池是 httpconn 第 2 期（2026-10），契约已定：体未消费完不回池、取消=毒化，见 `docs/17` 分期表 |
+| 连接复用 | **已实现（2026-10，docs/21）**：空闲连接按目标分桶复用，缺省开启；不发 `Connection` 头（1.1 默认持久），禁池 / 显式 close 头可退回每请求一条 | 设计与契约映射见 `docs/21-connection-pool.md` |
 | 请求体流式上传 | **已支持**（`PreparedRequest.body : RequestBody?` 的 `Stream` 形态，`with_data_from_stream`） | 泵循环 + 定长 / chunked 双模式分帧；契约见 `20-streaming-upload.md` |
 | 上传进度 | **已支持**（`PreparedRequest::on_upload_progress`）：按 64 KiB 分块写 + 每块写完回调 | 粒度见 `httpconn/request_write.mbt` 的 `UPLOAD_CHUNK_SIZE`；契约见 `10-progress.md` |
 | 下载进度 | **已支持**（`ResponseBody` 的 `read_all*` 带 `on_progress`），只由「库读全量」触发 | 见 `10-progress.md` |

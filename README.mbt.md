@@ -227,6 +227,19 @@ let client = @moonhttp.create(
 
 http 与 https 目标都经 `CONNECT` 隧道转发（代理服务器得支持 `CONNECT`）。`username` / `password` 只用在建隧道那一步，不会发给目标服务器。只支持 http / https 代理，不读 `http_proxy` 之类的环境变量；配了代理却没给 host 会直接报错，不会悄悄直连。
 
+### 连接复用
+
+```moonbit nocheck
+// 连接池缺省开启，同一实例的后续请求复用已建立的连接，省掉重复握手。
+// 要调池参数时，给 Client 注入一个按需构造的传输实现：
+let client = @moonhttp.Client::new(
+  config=@moonhttp.Config::default().with_base_url("https://api.example.com"),
+  transport=@moonhttp.HttpConnTransport::new(max_idle_per_host=8, idle_timeout_ms=60_000),
+)
+```
+
+空闲连接按目标（scheme / host / port / TLS / 代理）分桶复用，每 host 默认最多留 4 条空闲、保活 30 秒；取到已被服务端提前关掉的连接时会自动换新连接重试一次，调用方无感。逐请求禁用复用：显式加 `Connection: close` 请求头；整体禁用（每请求一条连接）：`HttpConnTransport::new(max_idle_per_host=0)`。响应体读满才回池，取消与中途放弃一律关闭连接——不存在串响应的风险。
+
 ### 上传与下载进度
 
 ```moonbit nocheck
@@ -266,7 +279,7 @@ async fn watch(api : @moonhttp.Client) -> Unit raise @moonhttp.HttpError {
 }
 ```
 
-`StreamResponse` 还有 `read_all()` 与 `read_until(分隔符)`；`SseEvent` 带 `event`（缺省 `"message"`）、`data`、`id` 与 `retry`（后两者是持久状态，断线重连要用）。读到 EOF 会自动关连接，**中途结束时记得自己 `close()`**——忘记关会漏一条连接。`Client::sse` 要求响应头声明 `text/event-stream`，拿到的不是事件流会报 `NotSupported`；服务端不声明却是 SSE 的场合，用 `Client::stream` 配公开的 `SseParser` 自己驱动。
+`StreamResponse` 还有 `read_all()` 与 `read_until(分隔符)`；`SseEvent` 带 `event`（缺省 `"message"`）、`data`、`id` 与 `retry`（后两者是持久状态，断线重连要用）。读到 EOF 会自动释放连接（连接池在场且读满时是复用它而不是关闭），**中途结束时记得自己 `close()`**——忘记关会漏一条连接。`Client::sse` 要求响应头声明 `text/event-stream`，拿到的不是事件流会报 `NotSupported`；服务端不声明却是 SSE 的场合，用 `Client::stream` 配公开的 `SseParser` 自己驱动。
 
 ### 错误处理
 
@@ -289,7 +302,7 @@ try {
 |---|---|
 | `BadRequest` | 状态码 4xx 且未通过校验 |
 | `BadResponse` | 状态码 5xx（或其它非 2xx） |
-| `Network` | 连接 / DNS / TLS 失败、读响应体中途断连、代理拒绝建隧道 |
+| `Network` | 连接 / DNS / TLS 失败、读响应体中途断连、代理拒绝建隧道；池里已被对端关掉的连接会先自动换新连接重试一次，仍失败才报这里 |
 | `Timeout` | 超过 `timeout` |
 | `Cancelled` | 被取消信号叫停（`error.is_cancelled()`） |
 | `InvalidUrl` | 既没有 `url` 也没有可用的 `base_url` |
@@ -313,7 +326,6 @@ println(mock.last_request().unwrap().url) // 已经拼好 base_url 与 query 的
 
 以下能力本版没有实现，配置里也不会出现对应字段：
 
-- **连接复用**：每次请求新建连接，计划做连接池以省掉重复握手。
 - **SSE 自动重连**：`id` / `retry` 已经作为持久状态带出来了，按 `retry` 间隔重订阅留给上层；计划内置。
 - **响应体自动解析**：读法由你在 `text()` / `bytes()` / `json()` 里显式选；静态类型下「猜内容类型」要先重新设计响应类型的形态，留待后续版本。
 - **`transformRequest` / `transformResponse`**：不做成独立配置项——用两段拦截器代替（请求侧改 body、响应侧改正文，见上面「拦截器」一节）。

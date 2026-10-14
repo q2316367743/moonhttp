@@ -11,10 +11,11 @@
 /// 两者的读语义刻意保持一致（对齐 `@io.Reader`），Mock 才能真实代表网络侧：
 /// - `read_some` 到 EOF 返回 `None`；
 /// - `read_until` 消费掉分隔符，且不把分隔符放进返回值；
-/// - 读到 EOF 会自动关闭底层连接，之后继续读仍然返回 `None`。
+/// - 读到 EOF 会自动释放底层连接（连接池在场且体读满时是「还池」而不是
+///   关闭，docs/21），之后继续读仍然返回 `None`。
 ///
-/// 拿到流之后必须读到 EOF 或调用 `close()`。本项目不复用连接，也没有析构器，
-/// 忘记关闭就会漏掉一条 TCP 连接。
+/// 拿到流之后必须读到 EOF 或调用 `close()`。没有析构器，忘记关闭
+/// 就会漏掉一条 TCP 连接。
 ///
 /// 本文件只放**读**这一半（读语义、超时、取消作用域）；构造与释放
 /// （`from_bytes` / `open` / `open_wire` / `rewind` / `close`）在
@@ -51,11 +52,12 @@ priv enum BodyInner {
 
 ///|
 /// 自研传输层交给响应体的那一对东西：读靠 reader（超时/取消由 `read_or_fail`
-/// 统一管），关靠 close（幂等性由持有方保证：close 之后 reader 的读会失败，
-/// 但 `ResponseBody::close` 自身只走一次）。
+/// 统一管），释放靠 dispose（`Finished` = 读到了 EOF，`Abandoned` = 半途
+/// 放弃/失败/取消；幂等性由持有方保证：释放之后 reader 的读会失败，
+/// 但 `ResponseBody` 的释放自身只走一次）。
 priv struct WireBody {
   reader : &@io.Reader
-  close : () -> Unit
+  dispose : (BodyEnd) -> Unit
 }
 
 ///|
@@ -146,7 +148,8 @@ pub async fn ResponseBody::read_some(
       }
       match read_or_fail(self.timeout, self.signal, read) {
         None => {
-          self.close()
+          // EOF 是「体读完了」的释放：交给连接池判能不能复用。
+          self.close_as_finished()
           None
         }
         Some(chunk) => Some(chunk)
@@ -204,7 +207,8 @@ pub async fn ResponseBody::read_until(
           wire.reader.read_until(sep)
         }) {
         None => {
-          self.close()
+          // 与 read_some 同口径：EOF 收尾走 Finished，池才有机会复用连接。
+          self.close_as_finished()
           None
         }
         Some(text) => Some(text)

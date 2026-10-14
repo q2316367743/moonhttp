@@ -61,6 +61,14 @@ pub using @sse {type SseEvent, type SseParser}
 pub using @transport {trait Transport}
 
 ///|
+/// 缺省传输实现（自研 HTTP/1.x 栈）。连接池自 2026-10 起是它的缺省
+/// 行为（docs/21）；池参数（每 host 空闲上限、空闲保活时长）经
+/// `HttpConnTransport::new(max_idle_per_host?, idle_timeout_ms?)` 调优，
+/// 传给 `Client::new(transport=...)` 即可，`Client::create` 派生的
+/// 实例共享同一个池。
+pub using @httpconn {type HttpConnTransport}
+
+///|
 /// cookie 罐：`Client::new(cookie_jar~)` 的入参类型。
 /// 传入后请求按 URL 自动携带、响应自动存取、过期自动失效，
 /// 契约见 `docs/19-cookies.md`。

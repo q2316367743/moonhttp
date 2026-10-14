@@ -112,7 +112,11 @@ pub async fn ResponseBody::read_all_partial(
       } catch {
         error => Some(error)
       }
-      self.close()
+      // 读满到 EOF 是 Finished（池据此判复用），中途失败/超时/取消是 Abandoned。
+      match failure {
+        Some(_) => self.release(Abandoned)
+        None => self.release(Finished)
+      }
       (buffer.to_bytes(), failure)
     }
   }

@@ -24,7 +24,7 @@ priv enum BodyMode {
 
 ///|
 /// 分帧响应体。持有连接（所有权在 `send` 里一次性移交：
-/// 连接的关闭由 `ResponseBody` 的 close 回调驱动，见 transport.mbt）。
+/// 连接的关闭由 `ResponseBody` 的 dispose 回调驱动，见 transport.mbt）。
 priv struct BodyReader {
   conn : Connection
   /// 自己的输出缓冲：默认 read / read_some / read_until 先看它。
@@ -41,6 +41,14 @@ priv struct BodyReader {
   /// 就会丢字节。
   mut pending : Array[Bytes]
   mut pending_off : Int32
+  /// 定长体被对端截断（还没读满就遇到 EOF）。EOF 的交出语义不变
+  /// （截断的正文留给上层按内容判断），但连接已经死了——池凭它区分
+  /// 「读满」与「被断」，截断的连接绝不回池（docs/17 口径 4）。
+  mut truncated : Bool
+  /// 响应头层面就判定的「服务端允许复用」：分帧不是 UntilClose、
+  /// 请求方没声明 close、`connection_reusable` 通过（见 build_raw_response）。
+  /// 与读取状态分开存，`is_reusable` 是两者的合取。
+  server_allows : Bool
 }
 
 ///|
@@ -52,6 +60,7 @@ const BODY_PULL_SIZE : Int32 = 16384
 fn BodyReader::open(
   conn : Connection,
   framing : @httpproto.BodyFraming,
+  server_allows~ : Bool,
 ) -> BodyReader {
   let mode = match framing {
     @httpproto.BodyFraming::Empty => Empty
@@ -66,7 +75,19 @@ fn BodyReader::open(
     scratch: FixedArray::make(BODY_PULL_SIZE, b'\x00'),
     pending: [],
     pending_off: 0,
+    truncated: false,
+    server_allows,
   }
+}
+
+///|
+/// 这条连接在读完后能不能回池（docs/17 口径 4：体未消费完不回池）。
+/// 三个条件缺一不可：响应头层面服务端允许（含分帧不是 UntilClose——
+/// UntilClose 的体以关闭收尾，模式永远到不了 Done）、定长体真读满了
+/// （不是被截断）、分帧状态机正常收尾。chunked 被截断会直接报
+/// Malformed 走失败路径，到不了这里。
+fn BodyReader::is_reusable(self : BodyReader) -> Bool {
+  self.server_allows && !self.truncated && self.mode is (Done | Empty)
 }
 
 ///|
@@ -103,6 +124,9 @@ impl @io.Reader for BodyReader with fn _direct_read(
       let take = if max_len < remaining { max_len } else { remaining }
       let n = self.conn.read(dst, offset~, max_len=take)
       if n == 0 {
+        // 还没读满就 EOF：对端截断。照旧按 EOF 交出已到的部分，
+        // 但记下「连接已死」——is_reusable 靠它拒绝回池。
+        self.truncated = true
         self.mode = Done
         return 0
       }

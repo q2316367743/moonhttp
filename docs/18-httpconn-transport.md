@@ -56,7 +56,7 @@ trailer 解析后**丢弃**（`docs/17` 待决问题的口径），chunk 扩展�
 | `Host` | 按 target 生成，默认端口省略（RFC 9112 §7.2） | 拨号栈自己建连，必须自己给 |
 | `Accept-Encoding: gzip` | 请求没声明时才补 | 谁解压谁声明（见下节与 `docs/15`） |
 | `User-Agent` | `moonhttp/0.4.0`，用户没设时才补 | GitHub 等服务端拒绝无 UA 请求；axios 的 node 适配器与 Python requests 同机制。版本号与 moon.mod 手工保持一致，升版本一起改 |
-| `Connection: close` | 总是 | phase 1 每请求一条连接（`docs/17` 口径 4；keep-alive 随连接池来） |
+| `Connection` | 池禁用时 `close`；池启用（默认）时**不发** | 连接池（`docs/21`）：1.1 持久是默认，对齐 Go / Python / Node；禁池恢复 phase 1 口径。用户显式设置永远赢（`set_if_absent`），且声明的 close 会被响应侧尊重（该连接不回池） |
 | `Content-Length` | 缓冲请求体的字节数（无体发 0）；流式请求体给了 `content_length` 时为声明值 | 缓冲形态维持 `docs/17` 口径 4 |
 | `Transfer-Encoding: chunked` | 流式请求体未给 `content_length` 时 | 请求侧 chunked 编码（`docs/20`）；这两个头对流式请求体由栈全权接管，用户预设的被摘掉 |
 
@@ -86,7 +86,7 @@ CONNECT 隧道请求（`establish_tunnel`）不在此列：它只带 `Host` 与�
 | 协议 | 底层库决定 | HTTP/1.0/1.1（h2 gated：`@tls` 无 ALPN） |
 | gzip | 缓冲库解 + 流式底层透明解 | 缓冲库解 + 流式自己解（上表） |
 | 请求体线上形状 | 无体发 `Content-Length: 0` 或 chunked | 一律 `Content-Length`（无体发 0） |
-| 连接 | 每请求一条（`@http.Client` 四步式） | 每请求一条 + `Connection: close`（池是第 2 期） |
+| 连接 | 每请求一条（`@http.Client` 四步式） | 连接池（2026-10 落地，`docs/21`）：空闲连接按目标分桶复用；坏连接透明重试一次；响应开始前死连接报 `Network`（phase 1 曾报 `Malformed`） |
 | TLS 校验 | 底层默认 | `Tls::client(host=…)` 默认校验 + SNI=目标 host |
 | 代理 | CONNECT（底层实现） | CONNECT（自己实现，凭据只落隧道请求）；SOCKS5 见下 |
 | 错误分类 | `TransportError` 五变体 | 同一套（`with_abort_scope` 也复用 transport 的） |
@@ -120,10 +120,11 @@ CONNECT 隧道请求（`establish_tunnel`）不在此列：它只带 `Host` 与�
 
 ## 本期未做（按 docs/17 分期）
 
-- **连接池**（第 2 期，2026-10）：契约已在 `docs/17` 定死——体未消费完不回池、取消=毒化。
+- ~~**连接池**（第 2 期，2026-10）~~：**已落地**（2026-10-14），设计与契约映射见 `docs/21-connection-pool.md`。
 - **SOCKS5**：`parse_target` 已认识 `socks5` scheme（代理地址解析用），
   作为请求目标/代理都会显式报 `Unsupported`；握手字节（RFC 1928/1929）属协议层，
-  下一个提交补齐（远程 DNS 默认开，`docs/17` 口径 3）。
+  下一个提交补齐（远程 DNS 默认开，`docs/17` 口径 3）。`pool_key` 已把代理坐标
+  入键（`docs/21`），落地后隧道连接自然入池。
 - chunked **编码**（随流式上传）、`Expect: 100-continue`（缓）、响应 trailer 透出（丢弃）、
   `deflate`/`br`（不认识的原样交出）。
 

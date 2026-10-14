@@ -9,6 +9,12 @@
 //
 // gzip 的流式解压也由本包自持（docs/17 口径 4）：请求没声明 Accept-Encoding
 // 时由我们声明 gzip 并在响应侧解压——「谁解压谁声明」，见 docs/15。
+// abort 只进测试（pool_real_test 的取消毒化用例）；生产代码对 AbortSignal
+// 的引用都经 transport 的类型转手，不直接碰取消原语。
+import {
+  "q2316367743/moonhttp/abort",
+} for "test"
+
 import {
   "moonbitlang/async",
   "moonbitlang/async/gzip",
