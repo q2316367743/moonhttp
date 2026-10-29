@@ -82,6 +82,8 @@ pub using @sse {type SseEvent}
 
 pub using @sse {type SseParser}
 
+pub using @config {type SseReconnect}
+
 pub using @client {type SseStream}
 
 pub using @config {type StreamBody}

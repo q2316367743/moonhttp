@@ -57,8 +57,9 @@ pub extend SseEvent with @debug.Debug::{to_repr}
 /// 都可能被切在中间。调用方不需要关心这些边界。
 ///
 /// **`id` 与 `retry` 是跨事件持久的解析器状态**，对齐规范里 EventSource
-/// 的内部状态：一旦出现过，就跟着后面每个事件一起交出去。断线重连要用
-/// 这两个值，所以本项目不自动重连，但把它们交给调用方（见 docs/06-sse.md）。
+/// 的内部状态：一旦出现过，就跟着后面每个事件一起交出去。解析器本身不决定
+/// 「什么时候重连」；`SseStream` 开启自动重连时通过 `last_event_id` /
+/// `retry_interval` 读取这两个值（见 docs/06-sse.md）。
 ///
 /// **EOF 时未完成的事件块丢弃**（规范行为）：没有等到空行的事件不算数，
 /// 解析器也不会在流结束时补发。
@@ -94,6 +95,40 @@ pub fn SseParser::new() -> SseParser {
     last_id: None,
     retry: None,
   }
+}
+
+///|
+/// 最近一次生效的 `id:` 值，跨事件、跨连接持久。
+///
+/// 与 `SseEvent::id` 的差别：这里读到的是**解析器当前状态**，即使最后一块只发了
+/// `id:`、没有 `data:`（因此没有事件可分发给调用方），重连也能用上它。
+pub fn SseParser::last_event_id(self : SseParser) -> String? {
+  self.last_id
+}
+
+///|
+/// 最近一次生效的 `retry:` 值（毫秒），跨事件、跨连接持久。
+///
+/// 流里没出现过 `retry:`（或出现过非法值）时是 `None`；调用方决定退回到哪个
+/// 默认间隔——`SseStream` 用的是 `SseReconnect::default_delay`。
+pub fn SseParser::retry_interval(self : SseParser) -> Int32? {
+  self.retry
+}
+
+///|
+/// 开始下一条流（自动重连时由 `SseStream` 在新连接建好后调用）。
+///
+/// 只重置**属于一条连接**的解析状态：上一连接残留的半行、当前事件缓冲、
+/// 流首 BOM 判定。`last_id` / `retry` 是 EventSource 的持久状态，跨连接保留；
+/// 已经解析完、还没被取走的事件也保留（调用方可能还没来得及取）。
+///
+/// 上一连接是否已经 `finish` 由调用方负责：`SseStream` 在 EOF / 可重试读错误
+/// 上先 `finish` 再重连，所以重连路径不会漏掉末尾裸 CR 形成的事件。
+pub fn SseParser::begin_stream(self : SseParser) -> Unit {
+  self.pending = b""
+  self.data = []
+  self.event = ""
+  self.head_done = false
 }
 
 ///|

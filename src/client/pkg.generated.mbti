@@ -48,7 +48,7 @@ pub fn Interceptors::use_request(Self, async (@config.Config) -> @config.Config 
 pub fn Interceptors::use_response(Self, async (@response.Response) -> @response.Response raise @http_error.HttpError, on_rejected? : async (@http_error.HttpError) -> @response.Response raise @http_error.HttpError, name? : StringView) -> Self
 
 pub(all) struct SseStream {
-  status : Int
+  status : Int32
   status_text : String
   headers : @headers.Headers
   config : @config.Config
@@ -60,7 +60,7 @@ pub async fn SseStream::next_event(Self) -> @sse.SseEvent? raise @http_error.Htt
 pub fn SseStream::to_repr(Self) -> @debug.Repr
 
 pub(all) struct StreamResponse {
-  status : Int
+  status : Int32
   status_text : String
   headers : @headers.Headers
   config : @config.Config
@@ -70,7 +70,7 @@ pub fn StreamResponse::close(Self) -> Unit
 pub fn StreamResponse::is_event_stream(Self) -> Bool
 pub fn StreamResponse::is_success(Self) -> Bool
 pub async fn StreamResponse::read_all(Self) -> Bytes raise @http_error.HttpError
-pub async fn StreamResponse::read_some(Self, max_len? : Int) -> Bytes? raise @http_error.HttpError
+pub async fn StreamResponse::read_some(Self, max_len? : Int32) -> Bytes? raise @http_error.HttpError
 pub async fn StreamResponse::read_until(Self, String) -> String? raise @http_error.HttpError
 pub fn StreamResponse::to_repr(Self) -> @debug.Repr
 

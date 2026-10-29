@@ -16,7 +16,7 @@ import {
 |---|---|
 | `request(config, signal?)` | 发送请求并读全响应体；两段拦截器都跑，失败按来源分流到两条错误链 |
 | `stream(config, signal?)` | 不读响应体，交还原始字节流（下载）；只过请求拦截器 |
-| `sse(config, signal?)` | 按事件读的 SSE 流，要求响应头声明 `text/event-stream`；只过请求拦截器 |
+| `sse(config, signal?)` | 按事件读的 SSE 流，要求响应头声明 `text/event-stream`；只过请求拦截器；自动重连按 `config.sse_reconnect` 开启 |
 | `get` / `post` / `put` / `delete` / `patch` / `head` / `options` | 七个动词快捷方法：补 `url` 与动词后转调 `request` |
 | `create(config)` | 派生新实例：叠加默认值，继承拦截器与 cookie 罐 |
 | `new(config?, transport?, interceptors?, cookie_jar?)` | 完整构造：可注入传输层 / 拦截器 / cookie 罐 |
@@ -24,6 +24,8 @@ import {
 ## `StreamResponse` / `SseStream`
 
 `StreamResponse` 是原始字节流：`read_some()`（按块）、`read_until(sep)`（读到分隔符）、`read_all()`（读到 EOF，失败时已读字节挂在错误响应上）、`close()`。`SseStream` 是事件流：`next_event()` 返回解析好的 `@sse.SseEvent?`。两者读失败都抛 `HttpError`，错误里带着已收到的状态行与响应头。**中途停止必须 `close()`**，否则漏连接。
+
+`SseStream` 的自动重连默认关闭；用 `Config::with_sse_reconnect(...)` 开启后，`next_event()` 会在 EOF / 可重试错误上按流里的 `retry` 重订阅并自动带 `Last-Event-ID`。触发条件、次数上限与取消语义见 [`docs/06-sse.md`](https://github.com/q2316367743/moonhttp/blob/master/docs/06-sse.md)。
 
 ## 拦截器
 

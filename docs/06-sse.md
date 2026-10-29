@@ -4,12 +4,16 @@
 
 | 文件 | 职责 |
 |---|---|
-| `src/sse/sse.mbt` | `SseEvent`、`SseParser` 的状态与公开入口（`new` / `push` / `next` / `finish`）、事件分发规则 |
+| `src/sse/sse.mbt` | `SseEvent`、`SseParser` 的状态与公开入口（`new` / `push` / `next` / `finish` / `begin_stream`）、持久状态读取、事件分发规则 |
 | `src/sse/sse_parse.mbt` | 字节级细节：找行尾、切字段、解析 `id` / `retry` 的值 |
 | `src/client/sse_stream.mbt` | `SseStream` 类型与 `next_event`：把解析器接到 HTTP 响应体上（编排层） |
+| `src/client/sse_reconnect.mbt` | 自动重连：运行时状态、错误分类、等待与重订阅循环 |
 | `src/client/stream_entry.mbt` | `Client::sse`：入口，含 `text/event-stream` 准入检查 |
+| `src/config/sse.mbt` | `SseReconnect` 策略与 `Config::with_sse_reconnect` |
 | `src/sse/sse_test.mbt` | 规范逐条用例（纯逻辑，同步测试） |
+| `src/sse/reconnect_test.mbt` | 重连相关的解析器状态：`last_event_id` / `retry_interval` / `begin_stream` |
 | `src/sse_stream_test.mbt` | 接到 HTTP 之后的用例，含本机 server 的真实 CRLF 长连验收用例 |
+| `src/sse_reconnect_test.mbt` | 自动重连的端到端用例（Mock / 脚本化传输层） |
 
 ## 三件分层上的事（先说清，免得改的时候踩回去）
 
@@ -38,12 +42,22 @@ pub(all) struct SseEvent {
   event : String   // 事件类型，缺省 "message"
   data : String    // 多条 data: 行用 "\n" 连接
   id : String?     // 见「持久状态」
-  retry : Int?     // 见「持久状态」
+  retry : Int32?   // 见「持久状态」
 }
 pub fn SseParser::new() -> SseParser
-pub fn SseParser::push(Self, Bytes) -> Unit   // 喂字节
-pub fn SseParser::next(Self) -> SseEvent?     // 取一个已完成的事件
-pub fn SseParser::finish(Self) -> Unit        // 读到 EOF 时调用一次
+pub fn SseParser::push(Self, Bytes) -> Unit       // 喂字节
+pub fn SseParser::next(Self) -> SseEvent?         // 取一个已完成的事件
+pub fn SseParser::finish(Self) -> Unit            // 读到 EOF 时调用一次
+pub fn SseParser::last_event_id(Self) -> String?  // 持久状态：最近一次 id:
+pub fn SseParser::retry_interval(Self) -> Int32?  // 持久状态：最近一次 retry:
+pub fn SseParser::begin_stream(Self) -> Unit      // 同一个解析器接新连接（重连）
+
+// 自动重连策略（config 包，根包再导出）
+pub(all) struct SseReconnect {
+  max_retries : Int32?   // None = 不限次数
+  default_delay : Int32  // 流里没有 retry: 时的间隔（毫秒）
+}
+pub fn Config::with_sse_reconnect(Self, SseReconnect) -> Config
 
 // 入口与事件流（根包）
 pub async fn Client::sse(Self, Config) -> SseStream raise HttpError
@@ -91,7 +105,70 @@ while events.next_event() is Some(event) {
 
 这么设计是因为断线重连需要它们：重连时要带 `Last-Event-ID: 42` 请求头、并按 `retry` 的间隔重试。
 
-**本项目不自动重连**（不做 `retry` 退避、不重订阅），但把这两个值交给调用方，重连逻辑写在上层。这样库不用替调用方决定「重试几次算够」「要不要换地址」。
+解析器只负责维护状态，不决定何时重连：
+
+- `SseParser::last_event_id()` / `retry_interval()` 直接读当前值；只发了 `id:` / `retry:` 的块也算（哪怕没有事件分发）；
+- 开启自动重连时，`SseStream` 用这两个值重订阅；
+- 没开启时，它们照常出现在每个 `SseEvent` 上，调用方可以按同样的信息自己写重连逻辑。
+
+## 自动重连
+
+**默认关闭**。不设置 `Config::sse_reconnect` 时行为与从前完全一致：读到 EOF 返回 `None`，不重订阅。
+
+开启方式：
+
+```moonbit nocheck
+let events = api.sse(
+  Config::new("/events").with_sse_reconnect(
+    SseReconnect::new()          // 不限次数、默认间隔 3000ms
+      .with_max_retries(5)       // 连续 5 次没有交付事件后放弃
+      .with_default_delay(1000), // 流里没有 retry: 时用 1s
+  ),
+)
+while events.next_event() is Some(event) {
+  println(event.event + ": " + event.data)
+}
+```
+
+策略字段：
+
+| 字段 | 默认 | 含义 |
+|---|---|---|
+| `max_retries` | `None` | `None` = 不限次数；`Some(n)` = 连续 n 次重连都没有交付事件后放弃；`0` = 不重连 |
+| `default_delay` | `3000` | 流里没有 `retry:` 时使用的间隔（毫秒） |
+
+间隔优先取流里最近一次生效的 `retry:`（只发 `retry:` 的块也算），没有才用 `default_delay`；不做指数退避。`retry: 0` 会立即重连——服务端连续关闭时会形成忙循环，使用方自己保证流里有合理的 `retry:`。
+
+### 什么时候重连
+
+| 场景 | 行为 |
+|---|---|
+| 读到干净 EOF | 按策略重连 |
+| 读体报 `Network` / `Timeout` | 按策略重连 |
+| 读体报 `Cancelled` | 立即抛 `ERR_CANCELED`，不重连 |
+| 读体报 `BadResponse`（例如 gzip 损坏） | 抛错，不重连 |
+| 重连请求 5xx | 按策略重试 |
+| 重连请求 4xx / 3xx / `NotSupported` / `InvalidUrl` / `TooManyRedirects` | 立即抛错，不重试 |
+| 重连响应没有声明 `text/event-stream` | 关掉新连接后抛 `NotSupported`，不重试 |
+| 干净 EOF 且次数用尽 | `next_event()` 返回 `None` |
+| 最后一次失败是错误且次数用尽 | 抛最后一个 `HttpError` |
+
+分类时先看 `HttpError::response()` 的状态码：5xx 重试，其它非 2xx（4xx / 3xx / …）直接不重试；没有响应或 2xx 时才看错误码（`Network` / `Timeout` 重试，其余不重试）。取消永远不重试。
+
+### `Last-Event-ID` 与重发的请求
+
+- 重连请求自动带 `Last-Event-ID: <解析器的 last_event_id>`；空字符串 id 不写头，解析器还没有 id 时保留调用方自己设置的头。
+- 重连从**原始 `Config`** 出发重新走完整管线：合并实例默认值、请求拦截器、重定向、cookie、状态码校验都会再跑一遍。策略在第一次建流时确定，不会在重连过程中换掉。
+- 重连会按原配置重发请求；带一次性流式请求体（`with_data_from_stream`）的 SSE 请求无法重放，不要开启自动重连（与重定向的流式体约束同源，见 `20-streaming-upload.md`）。
+- 同一个 `SseParser` 跨连接复用：`id` / `retry` 保留；新连接开始前调用 `begin_stream()`，只重置 BOM 判定与上一连接残留的半行，不清持久状态。
+
+### 怎么停
+
+- `SseStream::close()`：后续 `next_event()` 返回 `None`。它**不会打断正在进行的重连等待**（等待最长是当前的 `retry` 间隔）；要立刻停请用取消。
+- `AbortController::abort(...)`：立刻打断读取或重连等待，`next_event()` 抛 `ERR_CANCELED`，不会退化成 `None`——结束一条流的两条路与从前一致（见 `12-cancellation.md`）。
+- 首次 `Client::sse` 建连失败**不会**自动重试（那时还没有 `SseStream` 承载重连状态），仍然直接抛错。
+
+`SseStream.status` / `status_text` / `headers` / `config` 保持**第一次建流**时的响应；重连失败的最新响应挂在抛出的 `HttpError::response()` 上。
 
 ## 跨块安全与 `finish`
 
@@ -124,10 +201,12 @@ while events.next_event() is Some(event) {
 
 SSE 的长连要求 `timeout` 不限时。内置默认值就是不限时（`defaults()` 给的是 `Some(0)`，`<= 0` 一律视为不限时），所以在默认实例上直接 `sse` 就能长连；显式设过 `timeout` 的实例要用 `with_timeout(0)` 关掉。读取阶段的超时是**单次读取**的等待上限，见 `05-transport.md` 的「超时语义」——事件之间长时间没有数据是正常的，不能被当成超时（`sse_stream_test.mbt` 有一条用例专门钉这个语义）。
 
+自动重连的等待**不经过 `timeout`**：它用的是流里的 `retry:` 或策略的 `default_delay`，并且由取消信号打断（`sleep_with_abort`，见 `12-cancellation.md`）。每次重连建立的连接仍按原配置的 `timeout` 约束。
+
 ## 改动时的同步清单
 
 1. **改解析规则**：先想清楚是哪一条规范，在 `src/sse/sse_test.mbt` 加一条用例再改代码；CRLF 家族（裸 CR 收尾、CR 跨块）最容易改坏。
 2. **改 `SseEvent` 的字段**：它出现在公开签名里，要同步本节与 `README.mbt.md`。
 3. **改 `ResponseBody::read_until` 的语义**：`docs/05-transport.md` 与本节的「为什么不能用」都要复查。
-4. **加自动重连**：那是一个新能力，不是解析规则的一部分；它需要决定「何时放弃重试」「如何结束一条流」，应当先补一节设计再动手。**结束一条已经在消费的流已经有两条路**：`SseStream::close()`（就到此为止），或者用 `AbortController::abort(...)` 取消（`next_event` 会抛 `ERR_CANCELED` 而不是返回 `None`，见 `12-cancellation.md`）——别把「取消」实现成返回 `None`，那会和「服务端正常结束事件流」混在一起。
+4. **改自动重连**：策略与构建器在 `src/config/sse.mbt`，错误分类 / 等待 / 重订阅在 `src/client/sse_reconnect.mbt`，解析器状态在 `src/sse/sse.mbt`。先改本节的契约表与 `src/sse_reconnect_test.mbt` 的用例。**结束一条已经在消费的流仍然只有两条路**：`SseStream::close()`（就到此为止），或者用 `AbortController::abort(...)` 取消（`next_event` 会抛 `ERR_CANCELED` 而不是返回 `None`，见 `12-cancellation.md`）——别把「取消」实现成返回 `None`，那会和「服务端正常结束事件流」混在一起。
 5. **把 SSE 读法加回 `StreamResponse`**：不要这样做，理由见开头第 2 条。

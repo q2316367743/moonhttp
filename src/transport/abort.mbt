@@ -73,6 +73,27 @@ pub async fn[T] with_abort_scope(
 }
 
 ///|
+/// 等待 `milliseconds` 毫秒，期间可被 `signal` 中断。
+///
+/// 用途是 SSE 自动重连的退避等待：它没有 I/O，但同样必须让取消立刻生效
+/// ——否则取消之后还要把整个 `retry` 间隔睡完，`next_event` 看起来像卡住了。
+/// 直接复用 `with_abort_scope`，与建连 / 读体的取消走同一套机制。
+///
+/// `milliseconds <= 0` 直接返回，但仍然先做一次取消检查（`with_abort_scope`
+/// 的入口检查），所以「已经取消的信号」不会被当成「不用等待」。
+pub async fn sleep_with_abort(
+  signal : @abort.AbortSignal?,
+  milliseconds : Int32,
+) -> Unit raise TransportError {
+  let sleep : async () -> Unit raise TransportError = () => {
+    if milliseconds > 0 {
+      @async.sleep(milliseconds)
+    }
+  }
+  with_abort_scope(signal, sleep)
+}
+
+///|
 /// 把任务边界上漏出来的错误收敛回传输层错误。
 ///
 /// 本包只抛 `TransportError`，逐个变体匹配是为了原样透传；走到兜底说明有不认识的

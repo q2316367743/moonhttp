@@ -91,6 +91,32 @@ pub async fn Client::stream(
 }
 
 ///|
+/// 打开一条 SSE 连接：`open_stream` 的前半段 + `text/event-stream` 准入检查。
+///
+/// 首次建流与自动重连共用这一段，保证两条路的判定完全一致：状态码校验、
+/// 重定向、请求拦截器都在 `open_stream` 里，准入检查只多一道媒体类型。
+async fn open_sse(
+  client : Client,
+  config : Config,
+  signal : AbortSignal?,
+) -> (@transport.RawResponse, Config) raise HttpError {
+  let (raw, merged) = client.open_stream(config, signal)
+  if !@util.declares_event_stream(raw.headers) {
+    // 连接已经建立，报错前必须先释放，否则漏一条 TCP 连接。
+    raw.body.close()
+    raise make_error(
+      "响应没有声明 text/event-stream，不能用 Client::sse 按事件读；需要原始字节流请用 Client::stream",
+      ErrorCode::NotSupported,
+      merged,
+      Some(
+        build_response(raw.status, raw.status_text, raw.headers, b"", merged),
+      ),
+    )
+  }
+  (raw, merged)
+}
+
+///|
 /// 发起一次 SSE 请求，把解析好的**事件流**交给调用方。
 ///
 /// 与 `stream` 共用前半段，多一道准入检查：响应头必须声明
@@ -104,24 +130,23 @@ pub async fn Client::stream(
 /// 但不读响应体：声明了别的类型就可能是任意大小的二进制，要看原文请改走
 /// `Client::stream`。
 ///
+/// **自动重连默认关闭**；`Config::with_sse_reconnect(...)` 开启后，已经建好的
+/// 流在 EOF / 可重试的网络或超时错误上会按流里的 `retry`（没有则用策略的
+/// `default_delay`）重新订阅，并自动带上 `Last-Event-ID`。首次建连失败仍然
+/// 直接抛错，不在这个入口里重试。
+///
 /// 拿到 `SseStream` 之后要负责读到 EOF 或调用 `close()`，否则连接不会释放。
 pub async fn Client::sse(
   self : Client,
   config : Config,
   signal? : AbortSignal,
 ) -> SseStream raise HttpError {
-  let (raw, merged) = self.open_stream(config, signal)
-  if !@util.declares_event_stream(raw.headers) {
-    // 连接已经建立，报错前必须先释放，否则漏一条 TCP 连接。
-    raw.body.close()
-    raise make_error(
-      "响应没有声明 text/event-stream，不能用 Client::sse 按事件读；需要原始字节流请用 Client::stream",
-      ErrorCode::NotSupported,
-      merged,
-      Some(
-        build_response(raw.status, raw.status_text, raw.headers, b"", merged),
-      ),
-    )
+  let (raw, merged) = open_sse(self, config, signal)
+  // 策略从**合并后**的配置读（实例默认值也能开启重连）；重连时却从原始
+  // `config` 重走完整管线，让请求拦截器 / 重定向 / cookie 每跳都能重新生效。
+  let reconnect = match merged.sse_reconnect {
+    Some(policy) => Some(SseReconnectState::new(self, config, signal, policy))
+    None => None
   }
   {
     status: raw.status,
@@ -131,5 +156,6 @@ pub async fn Client::sse(
     body: raw.body,
     parser: @sse.SseParser::new(),
     closed: false,
+    reconnect,
   }
 }

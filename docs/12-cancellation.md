@@ -16,7 +16,7 @@
 | `src/client/` | **信号的唯一入口**：三个入口的 `signal?` 参数、预检查 `check_cancelled`（`throw_if_aborted` + `AbortError` 归一）、往 `dispatch_request` / `open_stream` / `send_following_redirects` 逐层透传 |
 | `src/client/shortcuts.mbt` | 七个快捷方法的 `signal?` 参数（原样透传给 `request`） |
 | `src/util/request.mbt` | `build_prepared_request(config, signal?)`：把信号搬进 `PreparedRequest::signal` |
-| `src/transport/abort.mbt` | **机制的唯一落点**：`with_abort_scope`（协程级取消，进入时先查 `aborted()`）与 `aborted_failure`（读取前的检查） |
+| `src/transport/abort.mbt` | **机制的唯一落点**：`with_abort_scope`（协程级取消，进入时先查 `aborted()`）、`aborted_failure`（读取前的检查）与 `sleep_with_abort`（可取消的等待，SSE 重连用） |
 | `src/httpconn/transport.mbt` | `send` 把**整跳**（建连、TLS / CONNECT 握手、写头、写 body、等响应头）包进取消作用域（`with_abort_scope`） |
 | `src/transport/stream.mbt` | `ResponseBody` 持有信号：每次读取可取消、读入口先查取消 |
 | `src/transport/stream_lifecycle.mbt` | 响应体的构造与释放：`open_wire` 先查 `aborted()`（已取消就立刻关连接），否则登记「取消即关闭」；`close()` 时注销 |
@@ -213,11 +213,12 @@ I/O 路径时，必须自己在入口先查 `aborted()`**，别再指望「挂�
 | 每一跳发送**之中** | 传输实现的取消作用域包住整跳（`with_abort_scope`） | 打断挂起的建连 / 写头 / 写 body / 等响应头 |
 | 进入一段 I/O **之前** | `with_abort_scope` 开头的 `aborted()` 检查 | 补上窗口期：重定向的两跳之间、两次响应体读取之间 |
 | 响应体读取**之中** | `read_or_fail` 的取消作用域（`read_some` / `read_until` / `read_all` / SSE 都经过它） | 打断挂起的读，抛 `TransportError::Cancelled` |
+| SSE 自动重连的**等待之中** | `sleep_with_abort`（`src/transport/abort.mbt`），由 `SseStream::reconnect_loop` 调用 | 打断 `retry` 间隔的睡眠；否则取消后还要把整个间隔睡完 |
 | 取消已经发生**之后** | 读入口先查 `aborted_failure`；`ResponseBody` 自己挂在信号上的「取消即 `close()`」 | 报取消而**不是**退化成 EOF；同时立刻释放连接（调用方取消后不再读也不漏连接） |
 
 覆盖范围：三个入口都覆盖。`request` 是整条链（重定向 + 读全量），`stream` / `sse`
 既覆盖建连与取响应头、也覆盖之后的每一次读取——所以「取消一条已经在消费的 SSE 长连」
-是真的可用，不是只能取消握手。
+是真的可用，不是只能取消握手。开启 SSE 自动重连后，重连之间的等待同样可取消。
 
 ## 取消长什么样
 

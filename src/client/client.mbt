@@ -19,6 +19,7 @@
 //   interceptors_chain.mbt  —— 三条链的驱动
 //   stream_response.mbt     —— 原始字节流响应
 //   sse_stream.mbt          —— SSE 事件流响应
+//   sse_reconnect.mbt       —— SSE 自动重连状态与循环
 //   shortcuts.mbt           —— 七个动词快捷方法
 // ============================================================================
 
@@ -28,7 +29,7 @@
 using @abort {type AbortSignal}
 
 ///|
-using @config {type Config}
+using @config {type Config, type SseReconnect}
 
 ///|
 using @headers {type Headers}

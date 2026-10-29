@@ -19,7 +19,7 @@ pub using @headers {type Headers}
 /// - 只取请求级（axios `valueFromConfig2`）：url / http_method / data
 /// - 请求级优先、否则回退默认（`defaultToConfig2`）：
 ///   base_url / timeout / max_redirects / response_encoding / decompress /
-///   params_serializer / on_upload_progress / on_download_progress
+///   sse_reconnect / params_serializer / on_upload_progress / on_download_progress
 /// - 深合并（`mergeDeepProperties`）：
 ///   params / auth / proxy / headers / common_headers / method_headers / allow_absolute_urls
 /// - 请求级存在即生效（`mergeDirectKeys`）：validate_status
@@ -67,6 +67,8 @@ pub(all) struct Config {
   /// 默认 `true`（`None` 按 `true` 处理）。关掉之后请求侧声明 `identity` 挡住压缩，
   /// 交出去的字节与响应头都保持原样。谁声明、谁解压见 `docs/15-response-compression.md`。
   decompress : Bool?
+  /// SSE 自动重连策略；`None` 表示不自动重连（见 sse.mbt 与 `docs/06-sse.md`）。
+  sse_reconnect : SseReconnect?
   /// 查询参数，序列化后追加到 URL（不覆盖 URL 里已有的 query）
   params : Json?
   /// 自定义 query 序列化器，对应 axios 的 `paramsSerializer`（函数形式）；

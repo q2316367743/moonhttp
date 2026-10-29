@@ -116,7 +116,7 @@ MoonBit 标准库没有任何网络能力，网络与异步设施都在 `moonbit
 - 响应体是流（`ResponseBody`），但它的读语义在内存体与真实连接上完全一致，Mock 因此能代表网络侧的流式行为；
 - 使用方也能替换传输层（自定义实现只需一个方法）。
 
-同一把尺子也决定了 SSE 解析的位置：它只吃字节、不碰 async，所以独立成 `sse` 包，用同步测试覆盖规范逐条（`src/sse/sse_test.mbt`）。传输层只负责把字节交出来，「字节怎么解」是上层的事；而「怎么把字节喂给解析器」是 `client` 包里 `SseStream` 的事（`src/client/sse_stream.mbt`）。
+同一把尺子也决定了 SSE 解析的位置：它只吃字节、不碰 async，所以独立成 `sse` 包，用同步测试覆盖规范逐条（`src/sse/sse_test.mbt`）。传输层只负责把字节交出来，「字节怎么解」是上层的事；而「怎么把字节喂给解析器」是 `client` 包里 `SseStream` 的事（`src/client/sse_stream.mbt`），自动重连（重新走 HTTP 管线 + 取消等待）也在同一层（`src/client/sse_reconnect.mbt`）。
 
 ### 2. 配置是值语义 + `Option` 字段
 

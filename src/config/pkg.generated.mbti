@@ -40,10 +40,11 @@ pub(all) struct Config {
   url : String?
   http_method : Method?
   base_url : String?
-  timeout : Int?
-  max_redirects : Int?
+  timeout : Int32?
+  max_redirects : Int32?
   response_encoding : ResponseEncoding?
   decompress : Bool?
+  sse_reconnect : SseReconnect?
   params : Json?
   params_serializer : ((Json) -> String)?
   on_upload_progress : ((ProgressEvent) -> Unit)?
@@ -53,7 +54,7 @@ pub(all) struct Config {
   headers : @headers.Headers?
   common_headers : @headers.Headers?
   method_headers : Map[Method, @headers.Headers]?
-  validate_status : ((Int) -> Bool)?
+  validate_status : ((Int32) -> Bool)?
   allow_absolute_urls : Bool?
   // private fields
 } derive(Default)
@@ -61,7 +62,7 @@ pub fn Config::default() -> Self
 pub fn Config::extract_body(Self) -> BodyPayload
 pub fn Config::has_stream_body(Self) -> Bool
 pub fn Config::new(String) -> Self
-pub fn Config::next_redirect(Self, String, Int, String?) -> Self?
+pub fn Config::next_redirect(Self, String, Int32, String?) -> Self?
 pub fn Config::output(Self, &Logger) -> Unit
 pub fn Config::serialize_body(Self) -> SerializedBody
 pub fn Config::to_repr(Self) -> @debug.Repr
@@ -73,23 +74,24 @@ pub fn Config::with_common_header(Self, StringView, String) -> Self
 pub fn Config::with_data_from_form(Self, FormData) -> Self
 pub fn Config::with_data_from_json(Self, Json) -> Self
 pub fn Config::with_data_from_str(Self, String) -> Self
-pub fn Config::with_data_from_stream(Self, &@io.Reader, content_length? : Int) -> Self
+pub fn Config::with_data_from_stream(Self, &@io.Reader, content_length? : Int32) -> Self
 pub fn Config::with_data_from_urlencoded(Self, Json) -> Self
 pub fn Config::with_decompress(Self, Bool) -> Self
 pub fn Config::with_header(Self, StringView, String) -> Self
 pub fn Config::with_headers(Self, @headers.Headers) -> Self
-pub fn Config::with_max_redirects(Self, Int) -> Self
+pub fn Config::with_max_redirects(Self, Int32) -> Self
 pub fn Config::with_method(Self, Method) -> Self
 pub fn Config::with_method_header(Self, Method, StringView, String) -> Self
 pub fn Config::with_on_download_progress(Self, (ProgressEvent) -> Unit) -> Self
 pub fn Config::with_on_upload_progress(Self, (ProgressEvent) -> Unit) -> Self
 pub fn Config::with_params(Self, Json) -> Self
 pub fn Config::with_params_serializer(Self, (Json) -> String) -> Self
-pub fn Config::with_proxy(Self, String, port? : Int, protocol? : ProxyProtocol, username? : String, password? : String) -> Self
+pub fn Config::with_proxy(Self, String, port? : Int32, protocol? : ProxyProtocol, username? : String, password? : String) -> Self
 pub fn Config::with_response_encoding(Self, ResponseEncoding) -> Self
-pub fn Config::with_timeout(Self, Int) -> Self
+pub fn Config::with_sse_reconnect(Self, SseReconnect) -> Self
+pub fn Config::with_timeout(Self, Int32) -> Self
 pub fn Config::with_url(Self, String) -> Self
-pub fn Config::with_validate_status(Self, (Int) -> Bool) -> Self
+pub fn Config::with_validate_status(Self, (Int32) -> Bool) -> Self
 pub impl Show for Config
 pub impl @debug.Debug for Config
 
@@ -100,7 +102,7 @@ pub fn FormData::append_file(Self, StringView, StringView, Bytes, content_type? 
 pub fn FormData::append_text(Self, StringView, String) -> Self
 pub fn FormData::entries(Self) -> Array[(String, FormValue)]
 pub fn FormData::is_empty(Self) -> Bool
-pub fn FormData::length(Self) -> Int
+pub fn FormData::length(Self) -> Int32
 pub fn FormData::new() -> Self
 pub fn FormData::output(Self, &Logger) -> Unit
 pub fn FormData::to_repr(Self) -> @debug.Repr
@@ -132,7 +134,7 @@ pub(all) enum Method {
   Other(String)
 } derive(Eq, Hash, @debug.Debug)
 pub fn Method::equal(Self, Self) -> Bool
-pub fn Method::hash(Self) -> Int
+pub fn Method::hash(Self) -> Int32
 pub fn Method::hash_combine(Self, Hasher) -> Unit
 pub fn Method::not_equal(Self, Self) -> Bool
 pub fn Method::parse(StringView) -> Self?
@@ -140,8 +142,8 @@ pub fn Method::to_repr(Self) -> @debug.Repr
 pub fn Method::to_string(Self) -> String
 
 pub(all) struct ProgressEvent {
-  loaded : Int
-  total : Int?
+  loaded : Int32
+  total : Int32?
 } derive(@debug.Debug)
 pub fn ProgressEvent::progress(Self) -> Double?
 pub fn ProgressEvent::to_repr(Self) -> @debug.Repr
@@ -149,7 +151,7 @@ pub fn ProgressEvent::to_repr(Self) -> @debug.Repr
 pub(all) struct Proxy {
   protocol : ProxyProtocol?
   host : String?
-  port : Int?
+  port : Int32?
   auth : Auth?
 } derive(Default, Eq, @debug.Debug)
 pub fn Proxy::default() -> Self
@@ -184,9 +186,23 @@ pub(all) struct SerializedBody {
   content_type : String?
 }
 
+pub(all) struct SseReconnect {
+  max_retries : Int32?
+  default_delay : Int32
+} derive(Eq, @debug.Debug)
+pub fn SseReconnect::equal(Self, Self) -> Bool
+pub fn SseReconnect::new() -> Self
+pub fn SseReconnect::not_equal(Self, Self) -> Bool
+pub fn SseReconnect::output(Self, &Logger) -> Unit
+pub fn SseReconnect::to_repr(Self) -> @debug.Repr
+pub fn SseReconnect::to_string(Self) -> String
+pub fn SseReconnect::with_default_delay(Self, Int32) -> Self
+pub fn SseReconnect::with_max_retries(Self, Int32) -> Self
+pub impl Show for SseReconnect
+
 pub(all) struct StreamBody {
   reader : &@io.Reader
-  content_length : Int?
+  content_length : Int32?
 }
 
 // Type aliases

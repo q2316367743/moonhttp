@@ -198,7 +198,7 @@ axios 只有一条 promise 链，而请求侧的 rejected **接不到派发失�
 |---|---|---|---|---|
 | `Client::request` | ✅ | ✅ | ✅ | 完整响应在手，改写、救错与重试都有明确语义 |
 | `Client::stream` | ✅ | ❌ | ❌ | 「响应」是还没读的字节流，救回一个 `Response` 没有落点 |
-| `Client::sse` | ✅ | ❌ | ❌ | 同上；事件流的重试语义也不明确 |
+| `Client::sse` | ✅ | ❌ | ❌ | 同上；自动重连在 `SseStream` 内部完成，不经过响应侧链（见 `06-sse.md`） |
 
 被请求拦截器拦下时，两个流式入口**直接抛**（用例 `streaming entries skip the request error handler`）。
 

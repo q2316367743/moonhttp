@@ -21,8 +21,8 @@ pub struct AbortSignal {
 }
 pub fn AbortSignal::abort(reason? : String) -> Self
 pub fn AbortSignal::aborted(Self) -> Bool
-pub fn AbortSignal::attach(Self, () -> Unit) -> Int
-pub fn AbortSignal::detach(Self, Int) -> Unit
+pub fn AbortSignal::attach(Self, () -> Unit) -> Int32
+pub fn AbortSignal::detach(Self, Int32) -> Unit
 pub fn AbortSignal::reason(Self) -> String?
 pub fn AbortSignal::throw_if_aborted(Self) -> Unit raise AbortError
 

@@ -14,23 +14,23 @@ import {
 
 // Types and methods
 pub(all) struct Response {
-  status : Int
+  status : Int32
   status_text : String
   headers : @headers.Headers
   config : @config.Config
   // private fields
 } derive(@debug.Debug)
 pub fn Response::bytes(Self) -> Bytes
-pub fn Response::content_length(Self) -> Int
+pub fn Response::content_length(Self) -> Int32
 pub fn Response::is_success(Self) -> Bool
 pub fn Response::json(Self) -> Json raise @json.ParseError
-pub fn Response::new(Int, String, @headers.Headers, Bytes, @config.Config) -> Self
+pub fn Response::new(Int32, String, @headers.Headers, Bytes, @config.Config) -> Self
 pub fn Response::text(Self) -> String
 pub fn Response::to_repr(Self) -> @debug.Repr
 pub fn Response::with_body(Self, Bytes) -> Self
 pub fn Response::with_headers(Self, @headers.Headers) -> Self
 pub fn Response::with_json(Self, Json) -> Self
-pub fn Response::with_status(Self, Int) -> Self
+pub fn Response::with_status(Self, Int32) -> Self
 pub fn Response::with_text(Self, String) -> Self
 
 // Type aliases

@@ -17,7 +17,7 @@ pub fn parse_target(String) -> Target raise @transport.TransportError
 pub struct HttpConnTransport {
   // private fields
 }
-pub fn HttpConnTransport::new(max_idle_per_host? : Int, idle_timeout_ms? : Int) -> Self
+pub fn HttpConnTransport::new(max_idle_per_host? : Int32, idle_timeout_ms? : Int32) -> Self
 pub async fn HttpConnTransport::send(Self, @transport.PreparedRequest) -> @transport.RawResponse raise @transport.TransportError
 pub impl @transport.Transport for HttpConnTransport
 
@@ -25,7 +25,7 @@ pub(all) struct Target {
   scheme : String
   use_tls : Bool
   host : String
-  port : Int
+  port : Int32
   target : String
 } derive(@debug.Debug)
 pub fn Target::to_repr(Self) -> @debug.Repr

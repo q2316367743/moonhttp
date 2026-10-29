@@ -14,7 +14,7 @@ pub(all) struct SseEvent {
   event : String
   data : String
   id : String?
-  retry : Int?
+  retry : Int32?
 } derive(Eq, @debug.Debug)
 pub fn SseEvent::equal(Self, Self) -> Bool
 pub fn SseEvent::not_equal(Self, Self) -> Bool
@@ -23,10 +23,13 @@ pub fn SseEvent::to_repr(Self) -> @debug.Repr
 pub struct SseParser {
   // private fields
 }
+pub fn SseParser::begin_stream(Self) -> Unit
 pub fn SseParser::finish(Self) -> Unit
+pub fn SseParser::last_event_id(Self) -> String?
 pub fn SseParser::new() -> Self
 pub fn SseParser::next(Self) -> SseEvent?
 pub fn SseParser::push(Self, Bytes) -> Unit
+pub fn SseParser::retry_interval(Self) -> Int32?
 pub fn SseParser::to_repr(Self) -> @debug.Repr
 pub impl @debug.Debug for SseParser
 

@@ -19,7 +19,7 @@ pub fn encode_body(String, @config.ResponseEncoding) -> Bytes
 
 pub fn resolve_method(@config.Method?, @config.Method?) -> @config.Method
 
-pub fn status_allowed(Int, @config.Config) -> Bool
+pub fn status_allowed(Int32, @config.Config) -> Bool
 
 // Errors
 

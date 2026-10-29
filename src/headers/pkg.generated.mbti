@@ -19,7 +19,7 @@ pub fn Headers::from_pairs(Array[(String, String)]) -> Self
 pub fn Headers::get(Self, StringView) -> String?
 pub fn Headers::has(Self, StringView) -> Bool
 pub fn Headers::is_empty(Self) -> Bool
-pub fn Headers::length(Self) -> Int
+pub fn Headers::length(Self) -> Int32
 pub fn Headers::merge(Self, Self) -> Self
 pub fn Headers::new() -> Self
 pub fn Headers::not_equal(Self, Self) -> Bool

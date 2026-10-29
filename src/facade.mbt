@@ -32,6 +32,7 @@ pub using @config {
   type Proxy,
   type ProxyProtocol,
   type ResponseEncoding,
+  type SseReconnect,
   type FormData,
   type FormValue,
   type FormFile,

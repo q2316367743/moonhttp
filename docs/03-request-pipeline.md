@@ -72,7 +72,7 @@
 |---|---|---|---|
 | `Client::request` | 先把响应体读到 EOF（`ResponseBody::read_all_partial`），再校验状态码 | `Response` | 常规请求，需要完整响应体 |
 | `Client::stream` | 直接把响应头与响应体流交出去 | `StreamResponse` | 大文件下载、自己按块处理 |
-| `Client::sse` | 交出去，但要求响应头声明了 `text/event-stream` | `SseStream` | 按事件读 SSE |
+| `Client::sse` | 交出去，但要求响应头声明了 `text/event-stream` | `SseStream` | 按事件读 SSE；自动重连按 `Config.sse_reconnect` 开启（见 `06-sse.md`） |
 
 **读法由入口决定，不由配置决定。** `response_encoding` 只描述「字节怎么解成文本」，不描述读不读——「读完还是流」是调哪个方法决定的，配置字段里没法表达，也不该表达。语言层面同样没法让一个方法的返回类型随运行时配置变化：真要那样只能返回一个变体包装，调用方每次都得 match。三种读法静态分开之后，「调错了」是编译错误，不需要运行时守卫。
 

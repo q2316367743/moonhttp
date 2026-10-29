@@ -45,3 +45,46 @@ async test "a live signal runs the operation and passes its result through" {
   assert_eq(with_abort_scope(Some(controller.signal()), () => 42), 42)
   assert_eq(with_abort_scope(None, () => 7), 7)
 }
+
+///|
+/// 重连的退避等待也必须能被取消打断：否则取消之后还要睡完整个 retry 间隔。
+async test "sleep_with_abort wakes up when the signal is aborted" {
+  let controller = @abort.AbortController::new()
+  let started = @async.now()
+  @async.with_task_group() <| group => {
+    group.spawn_bg(no_wait=true) <| () => {
+      @async.sleep(50)
+      controller.abort()
+    }
+    let error = try {
+      sleep_with_abort(Some(controller.signal()), 5000)
+      None
+    } catch {
+      error => Some(error)
+    }
+    assert_true(error is Some(TransportError::Cancelled(_)))
+  }
+  assert_true((@async.now() - started).to_int() < 1000)
+}
+
+///|
+/// 已经取消的信号：不等 5 秒，直接抛取消。
+async test "sleep_with_abort fails fast on an already aborted signal" {
+  let controller = @abort.AbortController::new()
+  controller.abort()
+  let error = try {
+    sleep_with_abort(Some(controller.signal()), 5000)
+    None
+  } catch {
+    error => Some(error)
+  }
+  assert_true(error is Some(TransportError::Cancelled(_)))
+}
+
+///|
+/// 没有信号时就是普通 sleep；0 或负数直接返回。
+async test "sleep_with_abort handles no signal and non-positive delays" {
+  sleep_with_abort(None, 1)
+  sleep_with_abort(None, 0)
+  sleep_with_abort(None, -1)
+}

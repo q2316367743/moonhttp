@@ -2,7 +2,7 @@
 
 MoonBit 上的 HTTP 客户端，基于官方异步库 `moonbitlang/async`：调第三方 REST API、上传下载文件、消费 SSE 流，一次配置就能发请求。
 
-它提供实例化配置与合并、`request` / `stream` / `sse` 三个入口、五种请求体形态（含流式上传）、自动重定向、代理隧道、上传下载进度回调、请求与响应拦截器、取消请求、SSE 事件解析、响应体 gzip 解压，以及一组按失败原因分类的错误码。API 语义参考 axios，代码为原创实现。
+它提供实例化配置与合并、`request` / `stream` / `sse` 三个入口、五种请求体形态（含流式上传）、自动重定向、代理隧道、上传下载进度回调、请求与响应拦截器、取消请求、SSE 事件解析与自动重连、响应体 gzip 解压，以及一组按失败原因分类的错误码。API 语义参考 axios，代码为原创实现。
 
 ## 安装
 
@@ -56,7 +56,7 @@ async fn main {
 | 字段 | 合并方式 |
 |---|---|
 | `url` / 请求方法 / 请求体 | 只取请求级，实例默认值里的同名字段不参与 |
-| `base_url` / `timeout` / `max_redirects` / `response_encoding` / 进度回调 | 请求级优先，缺省回退实例默认值 |
+| `base_url` / `timeout` / `max_redirects` / `response_encoding` / `sse_reconnect` / 进度回调 | 请求级优先，缺省回退实例默认值 |
 | `params` / `headers` / `auth` / `proxy` | 逐层合并（头名大小写不敏感） |
 | `validate_status` / `params_serializer` | 请求级提供即整体接管 |
 
@@ -281,6 +281,18 @@ async fn watch(api : @moonhttp.Client) -> Unit raise @moonhttp.HttpError {
 
 `StreamResponse` 还有 `read_all()` 与 `read_until(分隔符)`；`SseEvent` 带 `event`（缺省 `"message"`）、`data`、`id` 与 `retry`（后两者是持久状态，断线重连要用）。读到 EOF 会自动释放连接（连接池在场且读满时是复用它而不是关闭），**中途结束时记得自己 `close()`**——忘记关会漏一条连接。`Client::sse` 要求响应头声明 `text/event-stream`，拿到的不是事件流会报 `NotSupported`；服务端不声明却是 SSE 的场合，用 `Client::stream` 配公开的 `SseParser` 自己驱动。
 
+自动重连默认关闭；开启后按流里的 `retry:`（没有则用策略默认间隔）重订阅，并自动带 `Last-Event-ID`：
+
+```moonbit nocheck
+let events = api.sse(
+  @moonhttp.Config::new("/events").with_sse_reconnect(
+    @moonhttp.SseReconnect::new().with_max_retries(5).with_default_delay(1000),
+  ),
+)
+```
+
+`max_retries` 为 `None` 表示不限次数；每交付一个事件会清零连续失败计数。取消、4xx、非事件流响应不会重试；干净 EOF 且次数用尽时 `next_event()` 返回 `None`。细节见 `docs/06-sse.md`。
+
 ### 错误处理
 
 失败抛 `HttpError`，它带着错误分类、出错时的配置，以及**已经收到的响应**（`None` 表示连响应头都没收到）。构造器模式要写类型限定的形式（`HttpError::HttpError`——`pub using` 再导出类型但不导出构造器，见 `docs/01-architecture.md`）：
@@ -326,7 +338,6 @@ println(mock.last_request().unwrap().url) // 已经拼好 base_url 与 query 的
 
 以下能力本版没有实现，配置里也不会出现对应字段：
 
-- **SSE 自动重连**：`id` / `retry` 已经作为持久状态带出来了，按 `retry` 间隔重订阅留给上层；计划内置。
 - **响应体自动解析**：读法由你在 `text()` / `bytes()` / `json()` 里显式选；静态类型下「猜内容类型」要先重新设计响应类型的形态，留待后续版本。
 - **`transformRequest` / `transformResponse`**：不做成独立配置项——用两段拦截器代替（请求侧改 body、响应侧改正文，见上面「拦截器」一节）。
 - **拦截器的** `runWhen`（按条件跳过）与 `synchronous`（批量注册）：条件写在拦截器体内 `if` 即可，批量注册用链式 `use_*`；`eject` 的等价物是具名注册 + `remove_request` / `remove_response`。

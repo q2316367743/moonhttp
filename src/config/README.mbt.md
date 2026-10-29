@@ -24,7 +24,7 @@ let defaults = Config::default() // 从零起步
 
 方法字段叫 `http_method` 而不是 `method`（`method` 是 MoonBit 保留字），构建器仍叫 `with_method`。
 
-## 构建器：24 个 `with_*`
+## 构建器：25 个 `with_*`
 
 **地址与方法**
 
@@ -97,6 +97,22 @@ let defaults = Config::default() // 从零起步
 | `with_response_encoding(ResponseEncoding)` | 响应体按什么解码，默认 `Utf8` |
 | `with_decompress(bool)` | 响应带 `Content-Encoding: gzip` 时要不要解压（默认解压）；关掉后交原始压缩字节 |
 | `with_validate_status(fn(Int) -> Bool)` | 状态码校验规则，默认「2xx 算成功」 |
+| `with_sse_reconnect(SseReconnect)` | 开启 `Client::sse` 的自动重连（默认关闭） |
+
+**SSE 自动重连**
+
+`with_sse_reconnect` 只影响 `Client::sse`，对 `request` / `stream` 没有作用。策略用 `SseReconnect::new()` 起步：
+
+```moonbit nocheck
+///|
+let config = Config::new("/events").with_sse_reconnect(
+  SseReconnect::new()
+  .with_max_retries(5) // None = 不限次数；0 = 不重连
+  .with_default_delay(1000), // 流里没有 retry: 时用 1s
+)
+```
+
+重连间隔优先取流里的 `retry:`；`Last-Event-ID` 自动带；触发与终止条件见 [docs/06](https://github.com/q2316367743/moonhttp/blob/master/docs/06-sse.md)。
 
 ## Config 的其它方法
 
@@ -119,13 +135,14 @@ let defaults = Config::default() // 从零起步
 | `Proxy` / `ProxyProtocol` | `{ protocol?, host?, port?, auth? }`；`Proxy::is_usable()` 判断「配了代理但没给 host」 |
 | `FormData` / `FormValue` / `FormFile` | `new()` / `append_text(name, value)` / `append_file(name, filename, bytes, content_type?)` / `entries()` / `length()` |
 | `ProgressEvent` / `ProgressCallback` | `{ loaded, total? }` + `progress()`（total 未知或为 0 时给 `None`） |
+| `SseReconnect` | `{ max_retries?, default_delay }`；`new()` / `with_max_retries(n)` / `with_default_delay(ms)` |
 | `SerializedBody` | `{ bytes?, content_type? }` |
 
 ## 包级函数
 
 | 函数 | 说明 |
 |---|---|
-| `defaults()` | 内置默认值：`timeout = 0`（不超时）、`max_redirects = 5`、`response_encoding = Utf8`、`decompress = true`、`validate_status` = 2xx、`Accept: application/json, text/plain, */*`、`allow_absolute_urls = true` |
+| `defaults()` | 内置默认值：`timeout = 0`（不超时）、`max_redirects = 5`、`response_encoding = Utf8`、`decompress = true`、`sse_reconnect = None`（不自动重连）、`validate_status` = 2xx、`Accept: application/json, text/plain, */*`、`allow_absolute_urls = true` |
 | `merge_config(默认值, 请求级)` | 请求级配置合并在实例默认值之上 |
 | `flatten_headers(公共头?, 按方法的头?, 请求级头?, 方法)` | 三层头拍平成一份 |
 | `merge_json(a, b)` / `merge_json_option(a, b)` | JSON 深合并（`params` 用它） |

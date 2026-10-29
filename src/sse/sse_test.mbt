@@ -125,7 +125,7 @@ test "event type defaults to message and resets per block" {
 
 ///|
 /// `id` 与 `retry` 是跨事件持久的解析器状态：出现过之后跟着每个事件一起出去。
-/// 断线重连要用这两个值，本项目不自动重连，所以必须在事件上给到。
+/// 自动重连要用这两个值，所以必须在事件上给到。
 test "id and retry persist across events" {
   let events = sse_parse_all(
     "id: 42\nretry: 3000\ndata: first\n\ndata: second\n\n",

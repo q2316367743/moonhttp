@@ -60,6 +60,11 @@ pub fn Config::to_string(self : Config) -> String {
       first = push_field(buf, first, "decompress", decompress.to_string())
     None => ()
   }
+  match self.sse_reconnect {
+    Some(reconnect) =>
+      first = push_field(buf, first, "sse_reconnect", reconnect.to_string())
+    None => ()
+  }
   match self.params {
     Some(params) => first = push_field(buf, first, "params", params.stringify())
     None => ()

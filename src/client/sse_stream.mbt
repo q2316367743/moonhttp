@@ -18,6 +18,11 @@
 /// 拿到流时状态行与响应头就已经可用（SSE 靠这个先看状态码与 `Content-Type`）。
 /// 连接生命周期与 `StreamResponse` 一致：读到 EOF 自动关闭，
 /// 中途停止必须显式 `close()`。
+///
+/// **自动重连**由 `Config::with_sse_reconnect(...)` 开启，默认关闭。开启后
+/// `next_event` 会在 EOF / 可重试错误上重订阅，`status` / `status_text` /
+/// `headers` / `config` 仍然是**第一次建流**时的响应；重连失败的最新响应挂在
+/// 抛出的 `HttpError::response()` 上。
 pub(all) struct SseStream {
   /// HTTP 状态码
   status : Int32
@@ -29,7 +34,8 @@ pub(all) struct SseStream {
   config : Config
   /// 响应体流。字段私有：`next_event` 是唯一的读取入口，
   /// 这样错误才能统一映射成 `HttpError`，也不会有人绕过解析器去读字节。
-  priv body : @transport.ResponseBody
+  /// 自动重连成功后会换成新连接的 body，所以需要 `mut`。
+  priv mut body : @transport.ResponseBody
   /// 事件解析器的状态
   priv parser : @sse.SseParser
   /// 调用方是否已经 `close()`。
@@ -38,6 +44,8 @@ pub(all) struct SseStream {
   /// 关掉连接之后它们照样取得出来。`close` 的语义是「到此为止」，
   /// 与 `StreamResponse::close()` 之后 `read_some` 只返回 `None` 保持一致。
   priv mut closed : Bool
+  /// 自动重连的运行时状态；`None` 表示没有开启（保持旧的 EOF → `None` 语义）。
+  priv reconnect : SseReconnectState?
 } derive(Debug)
 
 ///|
@@ -79,7 +87,7 @@ fn SseStream::read_error(
 }
 
 ///|
-/// 读下一个事件；流结束返回 `None`。
+/// 读下一个事件；没有更多事件时返回 `None`。
 ///
 /// 事件边界、字段语义（`event:` / `data:` / `id:` / `retry:`）、注释行、
 /// 多行 `data:` 合并、三种行尾都由 `@sse.SseParser` 按 WHATWG 规范处理，
@@ -89,38 +97,96 @@ fn SseStream::read_error(
 /// - 只发了 `id:` / `retry:` 或只有心跳注释的块**不产生事件**，会继续往下读；
 /// - 流结束时没等到空行的事件**丢弃**，不会补发半个事件；
 /// - `close()` 之后一律返回 `None`；
-/// - `SseEvent` 上的 `id` / `retry` 是解析器的持久状态快照，
-///   断线重连要用它们（本项目不自动重连，重连逻辑写在上层）。
+/// - `SseEvent` 上的 `id` / `retry` 是解析器的持久状态快照。
+///
+/// **自动重连默认关闭**。开启后（`Config::with_sse_reconnect`）：
+/// - 读到 EOF、读体报 `Network` / `Timeout`、或重连请求收到 5xx 时，
+///   按流里最近一次 `retry:`（没有则用策略的 `default_delay`）重新订阅；
+/// - 重连请求自动带 `Last-Event-ID`，值来自解析器的持久状态（只发 `id:` 的块
+///   也算数）；
+/// - 取消、`close()`、4xx、非 `text/event-stream` 响应、响应体解压损坏等
+///   不可重试情况立即结束；
+/// - 干净 EOF 且重连次数用尽时返回 `None`；最后一次失败是错误时抛该
+///   `HttpError`。
 ///
 /// 读取失败（超时、断连）时抛 `HttpError`：错误码是传输层的分类，
-/// 状态码与响应头挂在 `HttpError::response()` 上。
+/// 状态码与响应头挂在 `HttpError::response()` 上。自动重连期间
+/// `status` / `status_text` / `headers` / `config` 仍是第一次建流时的响应，
+/// 最新一次失败的响应在抛出的错误里。
 pub async fn SseStream::next_event(
   self : SseStream,
 ) -> @sse.SseEvent? raise HttpError {
-  // 已经关掉的流不再吐事件：解析器的队列里可能还存着已经解出来的事件，
-  // 但 `close` 就是「到此为止」。
-  if self.closed {
-    return None
-  }
-  // 先取已解析好的（一次读进来的字节可能带来多个事件），没有再读一块喂进去。
-  let mut event = self.parser.next()
-  while event is None {
+  // 重连状态是引用语义：循环里对 attempts 的修改落在同一份状态上。
+  // 策略在建流时就定了，不会在读取过程中换掉，所以这里取一次即可。
+  let reconnect = self.reconnect
+  while true {
+    // 已经关掉的流不再吐事件：解析器的队列里可能还存着已经解出来的事件，
+    // 但 `close` 就是「到此为止」。
+    if self.closed {
+      return None
+    }
+    // 先取已解析好的（一次读进来的字节可能带来多个事件），没有再读一块喂进去。
+    match self.parser.next() {
+      Some(event) => {
+        // 交付了事件说明这条流是活的，连续失败计数从头开始。
+        match reconnect {
+          Some(state) => state.attempts = 0
+          None => ()
+        }
+        return Some(event)
+      }
+      None => ()
+    }
     let chunk = self.body.read_some() catch {
-      error => raise self.read_error(error)
+      error => {
+        let failure = self.read_error(error)
+        match reconnect {
+          // 没开启自动重连：与旧行为一致，读失败直接抛。
+          None => raise failure
+          Some(state) => {
+            if !retryable_error(failure) {
+              raise failure
+            }
+            // 只有确定要重连时才丢弃上一连接未完成的事件；不可重试的错误
+            // 原样抛出，调用方还能从错误里看到已经收到的响应。
+            self.parser.finish()
+            if !self.reconnect_loop(state, Some(failure)) {
+              return None
+            }
+            continue
+          }
+        }
+      }
     }
     match chunk {
+      Some(bytes) => {
+        self.parser.push(bytes)
+        continue
+      }
       None => {
         // EOF：让解析器处理末尾那个卡住的 CR，之后丢弃未完成的事件。
         self.parser.finish()
-        return self.parser.next()
-      }
-      Some(bytes) => {
-        self.parser.push(bytes)
-        event = self.parser.next()
+        match self.parser.next() {
+          Some(event) => {
+            match reconnect {
+              Some(state) => state.attempts = 0
+              None => ()
+            }
+            return Some(event)
+          }
+          None => ()
+        }
+        match reconnect {
+          None => return None
+          Some(state) => if !self.reconnect_loop(state, None) { return None }
+        }
+        continue
       }
     }
+  } nobreak {
+    None
   }
-  event
+  // `while true` 的兜底值；正常路径都走 return / raise，不会到这里。
 }
 
 ///|
