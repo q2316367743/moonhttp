@@ -226,6 +226,8 @@ fn stream_replay_error(
 /// 返回 `Result` 而不是抛错：这个结果**就是**响应侧链的输入——`Client::request`
 /// 拿到它直接交给 `Interceptors::run_response`，于是「状态码失败」与「请求阶段的
 /// 失败」在调用点一眼分得开（后者走请求侧错误处理器，见 `docs/11-interceptors.md`）。
+/// 成败要当普通数据往下传，正是 `result_error_return` 允许的例外，所以显式关掉它。
+#warnings("-result_error_return")
 fn validate_response(response : Response) -> Result[Response, HttpError] {
   if @util.status_allowed(response.status, response.config) {
     Ok(response)

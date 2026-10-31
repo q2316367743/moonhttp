@@ -169,6 +169,8 @@ fn pad(text : String, width : Int32) -> String {
 
 ///|
 /// 跑一次请求并把结果收成 `Result`：示例要逐条打印，不想让某一条把整段带崩。
+/// 失败在这里是普通数据（逐条打印要用），不是要往外抛的异常，故关掉这条告警。
+#warnings("-result_error_return")
 async fn request_or_error(
   client : @moonhttp.Client,
   config : @moonhttp.Config,

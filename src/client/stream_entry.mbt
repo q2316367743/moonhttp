@@ -37,10 +37,7 @@ async fn Client::open_stream(
   // 两个流式入口共用这一条，所以 `stream` / `sse` 也被它覆盖。
   let merged = self.merged_config(config)
   check_cancelled(merged, signal)
-  let merged = match self.interceptors.run_request(merged) {
-    Ok(config) => config
-    Err(error) => raise error
-  }
+  let merged = self.interceptors.run_request(merged)
   let (raw, merged) = self.send_following_redirects(merged, signal, false)
   if !@util.status_allowed(raw.status, merged) {
     // 错误体也要读全；读到一半失败（超时、断连）时把已读到的部分挂到

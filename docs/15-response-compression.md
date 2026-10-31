@@ -80,8 +80,8 @@ gzip 数据损坏、被截断（CRC32 或长度校验不过、`NeedMoreInput`）
 头照原样留着才看得出它声称自己是 gzip。
 
 **状态码也没通过校验时以状态码为准**：404 的错误页解不开，说「404」比说「解压失败」有用；
-这时响应体与响应头都原样交出去（`decode_response_body` 返回 `Err` 而不是直接抛，
-由 `Client::dispatch_request` 结合校验结果决定报哪个）。
+`decode_response_body` 解压失败会抛错，`Client::dispatch_request` 在 `catch` 里结合校验结果
+定夺：状态码放行就抛解压错误，状态码也没过就原样交出去（响应体与响应头都不动）。
 
 ## 进度口径
 

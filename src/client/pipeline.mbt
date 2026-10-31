@@ -78,13 +78,11 @@ pub async fn Client::request(
     //      「已取消的信号让请求立刻失败」照样成立。
     let merged = self.merged_config(config)
     check_cancelled(merged, signal)
-    // 3. 请求拦截器。被拦下时这次请求不发出，错误交给请求侧错误处理器
-    //    ——所以这里不抛错，交给下面的分支收口。
-    match self.interceptors.run_request(merged) {
-      Err(error) => Err(error)
-      // 4~7. 发送、跟重定向、读全量、拼响应（状态码校验不在这里）
-      Ok(config) => Ok(self.dispatch_request(config, signal))
-    }
+    // 3. 请求拦截器。被拦下时这次请求不发出，抛出的错误由外层 `try` 收进
+    //    `stage`——和 4~7 的失败一样交给请求侧错误处理器。
+    let config = self.interceptors.run_request(merged)
+    // 4~7. 发送、跟重定向、读全量、拼响应（状态码校验不在这里）
+    Ok(self.dispatch_request(config, signal))
   } catch {
     error => Err(error)
   }
@@ -133,24 +131,28 @@ async fn Client::dispatch_request(
     None => ()
   }
   // 响应体解压：缓冲路径由库负责（见 `docs/15-response-compression.md`）。
-  // 解压失败不在这里抛：状态码同样没通过校验时，状态码那个原因更准确
-  // （404 的错误页解不开，说「404」比说「解压失败」有用）。
-  match
-    decode_response_body(raw.status, raw.status_text, raw.headers, body, merged) {
-    Ok((decoded, headers)) =>
-      // 校验状态码**不在这里**：交给 `Client::request`——那里才知道这次失败该走
-      // 请求侧还是响应侧的错误处理器（字符集解码同样不在这里：响应体以原始字节
-      // 交出去，读法由调用方选）
-      build_response(raw.status, raw.status_text, headers, decoded, merged)
-    Err(error) =>
+  // 解压失败先抛出来，由下面的 `catch` 定夺报哪个错：状态码同样没通过校验时，
+  // 状态码那个原因更准确（404 的错误页解不开，说「404」比说「解压失败」有用）。
+  let (decoded, headers) = decode_response_body(
+    raw.status,
+    raw.status_text,
+    raw.headers,
+    body,
+    merged,
+  ) catch {
+    error =>
       if @util.status_allowed(raw.status, merged) {
         raise error
       } else {
         // 状态码本身也没通过校验：以状态码为准，响应体与响应头都保持原样
         // ——字节确实还是压缩字节，`Content-Encoding` 也照原样留着（头与体一致）。
-        build_response(raw.status, raw.status_text, raw.headers, body, merged)
+        (body, raw.headers)
       }
   }
+  // 校验状态码**不在这里**：交给 `Client::request`——那里才知道这次失败该走
+  // 请求侧还是响应侧的错误处理器（字符集解码同样不在这里：响应体以原始字节
+  // 交出去，读法由调用方选）
+  build_response(raw.status, raw.status_text, headers, decoded, merged)
 }
 
 ///|
@@ -168,40 +170,32 @@ async fn Client::dispatch_request(
 /// 字节**，而交出去的响应体已经是实体字节，留着就等于让头与体互相矛盾
 /// （底层透明解压时同样会删掉 `Content-Length`，两处口径一致）。
 ///
-/// 解压失败返回 `Err` 而**不在这里抛**：状态码同样没通过校验时，状态码那个原因
-/// 更准确（404 的错误页解不开，说「404」比说「解压失败」有用），由调用方
-/// 结合校验结果决定报哪个。失败时错误里挂着**原始压缩字节与原始响应头**
+/// 解压失败就抛 `HttpError`，错误里挂着**原始压缩字节与原始响应头**
 /// ——解不开的就是这份字节，头照原样留着才看得出它声称自己是 gzip。
+/// 报哪个错由调用方在 `catch` 里定夺：状态码同样没通过校验时，状态码那个原因
+/// 更准确（404 的错误页解不开，说「404」比说「解压失败」有用）。
 async fn decode_response_body(
   status : Int32,
   status_text : String,
   headers : Headers,
   body : Bytes,
   config : Config,
-) -> Result[(Bytes, Headers), HttpError] noraise {
+) -> (Bytes, Headers) raise HttpError {
   let needed = config.decompress.unwrap_or(true) &&
     @transport.declares_gzip(headers) &&
     body.length() > 0
   if !needed {
-    return Ok((body, headers))
+    return (body, headers)
   }
-  let decoded : Result[Bytes, @transport.TransportError] = Ok(
-    @transport.decode_gzip(body),
-  ) catch {
-    error => Err(error)
-  }
-  match decoded {
-    Ok(decoded) =>
-      Ok((decoded, headers.remove("Content-Encoding").remove("Content-Length")))
-    Err(error) =>
-      Err(
-        transport_error(
-          error,
-          config,
-          Some(build_response(status, status_text, headers, body, config)),
-        ),
+  let decoded = @transport.decode_gzip(body) catch {
+    error =>
+      raise transport_error(
+        error,
+        config,
+        Some(build_response(status, status_text, headers, body, config)),
       )
   }
+  (decoded, headers.remove("Content-Encoding").remove("Content-Length"))
 }
 
 ///|
