@@ -147,9 +147,25 @@ async fn dial_via_proxy(
       "SOCKS5 代理即将支持（httpconn 第 1 期分两个提交落地），本次请求未发出",
     )
   }
-  let conn = connect_tcp(proxy.host, proxy.port)
+  let tcp = connect_tcp(proxy.host, proxy.port)
+  // 到代理本身先叠 TLS（`ProxyProtocol::Https`）：CONNECT 请求与
+  // `Proxy-Authorization` 都在这层 TLS 里面，既连得上真正的 https 代理，
+  // 也不让凭据明文过网。与「目标是否 https」是两件独立的事——目标那层
+  // TLS 在隧道建立之后才叠（见下）。
+  let conn = match proxy.use_tls {
+    true =>
+      tcp.upgrade_tls(proxy.host) catch {
+        error => {
+          // TLS 握手中途失败：这条到代理的 TCP 已经没用了，关掉再报网络错
+          tcp.close()
+          raise @transport.TransportError::Network(error.to_string())
+        }
+      }
+    false => tcp
+  }
   errdefer conn.close()
-  // CONNECT 之后按目标是否 https 决定要不要叠 TLS；隧道本身总是明文建立的
+  // 隧道本身在这条（可能是 TLS 的）连接里建立；目标是否 https 只决定
+  // 隧道之上再不再叠一层 TLS
   let upgraded = establish_tunnel(conn, target, endpoint.authorization)
   if target.use_tls {
     upgraded.upgrade_tls(target.host) catch {

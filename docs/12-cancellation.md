@@ -213,6 +213,7 @@ I/O 路径时，必须自己在入口先查 `aborted()`**，别再指望「挂�
 | 每一跳发送**之中** | 传输实现的取消作用域包住整跳（`with_abort_scope`） | 打断挂起的建连 / 写头 / 写 body / 等响应头 |
 | 进入一段 I/O **之前** | `with_abort_scope` 开头的 `aborted()` 检查 | 补上窗口期：重定向的两跳之间、两次响应体读取之间 |
 | 响应体读取**之中** | `read_or_fail` 的取消作用域（`read_some` / `read_until` / `read_all` / SSE 都经过它） | 打断挂起的读，抛 `TransportError::Cancelled` |
+| 读全量的**进度回调之后** | `drain_into` 每报完一次进度查一次 `aborted()` | 在下一轮 `read()` 之前抛 `Cancelled`——取消可能已经同步关闭了连接（TLS 的 `SSL` 对象随之释放），不能再往底层读 |
 | SSE 自动重连的**等待之中** | `sleep_with_abort`（`src/transport/abort.mbt`），由 `SseStream::reconnect_loop` 调用 | 打断 `retry` 间隔的睡眠；否则取消后还要把整个间隔睡完 |
 | 取消已经发生**之后** | 读入口先查 `aborted_failure`；`ResponseBody` 自己挂在信号上的「取消即 `close()`」 | 报取消而**不是**退化成 EOF；同时立刻释放连接（调用方取消后不再读也不漏连接） |
 
@@ -262,6 +263,19 @@ than a timeout when it lands first` 钉着）。`timeout` 的语义没有因为�
 这正是给 `noraise` 回调配上同步 `abort` 的意义：回调拿不到任何返回信号，但随手能喊停。
 两条用例（`cancelling from the upload/download progress callback stops the …`）分别钉住上传
 与下载。
+
+⚠️ **下载进度回调里的「自取消」必须在下一轮读之前停下**：取消会同步释放响应体持有的连接，
+TLS 连接上 `SSL` 对象也一起释放；如果读循环接着调 `read()`，就会在已释放的 TLS 上做
+`SSL_read`（真机表现为 SIGSEGV，见 `docs/13`）。`drain_into` 的做法是**每报完一次进度查
+一次 `aborted()`**，已取消就直接抛 `TransportError::Cancelled`（`read_or_fail` 原样透传），
+而不是继续读。
+
+这里有个容易踩的坑：**不能只查 `@async.is_being_cancelled()`**。`timeout` 在场时，真正的读
+跑在 `with_timeout` 再下一层的子协程里，`task.cancel()` 先落在外层子任务上，这一层要等到
+下一个挂起点才会看到取消——而下一轮读往往就是那个挂起点，太晚了。信号（`aborted()`）是
+同步可查的，与协程嵌套层级无关。用例
+`cancelling in the download progress callback stops before the next read`
+（transport 包）用一个「关闭后再读就 abort」的假 reader 钉住这条时序，不依赖 TLS / 网络。
 
 **与 `MockTransport`**：Mock **不模拟取消中断**——它是同步返回的，没有挂起点可中断。这与
 「Mock 不上报上传进度」（`docs/10-progress.md`）是同一种诚实声明。Mock 上仍然成立的是

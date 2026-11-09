@@ -37,7 +37,8 @@ import {
   解压后摘掉 `Content-Encoding` / `Content-Length`（「谁解压谁声明」，见
   [`docs/15-response-compression.md`](https://github.com/q2316367743/moonhttp/blob/master/docs/15-response-compression.md)）。
 - **代理**：http 与 https 目标都走 `CONNECT` 隧道，`Proxy-Authorization` 只落在
-  CONNECT 请求上；SOCKS5 在路线图上（连接层已留位），见
+  CONNECT 请求上；代理地址是 `https://` 时**先与代理完成 TLS**（SNI / 证书校验都用代理
+  host），CONNECT 与凭据都在这层 TLS 里。SOCKS5 在路线图上（连接层已留位），见
   [`docs/09-proxy.md`](https://github.com/q2316367743/moonhttp/blob/master/docs/09-proxy.md)。
 - **取消 / 超时**：整跳（建连、TLS / CONNECT 握手、写头写体、等响应头）包在取消作用域里、
   受 `timeout` 约束；响应体阶段由 `ResponseBody` 按单次读取管，见

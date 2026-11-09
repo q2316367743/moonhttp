@@ -31,13 +31,29 @@ async fn drain_into(
   buffer : @buffer.Buffer,
   total : Int32?,
   on_progress : @config.ProgressCallback?,
+  signal : AbortSignal?,
 ) -> Unit {
   let mut loaded = 0
   while read() is Some(chunk) {
     buffer.write_bytes(chunk)
     loaded = loaded + chunk.length()
     match on_progress {
-      Some(report) => report({ loaded, total, })
+      Some(report) => {
+        report({ loaded, total, })
+        // 回调里可能直接取消（进度回调就跑在读全量的这条子任务里）。取消会
+        // 同步释放底层连接——TLS 的 `SSL` 对象也一起释放；此时若继续下一轮
+        // `read()`，就会在已释放的 TLS 上做 `SSL_read`（SIGSEGV）。所以每报
+        // 完一次都问一遍信号，已取消就抛出去，让 `read_or_fail` 之后的收尾
+        // 把错误按取消分类（不能只 `return`：那会被当成「正常读完」）。
+        //
+        // 注意不能查 `@async.is_being_cancelled()`：`timeout` 在场时真正的
+        // 读跑在 `with_timeout` 再下一层的子协程里，`task.cancel()` 先落在
+        // 外层子任务上，这一层要等下一个挂起点才会看到——太晚了。
+        match aborted_failure(signal) {
+          Some(error) => raise error
+          None => ()
+        }
+      }
       None => ()
     }
   }
@@ -106,6 +122,7 @@ pub async fn ResponseBody::read_all_partial(
             buffer,
             self.total,
             on_progress,
+            self.signal,
           )
         })
         None

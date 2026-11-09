@@ -16,48 +16,29 @@ async fn local_download(client : @moonhttp.Client, port : Int32) -> Unit {
 ///|
 /// 2. 真实大文件下载：打印百分比，进度到 5% 时取消。
 ///
-/// 取消由**另一条协程**发出（看门狗，盯着进度回调报出来的数字）——
-/// 这是本示例里唯一一处「不写在进度回调里」的取消，原因见下面的注释。
-///
-/// 取消后错误里带着**已经读到的那部分**响应，所以「下到一半停住」这件事
-/// 有现场可查（下载方向尤其重要：不保住半截字节，重试就只能从头再来）。
-async fn real_download_cancel(group : @async.TaskGroup[Unit]) -> Unit {
+/// 取消直接写在进度回调里（回调跑在读全量的子任务里，同步 `abort` 立刻生效）。
+/// 曾经 HTTPS 上这条路会让进程崩溃（取消同步关闭 TLS 后循环还去读），
+/// 2026-11-09 已在 `drain_into` 里修掉，回归用例见
+/// `src/transport/stream_cancel_progress_test.mbt`。
+async fn real_download_cancel() -> Unit {
   println("== 2. 真实下载 + 5% 中途取消 ==")
   println("  靶子 = \{big_file_url}")
   let client = @moonhttp.create(
     @moonhttp.Config::default().with_timeout(120_000),
   )
   let controller = @moonhttp.AbortController::new()
-  // 信号随请求走，观察方（看门狗、回调）都看它；叫停要拿控制器
+  // 信号随请求走；叫停要拿控制器
   let signal = controller.signal()
-  // 进度回调与看门狗之间的共享状态（回调是 noraise 的，只写不读）
-  let percent_seen = Array::make(1, 0)
-  let finished = Array::make(1, false)
-  group.spawn_bg(no_wait=true) <| () => {
-    // 看门狗：请求还在跑、进度到了 5% 就取消。
-    //
-    // 为什么不在进度回调里直接 `controller.abort()`：取消信号是投递到
-    // 「被取消任务的下一个挂起点」的，从该任务内部（回调就跑在它里面）取消时
-    // 信号会落在下一个 I/O 的**入口**上——HTTPS 下载在这条路径上会让原生进程
-    // 直接崩溃（明文 HTTP 不会，本示例第 4 段上传就是这么写的）。
-    // 换一条协程来取消，信号落在「已经挂起的 I/O」上，走的是正常路径。
-    while !finished[0] && !signal.aborted() {
-      @async.sleep(5)
-      if percent_seen[0] >= cancel_at_percent {
-        println(
-          "  → 进度到 \{percent_seen[0]}% 了（看门狗协程发出取消）",
-        )
-        controller.abort(reason="下载到 5% 就停")
-      }
-    }
-  }
   let started = @async.now()
   let error = try {
     ignore(
       client.request(
         @moonhttp.Config::new(big_file_url).with_on_download_progress(
           percent_printer("下载", 5, on_percent=fn(percent) {
-            percent_seen[0] = percent
+            if percent >= cancel_at_percent && !signal.aborted() {
+              println("  → 进度到 \{percent}% 了，取消")
+              controller.abort(reason="下载到 5% 就停")
+            }
           }),
         ),
         signal~,
@@ -67,7 +48,6 @@ async fn real_download_cancel(group : @async.TaskGroup[Unit]) -> Unit {
   } catch {
     error => Some(error)
   }
-  finished[0] = true
   print_cancel_outcome(error, started)
   // 取消确实生效了（进度停在 5%、半截响应在手），但 HTTPS 上错误分类**有时**会
   // 落到 ERR_NETWORK：取消链路先关连接、再中断读，两者谁先到是有竞争的——读先撞上

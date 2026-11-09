@@ -94,6 +94,10 @@ async fn[T] read_or_fail(
   let mapped = () => {
     attempt() catch {
       @async.TimeoutError => raise TransportError::Timeout
+      // 读全量的进度回调里取消会以 `Cancelled` 抛出（见 `drain_into`）：
+      // 取消不是网络失败，原样透传，别被下面那条 catch-all 吞成 `Network`。
+      TransportError::Cancelled(reason) =>
+        raise TransportError::Cancelled(reason)
       // 其余错误（连接被断开、TLS、协议错误等）统一归到网络层，并保留原始错误文本。
       error => raise TransportError::Network(error.to_string())
     }

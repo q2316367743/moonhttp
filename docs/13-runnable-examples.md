@@ -47,13 +47,15 @@
 5. 更新 [`src/main/README.md`](../src/main/README.md) 的索引表与本文的靶子表。
 6. 别写 `test` 块；`.moonignore` 已经排除了整个 `src/main/`，不用再管发布。
 
-## 已知问题（示例跑出来的）
+## 示例跑出来的问题
 
-两条都只在 **HTTPS** 上出现（明文 HTTP 正常），都可以用示例里的写法绕过或观察，但根因在库 / 底层运行时，尚未修。
+下面两条都只在 **HTTPS** 上出现（明文 HTTP 正常）：第 1 条已于 2026-11-09 修复并有回归用例；
+第 2 条的竞争机理还在（自研栈上一次实测未复现）。
 
-### 1. 从进度回调里取消，HTTPS 下载会让原生进程崩溃（SIGSEGV）
+### 1. 从进度回调里取消，HTTPS 下载曾让原生进程崩溃（SIGSEGV）——已修复（2026-11-09）
 
-现象：把取消写在 `on_download_progress` 回调里，目标是 HTTPS 大文件时进程直接挂掉（退出码 139），连调用方的 `catch` 都跑不到。
+现象（修复前）：把取消写在 `on_download_progress` 回调里，目标是 HTTPS 大文件时进程直接挂掉
+（退出码 139），连调用方的 `catch` 都跑不到。
 
 对照（同一段代码，逐项排除）：
 
@@ -64,11 +66,25 @@
 | HTTPS、109 MiB | 进度回调 | **崩溃（SIGSEGV）** |
 | HTTPS、109 MiB | 另一条协程 | 正常，报 `ERR_CANCELED` |
 
-机理（据 `src/transport/abort.mbt` 与 moonbitlang/async 的取消语义推断）：`signal.attach` 里登记的是 `task.cancel()`，而进度回调跑在**那个被取消的子任务内部**；此时取消信号只能在「本任务的下一个挂起点」投递（协程级取消的粘性状态），HTTPS 的读在这一路径上会走到 TLS 会话清理的坏状态。
+根因（2026-11-09 用 lldb 复现，栈顶是 `SSL_read`，指针指向已释放的 `SSL`）：取消处理里
+`ResponseBody` 的「取消即关闭」登记会**同步关闭连接**——TLS 的 `SSL` 对象随之释放；而读全量
+的循环（`drain_into`）在进度回调返回后继续下一轮 `read()`，于是在已释放的 TLS 上做
+`SSL_read`。协程级取消没来得及挡住这一步：`timeout` 在场时真正的读跑在 `with_timeout` 再
+下一层的子协程里，`task.cancel()` 先落在外层子任务上，这一层要等下一个挂起点才能看到取消
+——下一轮读往往就是那个挂起点。
 
-绕法：**让取消由另一条协程发出**。`src/main/progress` 的「真实下载 + 5% 取消」就是用一个看门狗协程盯着进度数字来取消的；明文 HTTP（同文件的上传取消）照旧写在回调里，写法更像直觉。
+修法（已落地）：
 
-修法方向（未做）：在 `with_abort_scope` 的登记里避免「自己取消自己」——例如把 `task.cancel()` 交给另一个任务执行，或让读取路径的「两次读取之间查 `aborted()`」承担同任务内的取消。
+- `src/transport/stream_all.mbt` 的 `drain_into` **每报完一次进度查一次 `signal.aborted()`**，
+  已取消就在下一轮读之前抛 `TransportError::Cancelled`；`read_or_fail` 把这个错误原样透传
+  （不再被兜底成 `Network`）。
+- 回归用例 `src/transport/stream_cancel_progress_test.mbt` 的
+  `cancelling in the download progress callback stops before the next read` 用一个「关闭后
+  再读就 abort」的假 reader 在纯内存里钉住时序，不依赖 TLS 与网络。
+- `src/main/progress` 的「真实下载 + 5% 取消」改回**在进度回调里直接取消**（原来为绕开崩溃
+  用的看门狗协程已删除）；明文 HTTP 的上传取消写法不变。
+
+细节见 `docs/12-cancellation.md` 的「与进度回调」一节。
 
 ### 2. HTTPS 上取消的错误分类会抖成 `ERR_NETWORK`
 

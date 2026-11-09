@@ -225,7 +225,7 @@ let client = @moonhttp.create(
 )
 ```
 
-http 与 https 目标都经 `CONNECT` 隧道转发（代理服务器得支持 `CONNECT`）。`username` / `password` 只用在建隧道那一步，不会发给目标服务器。只支持 http / https 代理，不读 `http_proxy` 之类的环境变量；配了代理却没给 host 会直接报错，不会悄悄直连。
+http 与 https 目标都经 `CONNECT` 隧道转发（代理服务器得支持 `CONNECT`）。`username` / `password` 只用在建隧道那一步，不会发给目标服务器。代理地址是 `https://` 时（`protocol=ProxyProtocol::Https`）会先与代理完成 TLS 握手并校验证书，CONNECT 与凭据都在这层 TLS 里。只支持 http / https 代理，不读 `http_proxy` 之类的环境变量；配了代理却没给 host 会直接报错，不会悄悄直连。
 
 ### 连接复用
 

@@ -88,7 +88,7 @@ CONNECT 隧道请求（`establish_tunnel`）不在此列：它只带 `Host` 与�
 | 请求体线上形状 | 无体发 `Content-Length: 0` 或 chunked | 一律 `Content-Length`（无体发 0） |
 | 连接 | 每请求一条（`@http.Client` 四步式） | 连接池（2026-10 落地，`docs/21`）：空闲连接按目标分桶复用；坏连接透明重试一次；响应开始前死连接报 `Network`（phase 1 曾报 `Malformed`） |
 | TLS 校验 | 底层默认 | `Tls::client(host=…)` 默认校验 + SNI=目标 host |
-| 代理 | CONNECT（底层实现） | CONNECT（自己实现，凭据只落隧道请求）；SOCKS5 见下 |
+| 代理 | CONNECT（底层实现） | CONNECT（自己实现，凭据只落隧道请求）；代理地址是 `https://` 时先与代理做 TLS，CONNECT 与凭据都在 TLS 里；SOCKS5 见下 |
 | 错误分类 | `TransportError` 五变体 | 同一套（`with_abort_scope` 也复用 transport 的） |
 | Set-Cookie | 底层单独解析，不出现在 headers | 原样保留在 headers，同时进 `set_cookies` 多值出口 |
 

@@ -32,7 +32,7 @@ async fn main {
       "本机 server 已就绪：drip=127.0.0.1:\{drip_port} sink=127.0.0.1:\{sink_port} slow=127.0.0.1:\{slow_port}\n",
     )
     local_download(client, drip_port)
-    real_download_cancel(group)
+    real_download_cancel()
     let payload = payload_of(8 * 1024 * 1024)
     upload_to_end(client, sink_port, payload)
     upload_cancel(client, slow_port, payload)

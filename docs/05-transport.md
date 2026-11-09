@@ -177,7 +177,7 @@ transport；旧的 `AsyncHttpTransport`——基于 `moonbitlang/async/http` 的
 | 请求体流式上传 | **已支持**（`PreparedRequest.body : RequestBody?` 的 `Stream` 形态，`with_data_from_stream`） | 泵循环 + 定长 / chunked 双模式分帧；契约见 `20-streaming-upload.md` |
 | 上传进度 | **已支持**（`PreparedRequest::on_upload_progress`）：按 64 KiB 分块写 + 每块写完回调 | 粒度见 `httpconn/request_write.mbt` 的 `UPLOAD_CHUNK_SIZE`；契约见 `10-progress.md` |
 | 下载进度 | **已支持**（`ResponseBody` 的 `read_all*` 带 `on_progress`），只由「库读全量」触发 | 见 `10-progress.md` |
-| 代理 | 已支持（`PreparedRequest::proxy`） | httpconn 自己实现的 CONNECT 隧道（凭据只落隧道请求）；SOCKS5 见 `18-httpconn-transport.md` 的留位。契约见 `09-proxy.md` |
+| 代理 | 已支持（`PreparedRequest::proxy`） | httpconn 自己实现的 CONNECT 隧道（凭据只落隧道请求；https 代理先与代理做 TLS）；SOCKS5 见 `18-httpconn-transport.md` 的留位。契约见 `09-proxy.md` |
 | TLS 校验开关 | 固定为默认（校验，SNI=目标 host） | `Tls::client(trust~ / verify?)` 透传 |
 | 自定义请求方法 | **已支持**（`Method::Other(String)`，httpconn 原样发送，token 校验在建连前） | 见 `18-httpconn-transport.md`；旧栈受底层封闭枚举所限（历史证据见 `16-custom-http-methods.md`） |
 | 响应 cookie | **已支持**（`RawResponse.set_cookies` 多值出口 + `Client::new(cookie_jar~)` 的自动维护）：httpconn 从响应头原文收集 | 契约与实现见 `19-cookies.md` |

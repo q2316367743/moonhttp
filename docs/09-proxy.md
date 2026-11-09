@@ -13,10 +13,10 @@
 | `src/config/render.mbt` | `Config::to_string` 里的 `proxy` 臂 |
 | `src/util/request.mbt` | `build_prepared_request`：拼出代理地址、决定 `Proxy-Authorization` 的取值，并把它从目标请求头里取走 |
 | `src/transport/transport.mbt` | `ProxyEndpoint`（`url` + `authorization`）与 `PreparedRequest::proxy` 字段 |
-| `src/httpconn/connection.mbt` | `dial_via_proxy` + `establish_tunnel`：CONNECT 隧道握手；非 2xx 翻译成人话（407 带状态码），网络类失败归 `TransportError::Network` |
+| `src/httpconn/connection.mbt` | `dial_via_proxy` + `establish_tunnel`：先按代理地址的 scheme 决定要不要与代理做 TLS，再在（可能是 TLS 的）连接上发 CONNECT；非 2xx 翻译成人话（407 带状态码），网络类失败归 `TransportError::Network` |
 | `src/client/redirects.mbt` | `prepare_request`：代理配置缺 host 时报 `ERR_INVALID_URL`（与「缺 url」分开报） |
 | `src/config/proxy_test.mbt` / `src/config/merge_wbtest.mbt` | 构建器 / 判定 / 渲染 / 合并的同步用例 |
-| `src/proxy_test.mbt` | 拼装契约（不走网络）与本机 CONNECT 代理的端到端用例（隧道、407、握手超时、缺 host） |
+| `src/proxy_test.mbt` / `src/proxy_tls_test.mbt` | 拼装契约（不走网络）与本机 CONNECT 代理的端到端用例（隧道、407、握手超时、缺 host）；`proxy_tls_test.mbt` 单独钉 https 代理「TLS 在 CONNECT 之前」 |
 
 ## 配置形状
 
@@ -44,14 +44,15 @@ Config::default().with_proxy(
 ```
 Config.proxy            （配置：协议 / host / port / auth）
   ↓ build_prepared_request（util）
-PreparedRequest.proxy = ProxyEndpoint { url: "http://127.0.0.1:9000", authorization: Some("Basic ...") }
+PreparedRequest.proxy = ProxyEndpoint { url: "https://127.0.0.1:9443", authorization: Some("Basic ...") }
   ↓ Transport::send（transport）
-@http.Client::Client(目标地址, proxy=@http.Client::Client(代理地址, headers={Proxy-Authorization}))
-  ↓ 底层
-CONNECT 目标host:port  → 200 → 进入隧道 → 在隧道里发真正的请求（https 目标再叠一层 TLS）
+dial_via_proxy（httpconn）：TCP 连到代理
+  → protocol=Https 时先与代理做 TLS（SNI = 代理 host，证书按系统根校验）
+  → 在（可能是 TLS 的）连接上发 CONNECT 目标host:port
+  → 2xx → 进入隧道 → 在隧道里发真正的请求（https 目标再叠一层 TLS）
 ```
 
-分层的意义：`ProxyEndpoint` 已经是**解析完的最小形态**（协议名与端口写进了 `url`，凭据编码成了可直接落头的字符串），传输层因此不认识 `ProxyProtocol` 这类配置枚举，也不需要知道 Basic 认证怎么编码——与 `PreparedRequest`「不含任何配置语义」的口径一致。
+分层的意义：`ProxyEndpoint` 已经是**解析完的最小形态**（协议名与端口写进了 `url`，凭据编码成了可直接落头的字符串），传输层因此不认识 `ProxyProtocol` 这类配置枚举，也不需要知道 Basic 认证怎么编码——与 `PreparedRequest`「不含任何配置语义」的口径一致。传输层只需要看 `url` 的 scheme 决定「先 TLS 再 CONNECT」还是「直接 CONNECT」。
 
 ## 凭据落在哪个请求上
 
@@ -73,11 +74,12 @@ CONNECT 目标host:port  → 200 → 进入隧道 → 在隧道里发真正的�
 | 行为 | 说明 |
 |---|---|
 | 连接方式 | 对**所有**目标都用 `CONNECT` 隧道，**http 目标也走 CONNECT**（不是「把完整地址发进请求行」那种经典 HTTP 代理写法）。所以代理服务器必须支持 `CONNECT`，只支持 GET/POST 转发的简易代理不行 |
-| 隧道数量 | 每个请求各建一条（重定向时**每一跳**各建一条），与本模块「不复用连接」的现状一致 |
-| https 目标 | 隧道之上再做一次目标的 TLS；两次 TLS 互相独立（到代理的那次由 `protocol` 决定，到目标的那次始终由目标地址决定） |
-| 超时 | CONNECT 握手在 `@async.with_timeout` 包住的那一段里，所以**握手也受 `timeout` 约束**（用例：`connect handshake respects the timeout`） |
+| 到代理的连接 | `protocol=Https` 时**先与代理做 TLS**（`Tls::client`，SNI / 证书校验都用代理 host），`Http` 时明文。`CONNECT` 请求与 `Proxy-Authorization` 一律在这层之后发送：https 代理上它们都在 TLS 里，不会明文过网 |
+| 隧道数量 | 每个请求（重定向时**每一跳**）各建一条隧道；连接池按「目标 + 代理地址 + 凭据」分桶，读满且服务端允许复用时同坐标的后续请求会复用这条隧道（见 `21-connection-pool.md`） |
+| https 目标 | 隧道之上再做一次目标的 TLS。两层 TLS 互相独立、可以叠加（TLS-in-TLS）：外层到代理由 `protocol` 决定，内层到目标始终由目标地址决定 |
+| 超时 | 建连、到代理的 TLS 握手、CONNECT 握手都在 `@async.with_timeout` 包住的那一段里，所以**握手也受 `timeout` 约束**（用例：`connect handshake respects the timeout`） |
 | 重定向 | 代理设置随 `next_redirect` 的记录展开原样保留（它是「怎么出去」，不是凭据），跨 host 也不丢 |
-| 目标平台 | 底层的代理能力按 native 目标交付（`resolve_host` 带 `#cfg(any(target="native", target="wasm"))`，JS 目标上 `proxy` 参数明确不支持）。本模块 `preferred_target = "native"` |
+| 目标平台 | 本模块 `preferred_target = "native"`；httpconn 走 `@socket` / `@tls`，没有 JS 目标实现 |
 
 ## 错误分类
 
@@ -85,7 +87,9 @@ CONNECT 目标host:port  → 200 → 进入隧道 → 在隧道里发真正的�
 |---|---|
 | CONNECT 的响应不是 2xx（最常见是 `407` 需要认证） | `TransportError::Network`，文案是 `代理拒绝建立隧道：HTTP <状态码> <原因短语>` → 对外 `ERR_NETWORK`（`error.message()` 里能看到状态码）。这时响应头还没到手，所以错误里**没有** `response` |
 | 连不上代理（端口没人听、DNS 失败） | `Network`（底层错误原文照旧保留） |
-| CONNECT 握手超时 | `Timeout`（`ECONNABORTED`） |
+| 到代理的 TLS 握手失败（证书不匹配、代理其实是明文端口） | `Network`（TLS 原文保留）；连接随即关闭，CONNECT 一个字节都没发出去 |
+| 目标的 TLS 握手失败（隧道已建立） | `Network`（TLS 原文保留），隧道连接关闭 |
+| CONNECT 握手超时（含到代理的 TLS 握手与等响应） | `Timeout`（`ECONNABORTED`） |
 | 代理配置缺 host | `InvalidUrl`（`ERR_INVALID_URL`），文案点名是代理的问题；请求根本没发出去 |
 
 没有为代理单开 `TransportError` 或 `ErrorCode` 变体：代理失败的处置方式与其它网络失败相同（换代理、加凭据、重试），多一个分类只会让调用方多写一个分支。CONNECT 被拒时错误里也不带响应——代理的响应属于代理而不是源站，混进错误里会让人误以为「目标服务器回了 407」。
@@ -108,6 +112,7 @@ CONNECT 目标host:port  → 200 → 进入隧道 → 在隧道里发真正的�
 1. **新增代理字段**：`src/config/proxy.mbt` 加字段 → `merge_proxy` 里选一档（漏了是编译错误）→ `Config::with_proxy` 收集 → `Proxy::to_string` 渲染 → 需要的话在 `proxy_endpoint`（`src/util/request.mbt`）里用上 → 更新 `02-config-merge.md` 的字段表与本文件。
 2. **`ProxyEndpoint` 的字段语义**：它出现在 `PreparedRequest`（公开签名）里，改动要同步 `05-transport.md`；它是「已经解析完的最小形态」，别把配置语义（协议枚举、默认端口、用户名密码）塞回来。
 3. **凭据规则**：只有 `src/util/request.mbt` 一处实现（含「从目标头里取走」那一步），用例在 `src/proxy_test.mbt` 的前三条；别在传输层再补一次 `Proxy-Authorization`。
-4. **`PreparedRequest::proxy` 为 `None` 时**：必须与「加代理之前」完全等价（不建代理客户端、不发 CONNECT），否则直连路径会被悄悄改变。
-5. **代理客户端的生命周期**：底层的 `Client::Client` 会**接管**传入的代理客户端（进入隧道后调用方不能再碰），所以每个请求都要新建一个，不能缓存复用。已知微瑕：目标地址非法（端口越界）时底层在接管前就抛错，那条到代理的连接不会被关掉——只出现在「地址本来就发不出去」的路径上。
-6. **改超时语义**：CONNECT 握手依赖「建连那一段整体受 `timeout` 约束」，见 `05-transport.md`。
+4. **`PreparedRequest::proxy` 为 `None` 时**：必须与「加代理之前」完全等价（不拨代理、不发 CONNECT），否则直连路径会被悄悄改变。
+5. **代理连接的生命周期**：httpconn 自己拨号，一条隧道连接的所有权与直连一样归 `ResponseBody`（读完还池 / 半途关闭），没有「底层接管代理客户端」这回事。连接池的键里含代理地址与凭据，**凭据换一组就不会复用旧隧道**；`pool_key` 的结果只许当 Map 键，别打印。
+6. **https 代理的连接顺序**：`dial_via_proxy` 里先 `connect_tcp(代理)`、再按 `proxy.use_tls` 叠 TLS、最后才 `establish_tunnel`。顺序写反（先 CONNECT 再 TLS）会把凭据明文发出去，也会让真正的 TLS 代理握手失败——`src/proxy_tls_test.mbt` 的 `an https proxy is reached through tls before connect` 钉住「线上第一段是 TLS 握手记录」。
+7. **改超时语义**：建连、到代理的 TLS 握手与 CONNECT 握手依赖「建连那一段整体受 `timeout` 约束」，见 `05-transport.md`。
