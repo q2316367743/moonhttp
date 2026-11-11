@@ -27,6 +27,14 @@ keywords = [ "http", "client", "axios", "async", "sse", "networking" ]
 
 preferred_target = "native"
 
+// 本模块只在 native / wasm 上可用：
+// - js：moonbitlang/async 在 JS 后端只提供 fetch 版 http 客户端，没有 @socket / @tls，
+//   自研传输层（httpconn）无法编译；
+// - wasm-gc：moonbitlang/async 明确不支持（event_loop 只有 unimplemented 桩）。
+// 声明之后 `moon check --target all` 会跳过这两个后端，而不是在它们上报编译错误。
+
+supported_targets = "native+wasm"
+
 // 业务代码全部放在 src/ 下：模块根包即 src/ 本身，
 // 根目录只保留模块元数据与文档（见 AGENTS.md 的 RL-02）。
 

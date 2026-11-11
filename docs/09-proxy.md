@@ -79,7 +79,7 @@ dial_via_proxy（httpconn）：TCP 连到代理
 | https 目标 | 隧道之上再做一次目标的 TLS。两层 TLS 互相独立、可以叠加（TLS-in-TLS）：外层到代理由 `protocol` 决定，内层到目标始终由目标地址决定 |
 | 超时 | 建连、到代理的 TLS 握手、CONNECT 握手都在 `@async.with_timeout` 包住的那一段里，所以**握手也受 `timeout` 约束**（用例：`connect handshake respects the timeout`） |
 | 重定向 | 代理设置随 `next_redirect` 的记录展开原样保留（它是「怎么出去」，不是凭据），跨 host 也不丢 |
-| 目标平台 | 本模块 `preferred_target = "native"`；httpconn 走 `@socket` / `@tls`，没有 JS 目标实现 |
+| 目标平台 | 本模块 `preferred_target = "native"`、`supported_targets = "native+wasm"`；httpconn 走 `@socket` / `@tls`，没有 JS 目标实现（async 的 JS 后端只提供 fetch 版 http），wasm-gc 也不支持（async 明确不支持该后端）。声明 `supported_targets` 后 `moon check --target all` 会直接跳过这两个后端 |
 
 ## 错误分类
 
