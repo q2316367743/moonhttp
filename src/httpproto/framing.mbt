@@ -4,6 +4,7 @@
 /// 分帧决定的是「从连接上读多少字节算这份响应体」——它作用在
 /// **编码后的线上字节**上；gzip 解码发生在分帧之下（先按分帧切出线上字节，
 /// 再按 `Content-Encoding` 解），两层不能混（docs/15 / docs/18）。
+#derive(Eq, Debug)
 pub(all) enum BodyFraming {
   /// 没有响应体：HEAD 请求的任何响应、1xx、204、304（RFC 9112 §6.3 第 1 条）
   Empty
@@ -14,7 +15,7 @@ pub(all) enum BodyFraming {
   /// 读到连接关闭为止：既没有 TE 也没有合法 CL。HTTP/1.0 服务器不写 CL 就这么发；
   /// 1.1 服务器这么发时就只能靠关闭收尾（phase 1 本来就每请求一条连接，能接住）
   UntilClose
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend BodyFraming with Eq::{equal, not_equal}

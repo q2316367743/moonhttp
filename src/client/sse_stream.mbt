@@ -23,6 +23,7 @@
 /// `next_event` 会在 EOF / 可重试错误上重订阅，`status` / `status_text` /
 /// `headers` / `config` 仍然是**第一次建流**时的响应；重连失败的最新响应挂在
 /// 抛出的 `HttpError::response()` 上。
+#derive(Debug)
 pub(all) struct SseStream {
   /// HTTP 状态码
   status : Int32
@@ -46,7 +47,7 @@ pub(all) struct SseStream {
   priv mut closed : Bool
   /// 自动重连的运行时状态；`None` 表示没有开启（保持旧的 EOF → `None` 语义）。
   priv reconnect : SseReconnectState?
-} derive(Debug)
+}
 
 ///|
 pub extend SseStream with @debug.Debug::{to_repr}

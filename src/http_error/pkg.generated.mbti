@@ -25,6 +25,7 @@ pub fn HttpError::to_string(Self) -> String
 pub impl Show for HttpError
 
 // Types and methods
+#derive(Eq, @debug.Debug)
 pub(all) enum ErrorCode {
   BadRequest
   BadResponse
@@ -34,7 +35,7 @@ pub(all) enum ErrorCode {
   NotSupported
   Cancelled
   TooManyRedirects
-} derive(Eq, @debug.Debug)
+}
 pub fn ErrorCode::equal(Self, Self) -> Bool
 pub fn ErrorCode::not_equal(Self, Self) -> Bool
 pub fn ErrorCode::output(Self, &Logger) -> Unit

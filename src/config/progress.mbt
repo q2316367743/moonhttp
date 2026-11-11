@@ -15,6 +15,7 @@
 ///
 /// 与 axios 的差异：没有 `upload` / `download` 布尔标记与原生 `event` 对象，
 /// 方向由「哪个回调被调用」表达。
+#derive(Debug)
 pub(all) struct ProgressEvent {
   /// 已传输的字节数。
   ///
@@ -25,7 +26,7 @@ pub(all) struct ProgressEvent {
   /// （例如响应是 chunked 编码、没有 `Content-Length`），
   /// 对应 axios 的 `lengthComputable === false`。
   total : Int32?
-} derive(Debug)
+}
 
 ///|
 pub extend ProgressEvent with @debug.Debug::{to_repr}

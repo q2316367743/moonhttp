@@ -31,6 +31,7 @@ pub using @headers {type Headers}
 /// 因为 `validate_status` / `params_serializer` / 两个进度回调都是函数类型字段，
 /// 本类型不能 `derive(Debug)` 也不能 `derive(Eq)`，两者都是手写实现
 /// （Debug 把函数渲染成 `<fn>`，需要比较配置时请逐字段比较）。
+#derive(Default)
 pub(all) struct Config {
   /// 请求地址；相对路径会和 `base_url` 拼接
   url : String?
@@ -115,7 +116,7 @@ pub(all) struct Config {
   validate_status : ((Int32) -> Bool)?
   /// `url` 已经是绝对地址时是否仍然直接使用（关闭后强制拼 `base_url`）
   allow_absolute_urls : Bool?
-} derive(Default)
+}
 
 ///|
 pub extend Config with Default::{default}

@@ -14,10 +14,11 @@
 /// - `Finished`：读取正常走到了 EOF——连接是否还能用由实现层再判
 ///   （体读满且服务端允许复用 → 回池；被截断 / UntilClose → 关闭）；
 /// - `Abandoned`：半途放弃或失败——统一关闭，绝不回池。
+#derive(Eq, Debug)
 pub(all) enum BodyEnd {
   Finished
   Abandoned
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend BodyEnd with Eq::{equal, not_equal}

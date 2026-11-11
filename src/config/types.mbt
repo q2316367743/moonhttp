@@ -7,10 +7,11 @@
 /// 两个字段都是 `Option`，所以它的合并是逐字段的深合并：
 /// 默认值只给了 `username`、请求只给了 `password`，合并后两者都在。
 /// 这正是 axios `mergeDeepProperties` 对普通对象（plain object）的处理方式。
+#derive(Eq, Default, Debug)
 pub(all) struct Auth {
   username : String?
   password : String?
-} derive(Eq, Default, Debug)
+}
 
 ///|
 pub extend Auth with Eq::{equal, not_equal}
@@ -37,6 +38,7 @@ pub extend Auth with @debug.Debug::{to_repr}
 /// 解码一律是 lossy 的：遇到该编码下非法的字节用替换字符 `U+FFFD`，
 /// 不抛错。响应正文由服务端说了算，为了几个坏字节把整个响应判成失败
 /// 得不偿失；要精确字节请读 `Response::bytes()`。
+#derive(Eq, Debug)
 pub(all) enum ResponseEncoding {
   /// 默认：UTF-8
   Utf8
@@ -46,7 +48,7 @@ pub(all) enum ResponseEncoding {
   Ascii
   /// UTF-16 小端（axios 里的 `utf16le` / `ucs2`）
   Utf16le
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend ResponseEncoding with Eq::{equal, not_equal}

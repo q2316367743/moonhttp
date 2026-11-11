@@ -25,6 +25,7 @@
 ///
 /// 状态码与响应头这些「不读 body 就能拿到」的信息与 `Response` 保持一致，
 /// 所以拿到流之后可以先按状态码与 `Content-Type` 决定怎么读。
+#derive(Debug)
 pub(all) struct StreamResponse {
   /// HTTP 状态码
   status : Int32
@@ -37,7 +38,7 @@ pub(all) struct StreamResponse {
   /// 响应体流。字段私有：读取入口都在本类型的方法上，
   /// 这样错误才能统一映射成 `HttpError` 而不是把传输层错误漏出去。
   priv body : @transport.ResponseBody
-} derive(Debug)
+}
 
 ///|
 pub extend StreamResponse with @debug.Debug::{to_repr}

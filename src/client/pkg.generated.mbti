@@ -47,25 +47,27 @@ pub fn Interceptors::remove_response(Self, StringView) -> Self?
 pub fn Interceptors::use_request(Self, async (@config.Config) -> @config.Config raise @http_error.HttpError, on_rejected? : async (@http_error.HttpError) -> @response.Response raise @http_error.HttpError, name? : StringView) -> Self
 pub fn Interceptors::use_response(Self, async (@response.Response) -> @response.Response raise @http_error.HttpError, on_rejected? : async (@http_error.HttpError) -> @response.Response raise @http_error.HttpError, name? : StringView) -> Self
 
+#derive(@debug.Debug)
 pub(all) struct SseStream {
   status : Int32
   status_text : String
   headers : @headers.Headers
   config : @config.Config
   // private fields
-} derive(@debug.Debug)
+}
 pub fn SseStream::close(Self) -> Unit
 pub fn SseStream::is_success(Self) -> Bool
 pub async fn SseStream::next_event(Self) -> @sse.SseEvent? raise @http_error.HttpError
 pub fn SseStream::to_repr(Self) -> @debug.Repr
 
+#derive(@debug.Debug)
 pub(all) struct StreamResponse {
   status : Int32
   status_text : String
   headers : @headers.Headers
   config : @config.Config
   // private fields
-} derive(@debug.Debug)
+}
 pub fn StreamResponse::close(Self) -> Unit
 pub fn StreamResponse::is_event_stream(Self) -> Bool
 pub fn StreamResponse::is_success(Self) -> Bool

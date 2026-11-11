@@ -28,10 +28,11 @@ pub(all) suberror TransportError {
 }
 
 // Types and methods
+#derive(Eq, @debug.Debug)
 pub(all) enum BodyEnd {
   Finished
   Abandoned
-} derive(Eq, @debug.Debug)
+}
 pub fn BodyEnd::equal(Self, Self) -> Bool
 pub fn BodyEnd::not_equal(Self, Self) -> Bool
 pub fn BodyEnd::to_repr(Self) -> @debug.Repr
@@ -62,19 +63,21 @@ pub(all) struct PreparedRequest {
 pub fn PreparedRequest::to_repr(Self) -> @debug.Repr
 pub impl @debug.Debug for PreparedRequest
 
+#derive(@debug.Debug)
 pub(all) struct ProxyEndpoint {
   url : String
   authorization : String?
-} derive(@debug.Debug)
+}
 pub fn ProxyEndpoint::to_repr(Self) -> @debug.Repr
 
+#derive(@debug.Debug)
 pub(all) struct RawResponse {
   status : Int32
   status_text : String
   headers : @headers.Headers
   body : ResponseBody
   set_cookies : Array[String]
-} derive(@debug.Debug)
+}
 pub fn RawResponse::to_repr(Self) -> @debug.Repr
 
 pub(all) enum RequestBody {

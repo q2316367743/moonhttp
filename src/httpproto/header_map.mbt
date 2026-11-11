@@ -8,11 +8,12 @@
 ///
 /// 大小写不敏感只在 ASCII 上折叠（RFC 9110 §5.1），与 `@headers.Headers` 的
 /// `normalize_name` 同一口径；条目保留线上的原始拼写与顺序。
+#derive(Debug)
 pub(all) struct HeaderMap {
   /// 按线上顺序保存的 (名字原样, 值原样) 序列。
   /// 类型本身就是可变集合（append / set 就地改），字段一并开放可变。
   mut entries : Array[(String, String)]
-} derive(Debug)
+}
 
 ///|
 pub extend HeaderMap with @debug.Debug::{to_repr}

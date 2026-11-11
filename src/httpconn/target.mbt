@@ -5,6 +5,7 @@
 
 ///|
 /// 一个可以拨号的请求目标。
+#derive(Debug)
 pub(all) struct Target {
   /// 小写 scheme：`http` / `https` / `socks5`（socks5 只为代理地址解析而认识，
   /// 作为请求目标会被上层拒绝）
@@ -17,7 +18,7 @@ pub(all) struct Target {
   port : Int32
   /// 请求目标（origin-form，即 path?query）；URL 没有路径时为 `/`
   target : String
-} derive(Debug)
+}
 
 ///|
 pub extend Target with @debug.Debug::{to_repr}

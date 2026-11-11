@@ -41,6 +41,7 @@ using @headers {type Headers}
 ///
 /// 字段私有是为了让「怎么读」只有一个落点：`raw` 一旦公开，调用方就会各自
 /// 按自己的编码解一遍，`response_encoding` 这个配置项也就名存实亡了。
+#derive(Debug)
 pub(all) struct Response {
   /// HTTP 状态码
   status : Int32
@@ -52,7 +53,7 @@ pub(all) struct Response {
   config : Config
   /// 未经解码的原始响应体字节。读取入口是本类型的 `bytes` / `text` / `json`。
   priv raw : Bytes
-} derive(Debug)
+}
 
 ///|
 pub extend Response with @debug.Debug::{to_repr}

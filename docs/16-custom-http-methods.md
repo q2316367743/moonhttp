@@ -14,6 +14,14 @@
 > **状态更新（2026-09-30，默认切换）**：缺省传输已切到 `HttpConnTransport`（旧栈删除），
 > **自定义方法在默认路径可用**——`Method::Other("PROPFIND")` 直接发，端到端用例见
 > `src/httpconn/stream_real_test.mbt`（请求行原样落线）。本文其余内容是历史调研记录。
+>
+> **状态更新（2026-11-11，复核最新版）**：`moonbitlang/async@0.22.9`（registry 当前最新）与
+> GitHub main 分支仍是 9 构造器的封闭枚举；`Client::request` 只收枚举，`Sender::send_request`
+> 仍逐个 `match` 写请求行，服务端 `Reader::read_request` 同样对未知方法报 `BadRequest`。
+> **官方请求路径依然发不出自定义方法**，所以「官方 / 自研两套 adapter」没有必要拆分——
+> 拆了官方那套仍要回落到自研栈。另：0.22.9 在旧工具链（core 0.10.18）上编译失败
+> （其 `deprecated.mbt` 里对 `ToJson` 的 `extend` 报 7 个错误）；工具链升到 core 0.10.20 后可编译，
+> 本次只做特性核实、没有升级版本，本模块仍 pin `0.22.4`。
 
 ## 约束证据（2026-09-29 逐条核实，改动前先复核是否仍然成立）
 

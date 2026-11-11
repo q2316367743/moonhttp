@@ -9,10 +9,11 @@
 /// `Https` 表示**到代理本身**走 TLS（底层先与代理完成 TLS 握手，再在它上面发
 /// `CONNECT`），与「目标地址是 https」是两件独立的事——后者在隧道建立之后
 /// 还要再叠一层 TLS。
+#derive(Eq, Debug)
 pub(all) enum ProxyProtocol {
   Http
   Https
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend ProxyProtocol with Eq::{equal, not_equal}
@@ -43,6 +44,7 @@ pub fn ProxyProtocol::to_string(self : ProxyProtocol) -> String {
 /// （http 80 / https 443）、`auth` 缺省表示匿名代理。
 /// 「给了 `proxy` 却没给 host」是配置错误：`is_usable()` 返回 `false`，
 /// 上层据此报错，而不是当成没配代理。
+#derive(Eq, Default, Debug)
 pub(all) struct Proxy {
   /// 到代理服务器用 http 还是 https（TLS 到代理本身）；缺省 `Http`
   protocol : ProxyProtocol?
@@ -53,7 +55,7 @@ pub(all) struct Proxy {
   /// 代理认证凭据（HTTP Basic）。只用于建立隧道时的 CONNECT 请求，
   /// **不会**发给目标服务器，见 `src/util/request.mbt`。
   auth : Auth?
-} derive(Eq, Default, Debug)
+}
 
 ///|
 pub extend Proxy with Eq::{equal, not_equal}

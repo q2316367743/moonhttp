@@ -25,21 +25,23 @@ pub fn render_last_chunk() -> Bytes
 pub fn render_request_head(StringView, StringView, HeaderMap) -> Bytes raise ParseError
 
 // Errors
+#derive(Eq, @debug.Debug)
 pub(all) suberror ParseError {
   Malformed(String)
   Unsupported(String)
-} derive(Eq, @debug.Debug)
+}
 pub fn ParseError::equal(Self, Self) -> Bool
 pub fn ParseError::not_equal(Self, Self) -> Bool
 pub fn ParseError::to_repr(Self) -> @debug.Repr
 
 // Types and methods
+#derive(Eq, @debug.Debug)
 pub(all) enum BodyFraming {
   Empty
   Chunked
   Length(Int32)
   UntilClose
-} derive(Eq, @debug.Debug)
+}
 pub fn BodyFraming::equal(Self, Self) -> Bool
 pub fn BodyFraming::not_equal(Self, Self) -> Bool
 pub fn BodyFraming::to_repr(Self) -> @debug.Repr
@@ -52,9 +54,10 @@ pub fn ChunkDecoder::finish(Self) -> Unit raise ParseError
 pub fn ChunkDecoder::is_done(Self) -> Bool
 pub fn ChunkDecoder::new() -> Self
 
+#derive(@debug.Debug)
 pub(all) struct HeaderMap {
   mut entries : Array[(String, String)]
-} derive(@debug.Debug)
+}
 pub fn HeaderMap::append(Self, String, String) -> Unit
 pub fn HeaderMap::get_all(Self, StringView) -> Array[String]
 pub fn HeaderMap::get_first(Self, StringView) -> String?
@@ -67,19 +70,21 @@ pub fn HeaderMap::set(Self, String, String) -> Unit
 pub fn HeaderMap::set_if_absent(Self, String, String) -> Unit
 pub fn HeaderMap::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum HttpVersion {
   Http10
   Http11
-} derive(Eq, @debug.Debug)
+}
 pub fn HttpVersion::equal(Self, Self) -> Bool
 pub fn HttpVersion::not_equal(Self, Self) -> Bool
 pub fn HttpVersion::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct StatusLine {
   version : HttpVersion
   code : Int32
   reason : String
-} derive(Eq, @debug.Debug)
+}
 pub fn StatusLine::equal(Self, Self) -> Bool
 pub fn StatusLine::not_equal(Self, Self) -> Bool
 pub fn StatusLine::to_repr(Self) -> @debug.Repr

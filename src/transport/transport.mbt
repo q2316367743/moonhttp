@@ -19,6 +19,7 @@ pub using @headers {type Headers}
 /// 凭据也已经编码成可直接落头的字符串。这样传输层不必认识 `ProxyProtocol`
 /// 这类配置枚举，也不必知道 Basic 认证怎么编码——与 `PreparedRequest`
 /// 「不含任何配置语义」的口径一致。
+#derive(Debug)
 pub(all) struct ProxyEndpoint {
   /// 代理服务器地址，形如 `http://127.0.0.1:9000`；
   /// 不带端口时由底层按协议补默认端口（http 80 / https 443）
@@ -26,7 +27,7 @@ pub(all) struct ProxyEndpoint {
   /// 建立隧道用的 `Proxy-Authorization` 头值（如 `Basic ...`）；
   /// `None` 表示匿名代理
   authorization : String?
-} derive(Debug)
+}
 
 ///|
 pub extend ProxyEndpoint with @debug.Debug::{to_repr}
@@ -161,6 +162,7 @@ pub extend PreparedRequest with @debug.Debug::{to_repr}
 /// 响应体按需读取（`ResponseBody`）。底层原语只保留最弱的能力，
 /// 一次性读全是上层的组合结果——这样 chunked / SSE 这类「边到边读」
 /// 的协议才能表达出来。
+#derive(Debug)
 pub(all) struct RawResponse {
   status : Int32
   status_text : String
@@ -171,7 +173,7 @@ pub(all) struct RawResponse {
   /// 传输层都在这里补全量，`headers` 里那份「只有一个值」的残留不要依赖。
   /// cookie jar（`@moonhttp.CookieJar`）自动维护用的就是这份列表。
   set_cookies : Array[String]
-} derive(Debug)
+}
 
 ///|
 pub extend RawResponse with @debug.Debug::{to_repr}

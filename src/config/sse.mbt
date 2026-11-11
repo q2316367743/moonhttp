@@ -11,6 +11,7 @@
 ///
 /// 重连间隔优先使用流里最近一次 `retry:` 的值；流里没给过才用
 /// `default_delay`。与 EventSource 一致，不做指数退避。
+#derive(Eq, Debug)
 pub(all) struct SseReconnect {
   /// 连续重连次数上限；`None` 表示不限次数（对齐 EventSource 的默认行为）。
   ///
@@ -20,7 +21,7 @@ pub(all) struct SseReconnect {
   max_retries : Int32?
   /// 流里没有出现过 `retry:` 时使用的默认重连间隔（毫秒）。
   default_delay : Int32
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend SseReconnect with Eq::{equal, not_equal}

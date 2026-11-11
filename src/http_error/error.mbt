@@ -43,6 +43,7 @@ using @response {type Response}
 /// 分成这几档是为了让调用方能按「该怎么处理」分支：
 /// 超时可以重试，网络失败要看连接，4xx 要看自己的请求参数，
 /// 5xx 要等服务端恢复。
+#derive(Eq, Debug)
 pub(all) enum ErrorCode {
   /// 4xx：请求本身有问题（参数、权限、资源不存在等）
   BadRequest
@@ -60,7 +61,7 @@ pub(all) enum ErrorCode {
   Cancelled
   /// 重定向次数超过 `max_redirects`：多半是重定向成环，或上限设得太小
   TooManyRedirects
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend ErrorCode with Eq::{equal, not_equal}

@@ -6,10 +6,11 @@
 ///   这是对端的问题；
 /// - `Unsupported`：对端说的不是我们能说的话（HTTP/2 前言、0.9 简单响应）→
 ///   `ERR_NOT_SUPPORTED`，这是能力边界。docs/17 口径 1：只做 HTTP/1.0 与 1.1。
+#derive(Eq, Debug)
 pub(all) suberror ParseError {
   Malformed(String)
   Unsupported(String)
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend ParseError with Eq::{equal, not_equal}
@@ -19,10 +20,11 @@ pub extend ParseError with @debug.Debug::{to_repr}
 
 ///|
 /// HTTP 协议版本。只认识 1.0 与 1.1（docs/17 口径 1）。
+#derive(Eq, Debug)
 pub(all) enum HttpVersion {
   Http10
   Http11
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend HttpVersion with Eq::{equal, not_equal}
@@ -32,12 +34,13 @@ pub extend HttpVersion with @debug.Debug::{to_repr}
 
 ///|
 /// 状态行解析结果：`HTTP/1.1 200 OK` 的三个组成部分。
+#derive(Eq, Debug)
 pub(all) struct StatusLine {
   version : HttpVersion
   code : Int32
   /// 原样保留（可能为空：`HTTP/1.1 204` 合法；也可能自己含空格）
   reason : String
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend StatusLine with Eq::{equal, not_equal}

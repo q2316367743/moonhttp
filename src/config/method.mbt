@@ -12,6 +12,7 @@
 /// ——HTTP 方法 token 按 RFC 7230 区分大小写，大写惯例由调用方保证，
 /// `to_string` 对它返回载荷本身。传输层原样发送（httpconn 为缺省实现），
 /// 发送前校验 token 合法性，非法 token 在建连之前报 `Unsupported`。
+#derive(Eq, Hash, Debug)
 pub(all) enum Method {
   Get
   Head
@@ -23,7 +24,7 @@ pub(all) enum Method {
   Trace
   Patch
   Other(String)
-} derive(Eq, Hash, Debug)
+}
 
 ///|
 pub extend Method with Eq::{equal, not_equal}

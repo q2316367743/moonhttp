@@ -4,6 +4,7 @@ package "q2316367743/moonhttp/config"
 import {
   "moonbitlang/async/io",
   "moonbitlang/core/debug",
+  "moonbitlang/core/json",
   "q2316367743/moonhttp/headers",
 }
 
@@ -14,17 +15,18 @@ pub fn flatten_headers(@headers.Headers?, Map[Method, @headers.Headers]?, @heade
 
 pub fn merge_config(Config, Config) -> Config
 
-pub fn merge_json(Json, Json) -> Json
+pub fn merge_json(@json.Json, @json.Json) -> @json.Json
 
-pub fn merge_json_option(Json?, Json?) -> Json?
+pub fn merge_json_option(@json.Json?, @json.Json?) -> @json.Json?
 
 // Errors
 
 // Types and methods
+#derive(Default, Eq, @debug.Debug)
 pub(all) struct Auth {
   username : String?
   password : String?
-} derive(Default, Eq, @debug.Debug)
+}
 pub fn Auth::default() -> Self
 pub fn Auth::equal(Self, Self) -> Bool
 pub fn Auth::not_equal(Self, Self) -> Bool
@@ -36,6 +38,7 @@ pub(all) enum BodyPayload {
   Stream(StreamBody)
 }
 
+#derive(Default)
 pub(all) struct Config {
   url : String?
   http_method : Method?
@@ -45,8 +48,8 @@ pub(all) struct Config {
   response_encoding : ResponseEncoding?
   decompress : Bool?
   sse_reconnect : SseReconnect?
-  params : Json?
-  params_serializer : ((Json) -> String)?
+  params : @json.Json?
+  params_serializer : ((@json.Json) -> String)?
   on_upload_progress : ((ProgressEvent) -> Unit)?
   on_download_progress : ((ProgressEvent) -> Unit)?
   auth : Auth?
@@ -57,7 +60,7 @@ pub(all) struct Config {
   validate_status : ((Int32) -> Bool)?
   allow_absolute_urls : Bool?
   // private fields
-} derive(Default)
+}
 pub fn Config::default() -> Self
 pub fn Config::extract_body(Self) -> BodyPayload
 pub fn Config::has_stream_body(Self) -> Bool
@@ -72,10 +75,10 @@ pub fn Config::with_auth(Self, String, String) -> Self
 pub fn Config::with_base_url(Self, String) -> Self
 pub fn Config::with_common_header(Self, StringView, String) -> Self
 pub fn Config::with_data_from_form(Self, FormData) -> Self
-pub fn Config::with_data_from_json(Self, Json) -> Self
+pub fn Config::with_data_from_json(Self, @json.Json) -> Self
 pub fn Config::with_data_from_str(Self, String) -> Self
 pub fn Config::with_data_from_stream(Self, &@io.Reader, content_length? : Int32) -> Self
-pub fn Config::with_data_from_urlencoded(Self, Json) -> Self
+pub fn Config::with_data_from_urlencoded(Self, @json.Json) -> Self
 pub fn Config::with_decompress(Self, Bool) -> Self
 pub fn Config::with_header(Self, StringView, String) -> Self
 pub fn Config::with_headers(Self, @headers.Headers) -> Self
@@ -84,8 +87,8 @@ pub fn Config::with_method(Self, Method) -> Self
 pub fn Config::with_method_header(Self, Method, StringView, String) -> Self
 pub fn Config::with_on_download_progress(Self, (ProgressEvent) -> Unit) -> Self
 pub fn Config::with_on_upload_progress(Self, (ProgressEvent) -> Unit) -> Self
-pub fn Config::with_params(Self, Json) -> Self
-pub fn Config::with_params_serializer(Self, (Json) -> String) -> Self
+pub fn Config::with_params(Self, @json.Json) -> Self
+pub fn Config::with_params_serializer(Self, (@json.Json) -> String) -> Self
 pub fn Config::with_proxy(Self, String, port? : Int32, protocol? : ProxyProtocol, username? : String, password? : String) -> Self
 pub fn Config::with_response_encoding(Self, ResponseEncoding) -> Self
 pub fn Config::with_sse_reconnect(Self, SseReconnect) -> Self
@@ -121,6 +124,7 @@ pub(all) enum FormValue {
   File(FormFile)
 }
 
+#derive(Eq, Hash, @debug.Debug)
 pub(all) enum Method {
   Get
   Head
@@ -132,7 +136,7 @@ pub(all) enum Method {
   Trace
   Patch
   Other(String)
-} derive(Eq, Hash, @debug.Debug)
+}
 pub fn Method::equal(Self, Self) -> Bool
 pub fn Method::hash(Self) -> Int32
 pub fn Method::hash_combine(Self, Hasher) -> Unit
@@ -141,19 +145,21 @@ pub fn Method::parse(StringView) -> Self?
 pub fn Method::to_repr(Self) -> @debug.Repr
 pub fn Method::to_string(Self) -> String
 
+#derive(@debug.Debug)
 pub(all) struct ProgressEvent {
   loaded : Int32
   total : Int32?
-} derive(@debug.Debug)
+}
 pub fn ProgressEvent::progress(Self) -> Double?
 pub fn ProgressEvent::to_repr(Self) -> @debug.Repr
 
+#derive(Default, Eq, @debug.Debug)
 pub(all) struct Proxy {
   protocol : ProxyProtocol?
   host : String?
   port : Int32?
   auth : Auth?
-} derive(Default, Eq, @debug.Debug)
+}
 pub fn Proxy::default() -> Self
 pub fn Proxy::equal(Self, Self) -> Bool
 pub fn Proxy::is_usable(Self) -> Bool
@@ -161,21 +167,23 @@ pub fn Proxy::not_equal(Self, Self) -> Bool
 pub fn Proxy::to_repr(Self) -> @debug.Repr
 pub fn Proxy::to_string(Self) -> String
 
+#derive(Eq, @debug.Debug)
 pub(all) enum ProxyProtocol {
   Http
   Https
-} derive(Eq, @debug.Debug)
+}
 pub fn ProxyProtocol::equal(Self, Self) -> Bool
 pub fn ProxyProtocol::not_equal(Self, Self) -> Bool
 pub fn ProxyProtocol::to_repr(Self) -> @debug.Repr
 pub fn ProxyProtocol::to_string(Self) -> String
 
+#derive(Eq, @debug.Debug)
 pub(all) enum ResponseEncoding {
   Utf8
   Latin1
   Ascii
   Utf16le
-} derive(Eq, @debug.Debug)
+}
 pub fn ResponseEncoding::equal(Self, Self) -> Bool
 pub fn ResponseEncoding::not_equal(Self, Self) -> Bool
 pub fn ResponseEncoding::to_repr(Self) -> @debug.Repr
@@ -186,10 +194,11 @@ pub(all) struct SerializedBody {
   content_type : String?
 }
 
+#derive(Eq, @debug.Debug)
 pub(all) struct SseReconnect {
   max_retries : Int32?
   default_delay : Int32
-} derive(Eq, @debug.Debug)
+}
 pub fn SseReconnect::equal(Self, Self) -> Bool
 pub fn SseReconnect::new() -> Self
 pub fn SseReconnect::not_equal(Self, Self) -> Bool

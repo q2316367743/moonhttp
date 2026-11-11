@@ -32,6 +32,7 @@ const MAX_RETRY : Int32 = 214_748_363
 
 ///|
 /// 一个 SSE 事件，对应规范里的 `MessageEvent`。
+#derive(Eq, Debug)
 pub(all) struct SseEvent {
   /// 事件类型，来自 `event:` 字段；流里没给过就是规范默认的 `"message"`
   event : String
@@ -41,7 +42,7 @@ pub(all) struct SseEvent {
   id : String?
   /// 最近一次 `retry:` 的值（毫秒）；`None` 表示流里还没出现过
   retry : Int32?
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend SseEvent with Eq::{equal, not_equal}

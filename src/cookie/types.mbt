@@ -26,11 +26,12 @@ priv struct Cookie {
 ///|
 /// 存储键：归属域 + 归属路径 + 名字唯一确定一枚 cookie——
 /// 同名不同域 / 不同路径是不同的 cookie（RFC 6265 §5.3 step 11）。
+#derive(Eq, Hash)
 priv struct CookieKey {
   domain : String
   path : String
   name : String
-} derive(Eq, Hash)
+}
 
 ///|
 /// cookie 存储罐：解析、归属、过期都自动完成，调用方只管喂 Set-Cookie、
